@@ -10,6 +10,9 @@ Supports:
 5. Multi-channel delivery to Telegram, WhatsApp (CallMeBot/Webhook), Email (SMTP), and Webhooks.
 """
 
+import os
+import mimetypes
+import uuid
 import sqlite3
 import json
 import logging
@@ -18,6 +21,7 @@ import urllib.request
 import urllib.parse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
+from email.mime.image import MIMEImage
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
@@ -153,6 +157,47 @@ def send_telegram(bot_token: str, chat_id: str, message: str) -> Tuple[bool, str
         return False, str(e)
 
 
+def send_telegram_photo(bot_token: str, chat_id: str, photo_path: str, caption: str = "") -> Tuple[bool, str]:
+    """Sends a photo image directly to Telegram Chat via sendPhoto API."""
+    if not bot_token or not chat_id or not photo_path or not os.path.exists(photo_path):
+        return False, "Bot token, Chat ID, or Photo file missing"
+
+    try:
+        boundary = f"----WebKitFormBoundary{uuid.uuid4().hex}"
+        with open(photo_path, "rb") as f:
+            file_bytes = f.read()
+
+        filename = os.path.basename(photo_path)
+        content_type = mimetypes.guess_type(photo_path)[0] or "image/png"
+
+        parts = []
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"chat_id\"\r\n\r\n{chat_id.strip()}\r\n".encode("utf-8"))
+        if caption:
+            parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"caption\"\r\n\r\n{caption}\r\n".encode("utf-8"))
+            parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"parse_mode\"\r\n\r\nHTML\r\n".encode("utf-8"))
+        parts.append(f"--{boundary}\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n".encode("utf-8"))
+        parts.append(file_bytes)
+        parts.append(f"\r\n--{boundary}--\r\n".encode("utf-8"))
+
+        payload = b"".join(parts)
+        url = f"https://api.telegram.org/bot{bot_token.strip()}/sendPhoto"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            headers={
+                "Content-Type": f"multipart/form-data; boundary={boundary}",
+                "User-Agent": "UpstoxAlertBot/1.0"
+            }
+        )
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            if resp.status == 200:
+                return True, "Delivered photo"
+            return False, f"HTTP {resp.status}"
+    except Exception as e:
+        logger.error(f"Telegram sendPhoto error: {e}")
+        return False, str(e)
+
+
 def send_whatsapp(phone: str, api_key: str, message: str, mode: str = "callmebot", webhook_url: str = "") -> Tuple[bool, str]:
     """
     Sends a WhatsApp message via CallMeBot API or custom Webhook.
@@ -224,6 +269,55 @@ def send_email(smtp_host: str, smtp_port: int, username: str, password: str, to_
         return False, str(e)
 
 
+def send_email_with_image(smtp_host: str, smtp_port: int, username: str, password: str, to_address: str, subject: str, message: str, image_path: str) -> Tuple[bool, str]:
+    """Sends an email with an embedded and attached Quad-Chart screenshot."""
+    if not smtp_host or not username or not password or not to_address:
+        return False, "SMTP settings or recipient email missing"
+
+    try:
+        msg = MIMEMultipart("related")
+        msg["Subject"] = subject
+        msg["From"] = f"Upstox Alert <{username}>"
+        msg["To"] = to_address
+
+        html = f"""
+        <div style="font-family: Arial, sans-serif; max-width: 800px; padding: 20px; border: 1px solid #E2E8F0; border-radius: 8px;">
+            <h3 style="color: #0284C7; margin-top: 0;">{subject}</h3>
+            <div style="font-size: 14px; line-height: 1.6; color: #334155; margin-bottom: 16px;">
+                {message.replace(chr(10), '<br/>')}
+            </div>
+            <div>
+                <img src="cid:quad_chart_img" style="max-width: 100%; height: auto; border-radius: 6px; border: 1px solid #334155;" />
+            </div>
+            <hr style="border: none; border-top: 1px solid #E2E8F0; margin: 20px 0;"/>
+            <small style="color: #94A3B8;">Upstox Pro Multi-Timeframe Scanner & Alert Engine</small>
+        </div>
+        """
+        msg.attach(MIMEText(html, "html"))
+
+        if image_path and os.path.exists(image_path):
+            with open(image_path, "rb") as f:
+                img_part = MIMEImage(f.read())
+                img_part.add_header("Content-ID", "<quad_chart_img>")
+                img_part.add_header("Content-Disposition", "inline", filename=os.path.basename(image_path))
+                msg.attach(img_part)
+
+        port = int(smtp_port)
+        if port == 465:
+            server = smtplib.SMTP_SSL(smtp_host, port, timeout=15)
+        else:
+            server = smtplib.SMTP(smtp_host, port, timeout=15)
+            server.starttls()
+
+        server.login(username, password)
+        server.sendmail(username, [to_address], msg.as_string())
+        server.quit()
+        return True, "Delivered email with screenshot"
+    except Exception as e:
+        logger.error(f"Email image send error: {e}")
+        return False, str(e)
+
+
 def send_webhook(webhook_url: str, payload: Dict[str, Any]) -> Tuple[bool, str]:
     """Dispatches a JSON payload to a Webhook URL (Discord / Slack / Zapier / n8n)."""
     if not webhook_url:
@@ -250,10 +344,12 @@ def dispatch_alert(
     trigger_price: float,
     headline: str,
     details: str,
-    selected_channels: List[str]
+    selected_channels: List[str],
+    screenshot_path: Optional[str] = None
 ) -> Dict[str, Tuple[bool, str]]:
     """
     Dispatches notifications across all selected active channels and records to audit logs.
+    If screenshot_path is provided, sends photos via Telegram and embedded images via Email.
     """
     cfg = get_channel_config()
     results = {}
@@ -272,7 +368,12 @@ def dispatch_alert(
     )
 
     if "telegram" in selected_channels and cfg["telegram"].get("enabled"):
-        t_ok, t_msg = send_telegram(cfg["telegram"]["bot_token"], cfg["telegram"]["chat_id"], tg_msg)
+        token = cfg["telegram"]["bot_token"]
+        chat = cfg["telegram"]["chat_id"]
+        if screenshot_path and os.path.exists(screenshot_path):
+            t_ok, t_msg = send_telegram_photo(token, chat, screenshot_path, caption=tg_msg)
+        else:
+            t_ok, t_msg = send_telegram(token, chat, tg_msg)
         results["telegram"] = (t_ok, t_msg)
 
     if "whatsapp" in selected_channels and cfg["whatsapp"].get("enabled"):
@@ -286,15 +387,27 @@ def dispatch_alert(
         results["whatsapp"] = (w_ok, w_msg)
 
     if "email" in selected_channels and cfg["email"].get("enabled"):
-        e_ok, e_msg = send_email(
-            cfg["email"]["smtp_host"],
-            cfg["email"]["smtp_port"],
-            cfg["email"]["username"],
-            cfg["email"]["password"],
-            cfg["email"]["to_address"],
-            subject,
-            tg_msg
-        )
+        if screenshot_path and os.path.exists(screenshot_path):
+            e_ok, e_msg = send_email_with_image(
+                cfg["email"]["smtp_host"],
+                cfg["email"]["smtp_port"],
+                cfg["email"]["username"],
+                cfg["email"]["password"],
+                cfg["email"]["to_address"],
+                subject,
+                tg_msg,
+                screenshot_path
+            )
+        else:
+            e_ok, e_msg = send_email(
+                cfg["email"]["smtp_host"],
+                cfg["email"]["smtp_port"],
+                cfg["email"]["username"],
+                cfg["email"]["password"],
+                cfg["email"]["to_address"],
+                subject,
+                tg_msg
+            )
         results["email"] = (e_ok, e_msg)
 
     if "webhook" in selected_channels and cfg["webhook"].get("enabled"):
@@ -305,6 +418,7 @@ def dispatch_alert(
             "price": trigger_price,
             "headline": headline,
             "details": details,
+            "screenshot_path": screenshot_path,
             "timestamp": timestamp_str
         }
         wh_ok, wh_msg = send_webhook(cfg["webhook"]["url"], payload)

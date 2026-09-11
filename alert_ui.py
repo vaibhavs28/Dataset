@@ -10,14 +10,18 @@ Supports creating, monitoring, and testing:
 Multi-channel delivery to Telegram, WhatsApp, Email, Webhooks, and In-App Audio.
 """
 
+import os
 import streamlit as st
 import pandas as pd
 import numpy as np
 from datetime import datetime
 
+import config
 import database
 import parquet_loader
 import alert_engine
+import quadrant_image_generator
+import auto_75m_broadcaster
 
 
 def _get_theme_styles(theme: str) -> dict:
@@ -89,8 +93,9 @@ def render_alert_page(theme: str = "dark"):
     if not all_symbols:
         all_symbols = ["RELIANCE", "TCS", "HDFCBANK", "INFY"]
 
-    tab_monitor, tab_create, tab_settings, tab_audit = st.tabs([
+    tab_monitor, tab_broadcaster, tab_create, tab_settings, tab_audit = st.tabs([
         "📋 Active Alerts & Monitor",
+        "📸 75-Min Quadrant Broadcaster",
         "➕ Create New Alert",
         "⚙️ Notification Channels",
         "📜 Trigger History & Audit Log"
@@ -212,7 +217,195 @@ def render_alert_page(theme: str = "dark"):
                             st.rerun()
 
     # =========================================================================
-    # TAB 2: CREATE NEW ALERT
+    # TAB 2: 75-MIN QUADRANT BROADCASTER
+    # =========================================================================
+    with tab_broadcaster:
+        st.markdown(f"""
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div>
+                <h4 style="margin: 0; color: {styles['text_primary']};">📸 75-Min Waterfall & 4-Quadrant Screenshot Broadcaster</h4>
+                <p style="margin: 0; color: {styles['text_secondary']}; font-size: 13px;">
+                    Automated scan at every 75-min candle close (10:30, 11:45, 13:00, 14:15, 15:30 IST).
+                    Captures 1600x1200 4-quadrant candlestick charts (Monthly + Weekly + Daily + 75m) and broadcasts to Telegram, Email, and WhatsApp.
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        sched = auto_75m_broadcaster.get_75m_schedule_status()
+        m_status = "🟢 MARKET OPEN" if sched["is_market_hours"] else "⏸️ MARKET CLOSED"
+        m_color = "green" if sched["is_market_hours"] else "orange"
+
+        col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+        with col_s1:
+            render_metric_card("Market Session", m_status, "NSE Trading Hours: 09:15 - 15:30", m_color, styles)
+        with col_s2:
+            render_metric_card("Next 75m Candle Close", sched["next_candle_label"], f"Scheduled: {sched['next_candle_time'][-8:]} IST", "blue", styles)
+        with col_s3:
+            render_metric_card("Countdown Timer", sched["time_remaining_str"], f"Candle #{sched['candle_idx']} of 5", "purple", styles)
+        with col_s4:
+            cfg = alert_engine.get_channel_config()
+            active_chs = [ch.capitalize() for ch in ["telegram", "whatsapp", "email", "webhook"] if cfg.get(ch, {}).get("enabled")]
+            ch_summary = ", ".join(active_chs) if active_chs else "In-App Only"
+            render_metric_card("Active Broadcast Channels", f"{len(active_chs)} Connected", ch_summary, "green" if active_chs else "normal", styles)
+
+        st.markdown("---")
+
+        # Controls
+        ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 2.5])
+        with ctrl_col1:
+            bc_universe = st.selectbox(
+                "Scanning Universe:",
+                ["All Database Equities", "Nifty 50", "Nifty 100", "Top 200 Liquid Equities", "Nifty 500"],
+                index=0,
+                key="bc_universe_select"
+            )
+        with ctrl_col2:
+            bc_stage = st.selectbox(
+                "Filter Tier:",
+                [
+                    "Stage 4: Full Alignment Only (M + W + D + 75m) [Strict]",
+                    "Stage 3: M + W + D Aligned",
+                    "Stage 2: M + W Aligned",
+                    "All Waterfall Stages"
+                ],
+                index=0,
+                key="bc_stage_select"
+            )
+            stage_num = 4 if "Stage 4" in bc_stage else (3 if "Stage 3" in bc_stage else (2 if "Stage 2" in bc_stage else 0))
+        with ctrl_col3:
+            st.write("")
+            st.write("")
+            trigger_now = st.button("⚡ Run 75-Min Scan & Broadcast Now", type="primary", use_container_width=True, key="btn_run_75m_now")
+
+        if trigger_now:
+            with st.spinner(f"Running 75-Min Waterfall Scan across {bc_universe} & generating quadrant screenshots..."):
+                bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
+                    universe=bc_universe,
+                    stage_filter=stage_num
+                )
+                q_count = bc_res.get("qualifying_count", 0)
+                el_sec = bc_res.get("elapsed_seconds", 0.0)
+                if q_count > 0:
+                    st.success(f"🎉 Scan Complete in {el_sec:.1f}s! Found {q_count} qualifying stock(s). 4-Quadrant screenshots generated and dispatched!")
+                else:
+                    st.info(f"✅ Scan Complete in {el_sec:.1f}s. Scanned {bc_res.get('scanned_count')} stocks in {bc_universe}. Currently 0 stocks match Stage {stage_num} criteria.")
+
+        # Single Stock Instant Test Section
+        with st.expander("🖼️ **On-Demand Single Stock Quadrant Preview & Test**", expanded=False):
+            t_col1, t_col2, t_col3 = st.columns([2, 2, 2])
+            with t_col1:
+                test_sym = st.selectbox("Select Stock to Inspect:", options=all_symbols, index=all_symbols.index("RELIANCE") if "RELIANCE" in all_symbols else 0, key="quad_test_sym")
+            with t_col2:
+                st.write("")
+                st.write("")
+                btn_gen_test = st.button("📸 Generate 4-Quadrant Chart", use_container_width=True, key="btn_gen_test_quad")
+            with t_col3:
+                st.write("")
+                st.write("")
+                btn_test_dispatch = st.button("🚀 Test Broadcast to Telegram & Email", use_container_width=True, key="btn_test_quad_dispatch")
+
+            if btn_gen_test or btn_test_dispatch:
+                with st.spinner(f"Rendering 1600x1200 Quad-Chart for {test_sym}..."):
+                    gen_path = quadrant_image_generator.generate_stock_quadrant(test_sym)
+                    if gen_path and os.path.exists(gen_path):
+                        st.success(f"✅ Generated high-resolution Quad-Chart ({os.path.getsize(gen_path)//1024} KB)")
+                        st.image(gen_path, caption=f"{test_sym} - Institutional 4-Quadrant Analysis (Monthly, Weekly, Daily, 75m)", use_column_width=True)
+
+                        with open(gen_path, "rb") as f:
+                            st.download_button(
+                                label=f"📥 Download {test_sym} 1600x1200 Image",
+                                data=f.read(),
+                                file_name=f"{test_sym}_quadrant.png",
+                                mime="image/png",
+                                key=f"dl_test_{test_sym}"
+                            )
+
+                        if btn_test_dispatch:
+                            daily_df = database.get_candles_df(test_sym)
+                            ltp = float(daily_df["close"].iloc[-1]) if (daily_df is not None and not daily_df.empty) else 100.0
+                            deliv = alert_engine.dispatch_alert(
+                                symbol=test_sym,
+                                alert_type="WATERFALL_75M",
+                                trigger_price=ltp,
+                                headline=f"Manual Test Broadcast: {test_sym}",
+                                details="4-Quadrant candlestick screenshot verification.",
+                                selected_channels=["telegram", "email", "in_app"],
+                                screenshot_path=gen_path
+                            )
+                            st.success(f"Dispatched test alert with screenshot! Delivery status: {list(deliv.keys())}")
+                    else:
+                        st.error(f"Could not generate quadrant screenshot for {test_sym}. Check data availability.")
+
+        st.markdown("---")
+
+        # Gallery of Recent Quadrant Screenshots
+        st.markdown("##### 🖼️ Recent 75-Min Quadrant Screenshots Gallery")
+        recent_screens = auto_75m_broadcaster.get_recent_quadrant_screenshots(limit=12)
+
+        if not recent_screens:
+            st.info("No quadrant screenshots generated yet. Click '⚡ Run 75-Min Scan & Broadcast Now' or use the Single Stock Preview above!")
+        else:
+            # Display in a responsive 2-column grid
+            for i in range(0, len(recent_screens), 2):
+                g_col1, g_col2 = st.columns(2)
+                
+                # Item 1
+                item1 = recent_screens[i]
+                with g_col1:
+                    with st.container():
+                        st.markdown(f"**{item1['symbol']}** • `{item1['modified_at']}` • `{item1['size_kb']} KB`")
+                        if os.path.exists(item1["path"]):
+                            st.image(item1["path"], use_column_width=True)
+                            with open(item1["path"], "rb") as f:
+                                st.download_button(
+                                    label=f"📥 Download {item1['symbol']}",
+                                    data=f.read(),
+                                    file_name=item1["filename"],
+                                    mime="image/png",
+                                    key=f"dl_sc_{i}"
+                                )
+
+                # Item 2
+                if i + 1 < len(recent_screens):
+                    item2 = recent_screens[i + 1]
+                    with g_col2:
+                        with st.container():
+                            st.markdown(f"**{item2['symbol']}** • `{item2['modified_at']}` • `{item2['size_kb']} KB`")
+                            if os.path.exists(item2["path"]):
+                                st.image(item2["path"], use_column_width=True)
+                                with open(item2["path"], "rb") as f:
+                                    st.download_button(
+                                        label=f"📥 Download {item2['symbol']}",
+                                        data=f.read(),
+                                        file_name=item2["filename"],
+                                        mime="image/png",
+                                        key=f"dl_sc_{i+1}"
+                                    )
+
+        # Broadcast History Section
+        st.markdown("---")
+        with st.expander("📜 **75-Min Broadcast Execution History**", expanded=False):
+            b_history = auto_75m_broadcaster.get_broadcast_history(limit=20)
+            if not b_history:
+                st.caption("No automated broadcasts recorded yet.")
+            else:
+                h_rows = []
+                for bh in b_history:
+                    stocks_str = ", ".join([s["symbol"] for s in bh.get("stocks", [])]) if bh.get("stocks") else "None"
+                    h_rows.append({
+                        "Time": bh.get("timestamp"),
+                        "Candle Slot": bh.get("candle_slot"),
+                        "Universe": bh.get("universe"),
+                        "Scanned": bh.get("scanned_count"),
+                        "Qualifying (Stage 4)": bh.get("qualifying_count"),
+                        "Stocks Dispatched": stocks_str,
+                        "Elapsed Time": f"{bh.get('elapsed_seconds', 0)}s"
+                    })
+                st.dataframe(pd.DataFrame(h_rows), use_container_width=True)
+
+    # =========================================================================
+    # TAB 3: CREATE NEW ALERT
     # =========================================================================
     with tab_create:
         st.markdown("#### ➕ Create New Alert")
