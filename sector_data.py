@@ -798,7 +798,7 @@ def calculate_market_heatmap_data() -> pd.DataFrame:
 def generate_cmc_heatmap_html(
     df: pd.DataFrame,
     active_tf: str = "Daily (1D)",
-    theme: str = "dark",
+    theme: str = "light",
     height: int = 740,
     view_mode: str = "dominance"
 ) -> str:

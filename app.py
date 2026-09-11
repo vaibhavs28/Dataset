@@ -93,7 +93,7 @@ def create_candlestick_chart(
     show_rsi: bool = True,
     rsi_span: int = 9,
     highlight_rsi_50: bool = True,
-    theme: str = "dark"
+    theme: str = "light"
 ):
     """
     Renders a Plotly candlestick chart with EMA overlays, optional Weekly Pivots, and RSI indicator.
@@ -511,13 +511,13 @@ def main():
     st.sidebar.markdown("### 🎨 Display Theme")
     theme_choice = st.sidebar.radio(
         "Display Theme",
-        options=["🌙 Dark", "☀️ Light"],
-        index=0 if st.session_state.get("app_theme", "dark") == "dark" else 1,
+        options=["☀️ Light", "🌙 Dark"],
+        index=0 if st.session_state.get("app_theme", "light") == "light" else 1,
         horizontal=True,
         key="app_theme_radio",
         label_visibility="collapsed"
     )
-    theme = "dark" if "Dark" in theme_choice else "light"
+    theme = "light" if "Light" in theme_choice else "dark"
     st.session_state["app_theme"] = theme
 
     st.sidebar.markdown("### 🧭 Pages")
@@ -1025,9 +1025,10 @@ def main():
                     intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=100)
                 
                 if intra_df is not None and not intra_df.empty:
-                    # Requested EMAs: 9, 13, 26, 50, 200
+                    # Requested EMAs: 9, 13, 20, 26, 50, 200
                     intra_df["EMA_9"] = intra_df["close"].ewm(span=9, adjust=False).mean()
                     intra_df["EMA_13"] = intra_df["close"].ewm(span=13, adjust=False).mean()
+                    intra_df["EMA_20"] = intra_df["close"].ewm(span=20, adjust=False).mean()
                     intra_df["EMA_26"] = intra_df["close"].ewm(span=26, adjust=False).mean()
                     intra_df["EMA_50"] = intra_df["close"].ewm(span=50, adjust=False).mean()
                     intra_df["EMA_200"] = intra_df["close"].ewm(span=200, adjust=False).mean()
@@ -1140,11 +1141,14 @@ def main():
                         i_rsi = intra_df["RSI"].iloc[-1]
                         d_ema20_val = i_last.get("Daily_EMA_20", 0)
                         d_ema20_str = f" | Daily 20 EMA: ₹{d_ema20_val:.2f}" if d_ema20_val else ""
-                        st.caption(f"**Close:** ₹{i_last['close']:.2f} | **RSI ({rsi_span}):** {i_rsi:.1f} | 9 EMA (Green): ₹{i_last['EMA_9']:.2f} | 13 EMA (Sky Blue): ₹{i_last['EMA_13']:.2f}{d_ema20_str} | 26 EMA (Purple): ₹{i_last['EMA_26']:.2f} | 50 EMA (Red): ₹{i_last['EMA_50']:.2f} | 200 EMA (Black): ₹{i_last['EMA_200']:.2f}")
+                        ema20_val = i_last.get("EMA_20", 0)
+                        ema20_str = f" | 20 EMA (Blue): ₹{ema20_val:.2f}" if ema20_val else ""
+                        st.caption(f"**Close:** ₹{i_last['close']:.2f} | **RSI ({rsi_span}):** {i_rsi:.1f} | 9 EMA (Green): ₹{i_last['EMA_9']:.2f} | 13 EMA (Sky Blue): ₹{i_last['EMA_13']:.2f}{ema20_str}{d_ema20_str} | 26 EMA (Purple): ₹{i_last['EMA_26']:.2f} | 50 EMA (Red): ₹{i_last['EMA_50']:.2f} | 200 EMA (Black): ₹{i_last['EMA_200']:.2f}")
                         fig_75 = create_candlestick_chart(
                             intra_df.tail(80), sel_stock, "75-Minute (EMAs + Daily 20 EMA + Weekly Pivot)", {
                                 "EMA_9": "#4CAF50",
                                 "EMA_13": "#38BDF8",
+                                "EMA_20": "#2962FF",
                                 "Daily_EMA_20": "#2962FF",
                                 "EMA_26": "#9C27B0",
                                 "EMA_50": "#FF5252",

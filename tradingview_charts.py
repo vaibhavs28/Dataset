@@ -80,7 +80,7 @@ def generate_lightweight_chart_html(
     height: int = 450,
     is_intraday: bool = False,
     chart_id: str = "tv_chart",
-    theme: str = "dark"
+    theme: str = "light"
 ) -> str:
     """
     Renders an HTML snippet with TradingView Lightweight Charts.
@@ -1699,7 +1699,7 @@ def render_tradingview_cloud_widget(
     symbol: str,
     interval: str = "D",
     height: int = 650,
-    theme: str = "dark"
+    theme: str = "light"
 ) -> str:
     """
     Renders the official TradingView Advanced Real-Time Chart widget.
@@ -1775,7 +1775,7 @@ def generate_advanced_terminal_html(
     height: int = 720,
     is_intraday: bool = False,
     chart_id: str = "tv_adv_terminal",
-    theme: str = "dark"
+    theme: str = "light"
 ) -> str:
     """
     Renders an Advanced Desktop-Grade TradingView Terminal using Lightweight Charts v4.
@@ -3057,7 +3057,7 @@ def generate_quad_chart_html(
     show_line: bool = True,
     pivot_dict_75: dict = None,
     height: int = 880,
-    theme: str = "dark",
+    theme: str = "light",
     all_symbols: list = None,
     intra_tf_label: str = "75m"
 ) -> str:
@@ -3158,9 +3158,11 @@ def generate_quad_chart_html(
             "hasRsi": has_rsi_panel
         }
 
-    # Ensure Daily EMA 20 is available on intra_df
-    if intra_df is not None and not intra_df.empty and daily_df is not None and not daily_df.empty:
-        if "Daily_EMA_20" not in intra_df.columns:
+    # Ensure EMA 20 and Daily EMA 20 are available on intra_df
+    if intra_df is not None and not intra_df.empty:
+        if "EMA_20" not in intra_df.columns:
+            intra_df["EMA_20"] = intra_df["close"].ewm(span=20, adjust=False).mean()
+        if daily_df is not None and not daily_df.empty and "Daily_EMA_20" not in intra_df.columns:
             try:
                 d_ema20 = daily_df["EMA_20"] if "EMA_20" in daily_df.columns else daily_df["close"].ewm(span=20, adjust=False).mean()
                 d_dt_idx = pd.to_datetime(daily_df.index)
@@ -3188,6 +3190,7 @@ def generate_quad_chart_html(
         {
             "EMA_9": "#4CAF50",
             "EMA_13": "#38BDF8",
+            "EMA_20": "#2962FF",
             "Daily_EMA_20": "#2962FF",
             "EMA_26": "#9C27B0",
             "EMA_50": "#FF5252",
@@ -4113,7 +4116,7 @@ def generate_quad_chart_html(
                     <div class="qc-header">
                         <div class="qc-header-left">
                             <span class="qc-tf qc-tf-75">{intra_tf_label}</span>
-                            <span class="qc-sub">Trigger: 9>13>26 EMA | Daily 20 EMA | Pivots</span>
+                            <span class="qc-sub">Trigger: 9>13>20>26 EMA | Daily 20 EMA | Pivots</span>
                             <div class="qc-legend" id="legend_75"></div>
                         </div>
                         <div class="qc-header-right">
