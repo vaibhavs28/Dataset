@@ -1821,7 +1821,7 @@ def generate_advanced_terminal_html(
 
     # Calculate indicators if not already in df_calc
     if show_ema:
-        for span, col in [(9, "EMA_9"), (20, "EMA_20"), (50, "EMA_50"), (200, "EMA_200")]:
+        for span, col in [(5, "EMA_5"), (9, "EMA_9"), (20, "EMA_20"), (50, "EMA_50"), (200, "EMA_200")]:
             if col not in df_calc.columns:
                 df_calc[col] = df_calc["close"].ewm(span=span, adjust=False).mean()
 
@@ -1880,7 +1880,7 @@ def generate_advanced_terminal_html(
     candles = []
     volumes = []
     vol_mas = []
-    emas_data = {"EMA_9": [], "EMA_20": [], "EMA_50": [], "EMA_200": []}
+    emas_data = {"EMA_5": [], "EMA_9": [], "EMA_20": [], "EMA_50": [], "EMA_200": []}
     smas_data = {"SMA_20": [], "SMA_50": [], "SMA_200": []}
     bb_upper, bb_middle, bb_lower = [], [], []
     supertrend_pts = []
@@ -2568,7 +2568,7 @@ def generate_advanced_terminal_html(
             }}
 
             // EMAs Overlay
-            const emaColors = {{ "EMA_9": "#00E5FF", "EMA_20": "#2979FF", "EMA_50": "#FF9100", "EMA_200": "#D500F9" }};
+            const emaColors = {{ "EMA_5": "#4CAF50", "EMA_9": "#00E5FF", "EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": isLight ? "#131722" : "#FFFFFF" }};
             for (const [col, pts] of Object.entries(emas)) {{
                 if (pts && pts.length > 0) {{
                     const s = mainChart.addLineSeries({{
@@ -3159,9 +3159,9 @@ def generate_quad_chart_html(
         }
 
     # Extract payloads for all 4 quadrants
-    m_payload = _extract_payload(monthly_df, {"EMA_5": "#FFD700", "EMA_20": "#00E5FF"}, is_intraday=False)
-    w_payload = _extract_payload(weekly_df, {"EMA_20": "#00E5FF", "EMA_50": "#FF9100", "EMA_200": "#D500F9"}, is_intraday=False)
-    d_payload = _extract_payload(daily_df, {"EMA_20": "#00E5FF", "EMA_50": "#FF9100", "EMA_200": "#D500F9"}, is_intraday=False)
+    m_payload = _extract_payload(monthly_df, {"EMA_5": "#4CAF50", "EMA_20": "#2962FF"}, is_intraday=False)
+    w_payload = _extract_payload(weekly_df, {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"}, is_intraday=False)
+    d_payload = _extract_payload(daily_df, {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"}, is_intraday=False)
     p75 = pivot_dict_75 or {
         "Weekly_R1": {"color": "#EF4444", "name": "Weekly R1"},
         "Weekly_P":  {"color": "#38BDF8", "name": "Weekly Pivot"},
@@ -3169,7 +3169,7 @@ def generate_quad_chart_html(
     }
     intra_payload = _extract_payload(
         intra_df,
-        {"EMA_9": "#00E5FF", "EMA_13": "#76FF03", "EMA_26": "#FF9100", "EMA_50": "#D500F9", "EMA_200": "#1E293B" if is_light else "#FFFFFF"},
+        {"EMA_9": "#00E5FF", "EMA_13": "#76FF03", "EMA_26": "#FF9100", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"},
         pivot_dict=p75,
         is_intraday=True
     )
@@ -4556,7 +4556,7 @@ def generate_quad_chart_html(
 
             const candleTimestamps = (payload.candles || []).map(c => candleTimeToSeconds(c.time));
 
-            return {{ mainChart, candleSeries, lineSeries, candleTimestamps, rsiChart, hmCloud, rsiSeries, volumeSeries, isVolVisible: isVolInit, isCandleVisible: isCandleInit, isLineVisible: isLineInit, mainContainer, rsiContainer, bodyEl, hasRsi: payload.hasRsi, payload }};
+            return {{ mainChart, candleSeries, lineSeries, candleTimestamps, rsiChart, hmCloud, rsiSeries, emaSeriesMap, volumeSeries, isVolVisible: isVolInit, isCandleVisible: isCandleInit, isLineVisible: isLineInit, mainContainer, rsiContainer, bodyEl, hasRsi: payload.hasRsi, payload }};
         }}
 
         // Initialize all 4 quadrants
@@ -5556,6 +5556,11 @@ def generate_quad_chart_html(
                 if (q.rsiSeries) {{
                     q.rsiSeries.applyOptions({{
                         color: isLight ? '#131722' : '#F8FAFC'
+                    }});
+                }}
+                if (q.emaSeriesMap && q.emaSeriesMap['EMA_200']) {{
+                    q.emaSeriesMap['EMA_200'].series.applyOptions({{
+                        color: isLight ? '#131722' : '#FFFFFF'
                     }});
                 }}
             }});

@@ -184,13 +184,13 @@ def create_candlestick_chart(
 
     # Overlay EMAs
     color_palette = {
-        "EMA_5": "#FFD700",    # Gold
+        "EMA_5": "#4CAF50",    # Green
         "EMA_9": "#00E5FF",    # Cyan
         "EMA_13": "#76FF03",   # Bright Lime Green
-        "EMA_20": "#2979FF",   # Electric Blue
+        "EMA_20": "#2962FF",   # Blue
         "EMA_26": "#FF9100",   # Orange
-        "EMA_50": "#D500F9",   # Magenta / Purple
-        "EMA_200": "#1E293B" if is_light else "#FFFFFF"  # Dark slate in light theme, White in dark theme
+        "EMA_50": "#FF5252",   # Red
+        "EMA_200": "#131722" if is_light else "#FFFFFF"  # Black in light theme, White in dark theme
     }
 
     for col_name in ema_dict:
@@ -1088,9 +1088,9 @@ def main():
                         m_wma21 = m_df["RSI_WMA21"].iloc[-1]
                         rsi_50_badge = "🟢 RSI ≥ 50" if m_rsi >= 50 else "🔴 RSI < 50"
                         cross_badge = "🟢 EMA 3 ≥ WMA 21" if m_ema3 >= m_wma21 else "🔴 EMA 3 < WMA 21"
-                        st.caption(f"Rule: Close > 5 EMA & 5>20 EMA | **RSI ({rsi_span}):** {m_rsi:.1f} ({rsi_50_badge}) | **EMA 3 (RSI):** {m_ema3:.1f} | **WMA 21 (RSI):** {m_wma21:.1f} ({cross_badge})")
+                        st.caption(f"Rule: Close > 5 EMA (Green) & 5>20 EMA (Blue) | **RSI ({rsi_span}):** {m_rsi:.1f} ({rsi_50_badge}) | **EMA 3 (RSI):** {m_ema3:.1f} | **WMA 21 (RSI):** {m_wma21:.1f} ({cross_badge})")
                         fig_m = create_candlestick_chart(
-                            m_df.tail(36), sel_stock, "Monthly", {"EMA_5": "#FFD700", "EMA_20": "#00E5FF"},
+                            m_df.tail(36), sel_stock, "Monthly", {"EMA_5": "#4CAF50", "EMA_20": "#2962FF"},
                             height=chart_h, is_intraday=False, show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
                             highlight_rsi_50=True, theme=theme
                         )
@@ -1099,9 +1099,9 @@ def main():
                     with grid_col2:
                         st.subheader("2️⃣ Weekly Chart (20 + 50 + 200 EMA)")
                         w_rsi = w_df["RSI"].iloc[-1]
-                        st.caption(f"Rule: Close > 20 EMA (Cyan) > 50 EMA (Orange) > 200 EMA (Purple) | **RSI ({rsi_span}):** {w_rsi:.1f}")
+                        st.caption(f"Rule: Close > 20 EMA (Blue) > 50 EMA (Red) > 200 EMA (Black) | **RSI ({rsi_span}):** {w_rsi:.1f}")
                         fig_w = create_candlestick_chart(
-                            w_df.tail(100), sel_stock, "Weekly", {"EMA_20": "#00E5FF", "EMA_50": "#FF9100", "EMA_200": "#D500F9"},
+                            w_df.tail(100), sel_stock, "Weekly", {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if theme == "light" else "#FFFFFF"},
                             height=chart_h, is_intraday=False, show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
                             theme=theme
                         )
@@ -1112,9 +1112,9 @@ def main():
                     with grid_col3:
                         st.subheader("3️⃣ Daily Chart (20 + 50 + 200 EMA)")
                         d_rsi = d_df["RSI"].iloc[-1]
-                        st.caption(f"Rule: Close > 20 EMA (Cyan) > 50 EMA (Orange) > 200 EMA (Purple) | **RSI ({rsi_span}):** {d_rsi:.1f}")
+                        st.caption(f"Rule: Close > 20 EMA (Blue) > 50 EMA (Red) > 200 EMA (Black) | **RSI ({rsi_span}):** {d_rsi:.1f}")
                         fig_d = create_candlestick_chart(
-                            d_df.tail(120), sel_stock, "Daily", {"EMA_20": "#00E5FF", "EMA_50": "#FF9100", "EMA_200": "#D500F9"},
+                            d_df.tail(120), sel_stock, "Daily", {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if theme == "light" else "#FFFFFF"},
                             height=chart_h, is_intraday=False, show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
                             theme=theme
                         )
@@ -1130,8 +1130,8 @@ def main():
                                 "EMA_9": "#00E5FF",
                                 "EMA_13": "#76FF03",
                                 "EMA_26": "#FF9100",
-                                "EMA_50": "#D500F9",
-                                "EMA_200": "#1E293B" if theme == "light" else "#FFFFFF"
+                                "EMA_50": "#FF5252",
+                                "EMA_200": "#131722" if theme == "light" else "#FFFFFF"
                             }, height=chart_h, is_intraday=True, pivot_dict=pivot_dict_75,
                             show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
                             theme=theme
