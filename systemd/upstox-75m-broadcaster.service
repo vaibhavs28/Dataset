@@ -1,0 +1,16 @@
+[Unit]
+Description=Upstox 75-Min Waterfall & Screenshot Broadcaster
+After=network.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/home/trader/Dataset
+ExecStart=/home/trader/Dataset/venv/bin/python3 auto_75m_broadcaster.py --daemon
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/trader/Dataset/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target
