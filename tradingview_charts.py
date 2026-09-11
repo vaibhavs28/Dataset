@@ -3675,21 +3675,33 @@ def generate_quad_chart_html(
             position: relative;
         }}
         .tv-draw-bar {{
-            width: 38px;
+            width: 40px;
             background: #181c27;
             border-right: 1px solid #2A2E39;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 8px 0;
-            gap: 4px;
+            padding: 6px 0;
+            gap: 2px;
             flex-shrink: 0;
             user-select: none;
             z-index: 25;
+            overflow-y: auto;
+            overflow-x: hidden;
+        }}
+        .tv-draw-bar::-webkit-scrollbar {{
+            width: 3px;
+        }}
+        .tv-draw-bar::-webkit-scrollbar-thumb {{
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 2px;
         }}
         .light-theme .tv-draw-bar {{
             background: #f8fafc;
             border-right: 1px solid #e2e8f0;
+        }}
+        .light-theme .tv-draw-bar::-webkit-scrollbar-thumb {{
+            background: rgba(0, 0, 0, 0.15);
         }}
         .tv-tool-btn {{
             width: 28px;
@@ -3698,13 +3710,14 @@ def generate_quad_chart_html(
             border: 1px solid transparent;
             border-radius: 5px;
             color: #94A3B8;
-            font-size: 14px;
+            font-size: 13px;
             cursor: pointer;
             display: flex;
             align-items: center;
             justify-content: center;
             transition: all 0.15s ease;
             padding: 0;
+            flex-shrink: 0;
         }}
         .tv-tool-btn:hover {{
             background: #2A2E39;
@@ -3723,11 +3736,18 @@ def generate_quad_chart_html(
             border-color: #2962FF !important;
             box-shadow: 0 0 8px rgba(41, 98, 255, 0.4);
         }}
+        .tv-tool-btn.magnet-active {{
+            background: #00E5FF !important;
+            color: #0F172A !important;
+            border-color: #00E5FF !important;
+            box-shadow: 0 0 8px rgba(0, 229, 255, 0.5);
+        }}
         .tv-tool-sep {{
             width: 20px;
             height: 1px;
             background: #2A2E39;
-            margin: 4px 0;
+            margin: 2px 0;
+            flex-shrink: 0;
         }}
         .light-theme .tv-tool-sep {{
             background: #e2e8f0;
@@ -3742,6 +3762,7 @@ def generate_quad_chart_html(
             border: 2px solid #363C4E;
             box-shadow: 0 1px 3px rgba(0,0,0,0.3);
             margin: 2px 0;
+            flex-shrink: 0;
         }}
         .tv-color-picker {{
             position: absolute;
@@ -3758,6 +3779,27 @@ def generate_quad_chart_html(
             height: 100%;
             background-color: #00E5FF;
             border-radius: 50%;
+        }}
+        .tv-width-select {{
+            width: 32px;
+            height: 20px;
+            font-size: 10px;
+            font-weight: 700;
+            background: #1e222d;
+            color: #94A3B8;
+            border: 1px solid #2A2E39;
+            border-radius: 4px;
+            padding: 0 1px;
+            text-align: center;
+            cursor: pointer;
+            outline: none;
+            margin: 2px 0;
+            flex-shrink: 0;
+        }}
+        .light-theme .tv-width-select {{
+            background: #ffffff;
+            color: #1e293b;
+            border-color: #cbd5e1;
         }}
         .qc-main-wrap {{
             flex: 68;
@@ -4249,21 +4291,43 @@ def generate_quad_chart_html(
             <div id="draw_toolbar_quad" class="tv-draw-bar">
                 <button class="tv-tool-btn active" id="btn_draw_sync_quad" title="Sync drawings across all 4 quadrants (ON)">🔄</button>
                 <div class="tv-tool-sep"></div>
-                <button class="tv-tool-btn active" data-tool="pointer" title="Cursor / Pointer (Crosshair)">✛</button>
-                <button class="tv-tool-btn" data-tool="trendline" title="Trend Line">╱</button>
-                <button class="tv-tool-btn" data-tool="horizontal" title="Horizontal Line (Support/Resistance)">―</button>
-                <button class="tv-tool-btn" data-tool="ray" title="Horizontal Ray">⟶</button>
-                <button class="tv-tool-btn" data-tool="rectangle" title="Rectangle / Supply & Demand Zone">▭</button>
-                <button class="tv-tool-btn" data-tool="fib" title="Fibonacci Retracement">≡</button>
-                <button class="tv-tool-btn" data-tool="brush" title="Brush / Freehand">✎</button>
-                <button class="tv-tool-btn" data-tool="text" title="Text Annotation">T</button>
+                <button class="tv-tool-btn active" data-tool="pointer" title="Cursor / Selection & Edit (✛)">✛</button>
+                <button class="tv-tool-btn" id="btn_draw_magnet_quad" title="Magnet Mode (Snap to Candle OHLC) [M]">🧲</button>
+                <div class="tv-tool-sep"></div>
+                <button class="tv-tool-btn" data-tool="trendline" title="Trend Line (╱)">╱</button>
+                <button class="tv-tool-btn" data-tool="ray" title="Horizontal Ray (⟶)">⟶</button>
+                <button class="tv-tool-btn" data-tool="extended" title="Extended Line (↔)">↔</button>
+                <button class="tv-tool-btn" data-tool="arrow" title="Arrow (↗)">↗</button>
+                <button class="tv-tool-btn" data-tool="channel" title="Parallel Channel (∥)">∥</button>
+                <div class="tv-tool-sep"></div>
+                <button class="tv-tool-btn" data-tool="horizontal" title="Horizontal Line (―)">―</button>
+                <button class="tv-tool-btn" data-tool="vertical" title="Vertical Line (│)">│</button>
+                <button class="tv-tool-btn" data-tool="cross" title="Cross Line (┼)">┼</button>
+                <div class="tv-tool-sep"></div>
+                <button class="tv-tool-btn" data-tool="rectangle" title="Rectangle / Supply & Demand Zone (▭)">▭</button>
+                <button class="tv-tool-btn" data-tool="circle" title="Circle / Ellipse (◯)">◯</button>
+                <button class="tv-tool-btn" data-tool="fib" title="Fibonacci Retracement (≡)">≡</button>
+                <button class="tv-tool-btn" data-tool="measure" title="Price & Date Measure Ruler (📏)">📏</button>
+                <button class="tv-tool-btn" data-tool="risk_reward" title="Long/Short Risk-Reward Box (🎯)">🎯</button>
+                <div class="tv-tool-sep"></div>
+                <button class="tv-tool-btn" data-tool="brush" title="Smooth Brush / Freehand (✎)">✎</button>
+                <button class="tv-tool-btn" data-tool="highlighter" title="Highlighter Marker (🖍️)">🖍️</button>
+                <button class="tv-tool-btn" data-tool="text" title="Text Annotation (T)">T</button>
+                <button class="tv-tool-btn" data-tool="callout" title="Callout Bubble (💬)">💬</button>
                 <div class="tv-tool-sep"></div>
                 <div class="tv-color-wrapper" title="Pick Drawing Color">
                     <div id="color_dot_quad" class="tv-color-dot" style="background-color: #00E5FF;"></div>
                     <input type="color" id="draw_color_quad" value="#00E5FF" class="tv-color-picker" />
                 </div>
+                <select id="draw_width_quad" class="tv-width-select" title="Line Stroke Width">
+                    <option value="1">1px</option>
+                    <option value="2" selected>2px</option>
+                    <option value="3">3px</option>
+                    <option value="4">4px</option>
+                </select>
                 <div class="tv-tool-sep"></div>
                 <button class="tv-tool-btn" id="draw_undo_quad" title="Undo Last Drawing (Ctrl+Z)">↩</button>
+                <button class="tv-tool-btn" id="draw_delete_selected_quad" title="Delete Selected Drawing (Del/Backspace)">✕</button>
                 <button class="tv-tool-btn" id="draw_clear_quad" title="Clear All Drawings">🗑</button>
             </div>
             <div id="quad_grid" class="quad-grid">
@@ -5060,20 +5124,31 @@ def generate_quad_chart_html(
         // --- 4-QUADRANT SYNCHRONIZED DRAWING TOOLS ENGINE ---
         const quadToolbar = document.getElementById("draw_toolbar_quad");
         const syncBtnQuad = document.getElementById("btn_draw_sync_quad");
+        const magnetBtnQuad = document.getElementById("btn_draw_magnet_quad");
         const colorInputQuad = document.getElementById("draw_color_quad");
         const colorDotQuad = document.getElementById("color_dot_quad");
+        const widthInputQuad = document.getElementById("draw_width_quad");
         const undoBtnQuad = document.getElementById("draw_undo_quad");
+        const deleteSelBtnQuad = document.getElementById("draw_delete_selected_quad");
         const clearBtnQuad = document.getElementById("draw_clear_quad");
 
         let activeQuadTool = 'pointer';
         let activeQuadColor = '#00E5FF';
-        let isSyncEnabled = true; // Auto-sync drawings across all 4 quadrants by default
-        const globalQuadDrawings = []; // Unified drawing store
+        let activeQuadWidth = 2;
+        let isSyncEnabled = true;
+        let isMagnetEnabled = false;
+        let lastSnappedPoint = null;
+        const globalQuadDrawings = [];
+        let selectedDrawing = null;
         let isQuadDrawing = false;
         let activeDrawingQuad = null;
         let quadStartPoint = null;
         let quadCurrentPoint = null;
         let quadBrushPoints = [];
+        let isDraggingHandle = null;
+        let isDraggingDrawing = false;
+        let dragStartScreen = null;
+        let dragInitialPoints = null;
 
         function logicalToTimestamp(id, logical) {{
             const q = quadsRegistry[id];
@@ -5131,7 +5206,7 @@ def generate_quad_chart_html(
 
         function quadScreenToChart(id, px, py) {{
             const q = quadsRegistry[id];
-            if (!q || !q.mainChart) return {{ time: Math.floor(Date.now() / 1000), price: 0, origX: px, origY: py }};
+            if (!q || !q.mainChart) return {{ time: Math.floor(Date.now() / 1000), price: 0, origX: px, origY: py, sourceQuad: id }};
             const s = getActivePriceSeries(q);
             let logical = 0;
             let price = 0;
@@ -5152,7 +5227,7 @@ def generate_quad_chart_html(
 
         function quadChartToScreen(id, pt) {{
             const q = quadsRegistry[id];
-            if (!q || !q.mainChart) return {{ x: pt.origX || 0, y: pt.origY || 0 }};
+            if (!q || !q.mainChart || !pt) return {{ x: pt ? (pt.origX || 0) : 0, y: pt ? (pt.origY || 0) : 0 }};
             const s = getActivePriceSeries(q);
 
             let logical = 0;
@@ -5183,6 +5258,164 @@ def generate_quad_chart_html(
             return {{ x, y }};
         }}
 
+        function getMagnetOrChartPoint(id, px, py) {{
+            const normalPt = quadScreenToChart(id, px, py);
+            if (!isMagnetEnabled) return normalPt;
+            const q = quadsRegistry[id];
+            if (!q || !q.payload || !q.payload.candles || q.payload.candles.length === 0) return normalPt;
+            const s = getActivePriceSeries(q);
+            if (!s) return normalPt;
+
+            let logical = q.mainChart.timeScale().coordinateToLogical(px);
+            if (logical === null || isNaN(logical)) return normalPt;
+            let idx = Math.round(logical);
+            if (idx < 0) idx = 0;
+            if (idx >= q.payload.candles.length) idx = q.payload.candles.length - 1;
+
+            const c = q.payload.candles[idx];
+            if (!c) return normalPt;
+
+            const cx = q.mainChart.timeScale().logicalToCoordinate(idx);
+            if (cx === null || isNaN(cx)) return normalPt;
+
+            const prices = [c.open, c.high, c.low, c.close];
+            let bestPrice = null;
+            let bestDist = Infinity;
+            let bestY = null;
+
+            for (const p of prices) {{
+                const pyCoord = s.priceToCoordinate(p);
+                if (pyCoord !== null && !isNaN(pyCoord)) {{
+                    const d = Math.hypot(px - cx, py - pyCoord);
+                    if (d < bestDist) {{
+                        bestDist = d;
+                        bestPrice = p;
+                        bestY = pyCoord;
+                    }}
+                }}
+            }}
+
+            if (bestDist <= 35 && bestPrice !== null) {{
+                lastSnappedPoint = {{ id, x: cx, y: bestY }};
+                return {{
+                    time: c.time,
+                    price: bestPrice,
+                    logical: idx,
+                    origX: cx,
+                    origY: bestY,
+                    sourceQuad: id,
+                    isSnapped: true
+                }};
+            }}
+            lastSnappedPoint = null;
+            return normalPt;
+        }}
+
+        function distToSegment(px, py, x1, y1, x2, y2) {{
+            const l2 = Math.hypot(x2 - x1, y2 - y1);
+            if (l2 === 0) return Math.hypot(px - x1, py - y1);
+            let t = ((px - x1) * (x2 - x1) + (py - y1) * (y2 - y1)) / (l2 * l2);
+            t = Math.max(0, Math.min(1, t));
+            return Math.hypot(px - (x1 + t * (x2 - x1)), py - (y1 + t * (y2 - y1)));
+        }}
+
+        function findDrawingAtPoint(id, px, py) {{
+            const q = quadsRegistry[id];
+            if (!q || !q.mainChart) return null;
+            const s = getActivePriceSeries(q);
+            const w = q.mainContainer.clientWidth;
+
+            for (let i = globalQuadDrawings.length - 1; i >= 0; i--) {{
+                const item = globalQuadDrawings[i];
+                if (!item.isSync && item.sourceQuad !== id) continue;
+
+                if (item.type === 'horizontal') {{
+                    let y = 0;
+                    if (s && item.price !== undefined) {{
+                        const cy = s.priceToCoordinate(item.price);
+                        if (cy !== null && !isNaN(cy)) y = cy;
+                    }} else if (item.origY !== undefined) y = item.origY;
+                    if (Math.abs(py - y) <= 8) return item;
+                }} else if (item.type === 'vertical') {{
+                    let x = 0;
+                    if (item.time) {{
+                        const log = timestampToLogical(id, item.time);
+                        const cx = q.mainChart.timeScale().logicalToCoordinate(log);
+                        if (cx !== null && !isNaN(cx)) x = cx;
+                    }}
+                    if (Math.abs(px - x) <= 8) return item;
+                }} else if (item.type === 'cross') {{
+                    if (item.p1) {{
+                        const s1 = quadChartToScreen(id, item.p1);
+                        if (Math.abs(px - s1.x) <= 8 || Math.abs(py - s1.y) <= 8) return item;
+                    }}
+                }} else if (['trendline', 'arrow', 'ray', 'extended'].includes(item.type)) {{
+                    const s1 = quadChartToScreen(id, item.p1);
+                    const s2 = quadChartToScreen(id, item.p2);
+                    if (distToSegment(px, py, s1.x, s1.y, s2.x, s2.y) <= 8) return item;
+                    if (item.type === 'ray') {{
+                        const dx = s2.x - s1.x, dy = s2.y - s1.y;
+                        const endY = dx !== 0 ? s1.y + (dy / dx) * (w - s1.x) : s2.y;
+                        if (distToSegment(px, py, s1.x, s1.y, w, endY) <= 8) return item;
+                    }} else if (item.type === 'extended') {{
+                        const dx = s2.x - s1.x, dy = s2.y - s1.y;
+                        const slope = dx !== 0 ? (dy / dx) : 0;
+                        const y0 = s1.y - slope * s1.x;
+                        const y1 = s1.y + slope * (w - s1.x);
+                        if (distToSegment(px, py, 0, y0, w, y1) <= 8) return item;
+                    }}
+                }} else if (['rectangle', 'measure', 'risk_reward'].includes(item.type)) {{
+                    const s1 = quadChartToScreen(id, item.p1);
+                    const s2 = quadChartToScreen(id, item.p2);
+                    const rx = Math.min(s1.x, s2.x), ry = Math.min(s1.y, s2.y);
+                    const rw = Math.abs(s2.x - s1.x), rh = Math.abs(s2.y - s1.y);
+                    if (px >= rx - 5 && px <= rx + rw + 5 && py >= ry - 5 && py <= ry + rh + 5) return item;
+                }} else if (item.type === 'circle') {{
+                    const s1 = quadChartToScreen(id, item.p1);
+                    const s2 = quadChartToScreen(id, item.p2);
+                    const cx = (s1.x + s2.x) / 2, cy = (s1.y + s2.y) / 2;
+                    const rx = Math.max(3, Math.abs(s2.x - s1.x) / 2);
+                    const ry = Math.max(3, Math.abs(s2.y - s1.y) / 2);
+                    const d = Math.pow((px - cx) / rx, 2) + Math.pow((py - cy) / ry, 2);
+                    if (Math.abs(d - 1) <= 0.4 || d <= 1) return item;
+                }} else if (item.type === 'channel') {{
+                    const s1 = quadChartToScreen(id, item.p1);
+                    const s2 = quadChartToScreen(id, item.p2);
+                    const offY = item.channelOffsetY || 30;
+                    if (distToSegment(px, py, s1.x, s1.y, s2.x, s2.y) <= 8 || distToSegment(px, py, s1.x, s1.y + offY, s2.x, s2.y + offY) <= 8) return item;
+                }} else if (['brush', 'highlighter'].includes(item.type)) {{
+                    if (item.points) {{
+                        for (let j = 0; j < item.points.length - 1; j++) {{
+                            const sp1 = quadChartToScreen(id, item.points[j]);
+                            const sp2 = quadChartToScreen(id, item.points[j + 1]);
+                            if (distToSegment(px, py, sp1.x, sp1.y, sp2.x, sp2.y) <= (item.type === 'highlighter' ? 12 : 8)) return item;
+                        }}
+                    }}
+                }} else if (['text', 'callout'].includes(item.type)) {{
+                    const s1 = quadChartToScreen(id, item.p1);
+                    if (Math.hypot(px - s1.x, py - s1.y) <= 30) return item;
+                }}
+            }}
+            return null;
+        }}
+
+        function findHandleAtPoint(id, item, px, py) {{
+            if (!item) return null;
+            if (item.p1) {{
+                const s1 = quadChartToScreen(id, item.p1);
+                if (Math.hypot(px - s1.x, py - s1.y) <= 9) return 'p1';
+            }}
+            if (item.p2) {{
+                const s2 = quadChartToScreen(id, item.p2);
+                if (Math.hypot(px - s2.x, py - s2.y) <= 9) return 'p2';
+            }}
+            if (item.p3) {{
+                const s3 = quadChartToScreen(id, item.p3);
+                if (Math.hypot(px - s3.x, py - s3.y) <= 9) return 'p3';
+            }}
+            return null;
+        }}
+
         function resizeQuadDrawLayer(id) {{
             const q = quadsRegistry[id];
             const canvas = document.getElementById('draw_canvas_' + id);
@@ -5200,15 +5433,10 @@ def generate_quad_chart_html(
         }}
 
         function hexToRgbaQuad(hex, alpha) {{
-            let c = hex.replace('#', '');
-            if (c.length === 3) {{
-                c = c.split('').map(x => x + x).join('');
-            }}
+            let c = (hex || '#00E5FF').replace('#', '');
+            if (c.length === 3) c = c.split('').map(x => x + x).join('');
             const num = parseInt(c, 16);
-            const r = (num >> 16) & 255;
-            const g = (num >> 8) & 255;
-            const b = num & 255;
-            return `rgba(${{r}}, ${{g}}, ${{b}}, ${{alpha}})`;
+            return `rgba(${{(num >> 16) & 255}}, ${{(num >> 8) & 255}}, ${{num & 255}}, ${{alpha}})`;
         }}
 
         function drawQuadRoundedRect(ctx, x, y, w, h, r) {{
@@ -5222,7 +5450,7 @@ def generate_quad_chart_html(
         }}
 
         function drawQuadPriceBadge(ctx, price, y, color, w) {{
-            if (y < 0) return;
+            if (y < 0 || price === undefined || price === null) return;
             const priceStr = "₹" + Number(price).toFixed(2);
             ctx.save();
             ctx.font = "bold 9px 'SF Mono', Consolas, Monaco, monospace";
@@ -5243,6 +5471,49 @@ def generate_quad_chart_html(
             ctx.restore();
         }}
 
+        function drawQuadTimeBadge(ctx, timeVal, x, color, h) {{
+            let tStr = '';
+            if (typeof timeVal === 'number') {{
+                const d = new Date(timeVal * 1000);
+                tStr = d.toLocaleDateString('en-IN', {{ timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', year: 'numeric' }});
+            }} else {{
+                tStr = String(timeVal);
+            }}
+            ctx.save();
+            ctx.font = "bold 8.5px 'SF Mono', Consolas, monospace";
+            const textW = ctx.measureText(tStr).width;
+            const badgeW = textW + 10;
+            const badgeH = 15;
+            const badgeX = Math.max(5, x - badgeW / 2);
+            const badgeY = h - badgeH - 4;
+            ctx.fillStyle = color;
+            drawQuadRoundedRect(ctx, badgeX, badgeY, badgeW, badgeH, 3);
+            ctx.fill();
+            ctx.fillStyle = "#ffffff";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(tStr, badgeX + badgeW / 2, badgeY + badgeH / 2);
+            ctx.restore();
+        }}
+
+        function drawSelectionHandles(ctx, id, item) {{
+            ctx.save();
+            ctx.fillStyle = "#ffffff";
+            ctx.strokeStyle = "#2962FF";
+            ctx.lineWidth = 2;
+            const pts = [];
+            if (item.p1) pts.push(quadChartToScreen(id, item.p1));
+            if (item.p2) pts.push(quadChartToScreen(id, item.p2));
+            if (item.p3) pts.push(quadChartToScreen(id, item.p3));
+            for (const p of pts) {{
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+            }}
+            ctx.restore();
+        }}
+
         function drawQuadSingleItem(ctx, id, item, w, h) {{
             ctx.save();
             const color = item.color || '#00E5FF';
@@ -5260,13 +5531,81 @@ def generate_quad_chart_html(
                 ctx.lineTo(s2.x, s2.y);
                 ctx.stroke();
 
-                ctx.fillStyle = color;
                 ctx.beginPath();
                 ctx.arc(s1.x, s1.y, 3, 0, Math.PI * 2);
-                ctx.fill();
-                ctx.beginPath();
                 ctx.arc(s2.x, s2.y, 3, 0, Math.PI * 2);
                 ctx.fill();
+            }} else if (item.type === 'ray') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                const dx = s2.x - s1.x;
+                const dy = s2.y - s1.y;
+                let endY = s2.y;
+                if (dx !== 0) {{
+                    endY = s1.y + (dy / dx) * (w - s1.x);
+                }}
+                ctx.beginPath();
+                ctx.moveTo(s1.x, s1.y);
+                ctx.lineTo(w, endY);
+                ctx.stroke();
+                drawQuadPriceBadge(ctx, item.p2 ? item.p2.price : item.p1.price, endY, color, w);
+            }} else if (item.type === 'extended') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                const dx = s2.x - s1.x;
+                const dy = s2.y - s1.y;
+                let y0 = s1.y, y1 = s2.y;
+                if (dx !== 0) {{
+                    const slope = dy / dx;
+                    y0 = s1.y - slope * s1.x;
+                    y1 = s1.y + slope * (w - s1.x);
+                }}
+                ctx.beginPath();
+                ctx.moveTo(0, y0);
+                ctx.lineTo(w, y1);
+                ctx.stroke();
+            }} else if (item.type === 'arrow') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                ctx.beginPath();
+                ctx.moveTo(s1.x, s1.y);
+                ctx.lineTo(s2.x, s2.y);
+                ctx.stroke();
+
+                const angle = Math.atan2(s2.y - s1.y, s2.x - s1.x);
+                const aLen = 11;
+                ctx.beginPath();
+                ctx.moveTo(s2.x, s2.y);
+                ctx.lineTo(s2.x - aLen * Math.cos(angle - Math.PI / 6), s2.y - aLen * Math.sin(angle - Math.PI / 6));
+                ctx.lineTo(s2.x - aLen * Math.cos(angle + Math.PI / 6), s2.y - aLen * Math.sin(angle + Math.PI / 6));
+                ctx.closePath();
+                ctx.fill();
+            }} else if (item.type === 'channel') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                const offY = item.channelOffsetY || 30;
+                ctx.fillStyle = hexToRgbaQuad(color, 0.12);
+                ctx.beginPath();
+                ctx.moveTo(s1.x, s1.y);
+                ctx.lineTo(s2.x, s2.y);
+                ctx.lineTo(s2.x, s2.y + offY);
+                ctx.lineTo(s1.x, s1.y + offY);
+                ctx.closePath();
+                ctx.fill();
+
+                ctx.beginPath();
+                ctx.moveTo(s1.x, s1.y);
+                ctx.lineTo(s2.x, s2.y);
+                ctx.moveTo(s1.x, s1.y + offY);
+                ctx.lineTo(s2.x, s2.y + offY);
+                ctx.stroke();
+
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(s1.x, s1.y + offY / 2);
+                ctx.lineTo(s2.x, s2.y + offY / 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
             }} else if (item.type === 'horizontal') {{
                 const s = getActivePriceSeries(quadsRegistry[id]);
                 let y = 0;
@@ -5284,47 +5623,56 @@ def generate_quad_chart_html(
                 ctx.stroke();
                 ctx.setLineDash([]);
                 drawQuadPriceBadge(ctx, item.price, y, color, w);
-            }} else if (item.type === 'ray') {{
-                const s = getActivePriceSeries(quadsRegistry[id]);
-                const s1 = quadChartToScreen(id, item.p1);
-                let startX = Math.max(0, s1.x);
-                let y = s1.y;
-                if (s && item.p1 && item.p1.price !== undefined && item.p1.price !== null) {{
-                    try {{
-                        const cy = s.priceToCoordinate(item.p1.price);
-                        if (cy !== null && !isNaN(cy)) y = cy;
-                    }} catch(e) {{}}
-                }}
-                ctx.setLineDash([5, 3]);
+            }} else if (item.type === 'vertical') {{
+                const q = quadsRegistry[id];
+                const log = timestampToLogical(id, item.time);
+                const x = (q && q.mainChart) ? q.mainChart.timeScale().logicalToCoordinate(log) : (item.origX || 0);
+                ctx.setLineDash([5, 4]);
                 ctx.beginPath();
-                ctx.moveTo(startX, y);
-                ctx.lineTo(w, y);
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, h);
                 ctx.stroke();
                 ctx.setLineDash([]);
-                if (s1.x >= 0 && s1.x <= w) {{
-                    ctx.fillStyle = color;
-                    ctx.beginPath();
-                    ctx.arc(s1.x, y, 3, 0, Math.PI * 2);
-                    ctx.fill();
-                }}
-                drawQuadPriceBadge(ctx, item.p1.price, y, color, w);
+                drawQuadTimeBadge(ctx, item.time, x, color, h);
+            }} else if (item.type === 'cross') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                ctx.setLineDash([4, 3]);
+                ctx.beginPath();
+                ctx.moveTo(0, s1.y);
+                ctx.lineTo(w, s1.y);
+                ctx.moveTo(s1.x, 0);
+                ctx.lineTo(s1.x, h);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                drawQuadPriceBadge(ctx, item.p1 ? item.p1.price : 0, s1.y, color, w);
+                drawQuadTimeBadge(ctx, item.p1 ? item.p1.time : 0, s1.x, color, h);
             }} else if (item.type === 'rectangle') {{
                 const s1 = quadChartToScreen(id, item.p1);
                 const s2 = quadChartToScreen(id, item.p2);
-                const rx = Math.min(s1.x, s2.x);
-                const ry = Math.min(s1.y, s2.y);
-                const rw = Math.abs(s2.x - s1.x);
-                const rh = Math.abs(s2.y - s1.y);
+                const rx = Math.min(s1.x, s2.x), ry = Math.min(s1.y, s2.y);
+                const rw = Math.abs(s2.x - s1.x), rh = Math.abs(s2.y - s1.y);
 
-                ctx.fillStyle = hexToRgbaQuad(color, 0.18);
+                ctx.fillStyle = hexToRgbaQuad(color, 0.16);
                 ctx.fillRect(rx, ry, rw, rh);
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 1.5;
                 ctx.strokeRect(rx, ry, rw, rh);
 
-                ctx.font = "8px sans-serif";
+                ctx.font = "bold 8px sans-serif";
                 ctx.fillStyle = color;
                 ctx.fillText("ZONE", rx + 4, ry + 10);
+            }} else if (item.type === 'circle') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                const cx = (s1.x + s2.x) / 2, cy = (s1.y + s2.y) / 2;
+                const rx = Math.max(3, Math.abs(s2.x - s1.x) / 2);
+                const ry = Math.max(3, Math.abs(s2.y - s1.y) / 2);
+
+                ctx.fillStyle = hexToRgbaQuad(color, 0.15);
+                ctx.beginPath();
+                ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
             }} else if (item.type === 'fib') {{
                 const s = getActivePriceSeries(quadsRegistry[id]);
                 const s1 = quadChartToScreen(id, item.p1);
@@ -5379,20 +5727,119 @@ def generate_quad_chart_html(
                     ctx.fillStyle = fib.r === 0.618 || fib.r === 0.5 ? '#FACC15' : color;
                     ctx.fillText(fib.label + lvlPrice.toFixed(1) + ")", minX + 4, ly - 2);
                 }}
-            }} else if (item.type === 'brush') {{
-                if (!item.points || item.points.length < 2) return;
+            }} else if (item.type === 'measure') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                const minX = Math.min(s1.x, s2.x), minY = Math.min(s1.y, s2.y);
+                const rw = Math.abs(s2.x - s1.x), rh = Math.abs(s2.y - s1.y);
+                const isGain = (item.p2.price >= item.p1.price);
+                const boxColor = isGain ? '#089981' : '#F23645';
+                ctx.fillStyle = hexToRgbaQuad(boxColor, 0.14);
+                ctx.fillRect(minX, minY, rw, rh);
+                ctx.strokeStyle = boxColor;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                ctx.strokeRect(minX, minY, rw, rh);
+                ctx.setLineDash([]);
+
                 ctx.beginPath();
-                const s0 = quadChartToScreen(id, item.points[0]);
-                ctx.moveTo(s0.x, s0.y);
-                for (let i = 1; i < item.points.length; i++) {{
-                    const sp = quadChartToScreen(id, item.points[i]);
-                    ctx.lineTo(sp.x, sp.y);
+                ctx.moveTo(s1.x, s1.y);
+                ctx.lineTo(s2.x, s2.y);
+                ctx.stroke();
+
+                const pDiff = item.p2.price - item.p1.price;
+                const pct = item.p1.price ? (pDiff / item.p1.price) * 100 : 0;
+                const log1 = timestampToLogical(id, item.p1.time);
+                const log2 = timestampToLogical(id, item.p2.time);
+                const bars = Math.abs(Math.round(log2 - log1));
+                const sign = pDiff >= 0 ? '+' : '';
+                const lblText = `${{sign}}₹${{pDiff.toFixed(2)}} (${{sign}}${{pct.toFixed(2)}}%) | ${{bars}} bars`;
+
+                ctx.font = "bold 9px 'SF Mono', Consolas, monospace";
+                const tw = ctx.measureText(lblText).width;
+                const bx = minX + rw / 2 - (tw + 12) / 2;
+                const by = minY + rh / 2 - 9;
+                ctx.fillStyle = boxColor;
+                drawQuadRoundedRect(ctx, bx, by, tw + 12, 18, 4);
+                ctx.fill();
+                ctx.fillStyle = "#ffffff";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(lblText, bx + (tw + 12) / 2, by + 9);
+            }} else if (item.type === 'risk_reward') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                const isLong = (item.p2.price >= item.p1.price);
+                const riskDiff = Math.abs(item.p2.price - item.p1.price) / 2;
+                const stopPrice = isLong ? item.p1.price - riskDiff : item.p1.price + riskDiff;
+                const stopPt = quadChartToScreen(id, {{ price: stopPrice, time: item.p1.time }});
+
+                const rx = Math.min(s1.x, s2.x);
+                const rw = Math.max(90, Math.abs(s2.x - s1.x));
+
+                const tTop = Math.min(s1.y, s2.y);
+                const tH = Math.abs(s2.y - s1.y);
+                ctx.fillStyle = "rgba(8, 153, 129, 0.22)";
+                ctx.fillRect(rx, tTop, rw, tH);
+                ctx.strokeStyle = "#089981";
+                ctx.lineWidth = 1;
+                ctx.strokeRect(rx, tTop, rw, tH);
+
+                const sTop = Math.min(s1.y, stopPt.y);
+                const sH = Math.abs(stopPt.y - s1.y);
+                ctx.fillStyle = "rgba(242, 54, 69, 0.22)";
+                ctx.fillRect(rx, sTop, rw, sH);
+                ctx.strokeStyle = "#F23645";
+                ctx.strokeRect(rx, sTop, rw, sH);
+
+                ctx.strokeStyle = "#FFFFFF";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(rx, s1.y);
+                ctx.lineTo(rx + rw, s1.y);
+                ctx.stroke();
+
+                const rrText = `R:R 2.00 | Target: ₹${{item.p2.price.toFixed(1)}} | Stop: ₹${{stopPrice.toFixed(1)}}`;
+                ctx.font = "bold 8.5px 'SF Mono', Consolas, monospace";
+                const tw = ctx.measureText(rrText).width;
+                const bx = rx + rw / 2 - (tw + 10) / 2;
+                const by = s1.y - 8;
+                ctx.fillStyle = "rgba(20, 24, 35, 0.9)";
+                drawQuadRoundedRect(ctx, bx, by, tw + 10, 16, 3);
+                ctx.fill();
+                ctx.strokeStyle = "#2962FF";
+                ctx.stroke();
+                ctx.fillStyle = "#FFFFFF";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(rrText, bx + (tw + 10) / 2, by + 8);
+            }} else if (['brush', 'highlighter'].includes(item.type)) {{
+                if (!item.points || item.points.length < 2) return;
+                const isHighlighter = (item.type === 'highlighter');
+                ctx.lineWidth = isHighlighter ? 14 : (item.width || 2);
+                ctx.strokeStyle = isHighlighter ? hexToRgbaQuad(color, 0.28) : color;
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+
+                const screenPts = item.points.map(pt => quadChartToScreen(id, pt));
+                ctx.beginPath();
+                ctx.moveTo(screenPts[0].x, screenPts[0].y);
+
+                if (screenPts.length === 2) {{
+                    ctx.lineTo(screenPts[1].x, screenPts[1].y);
+                }} else {{
+                    for (let i = 1; i < screenPts.length - 1; i++) {{
+                        const xc = (screenPts[i].x + screenPts[i + 1].x) / 2;
+                        const yc = (screenPts[i].y + screenPts[i + 1].y) / 2;
+                        ctx.quadraticCurveTo(screenPts[i].x, screenPts[i].y, xc, yc);
+                    }}
+                    ctx.lineTo(screenPts[screenPts.length - 1].x, screenPts[screenPts.length - 1].y);
                 }}
                 ctx.stroke();
             }} else if (item.type === 'text') {{
                 const s1 = quadChartToScreen(id, item.p1);
                 ctx.font = "bold 10px sans-serif";
-                const tw = ctx.measureText(item.text).width;
+                const tw = ctx.measureText(item.text || "Note").width;
                 const th = 18;
                 const bx = s1.x + 4;
                 const by = s1.y - th / 2;
@@ -5408,8 +5855,38 @@ def generate_quad_chart_html(
                 ctx.fillStyle = color;
                 ctx.textAlign = "left";
                 ctx.textBaseline = "middle";
-                ctx.fillText(item.text, bx + 6, s1.y);
+                ctx.fillText(item.text || "Note", bx + 6, s1.y);
+            }} else if (item.type === 'callout') {{
+                const s1 = quadChartToScreen(id, item.p1);
+                const s2 = quadChartToScreen(id, item.p2);
+                const text = item.text || "Note";
+                ctx.font = "bold 9.5px sans-serif";
+                const tw = ctx.measureText(text).width;
+                const bw = tw + 16, bh = 22;
+                const bx = s2.x - bw / 2, by = s2.y - bh / 2;
+
+                ctx.beginPath();
+                ctx.moveTo(s2.x, s2.y);
+                ctx.lineTo(s1.x, s1.y);
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.stroke();
+
+                ctx.fillStyle = (QUAD_DATA.theme === 'light') ? "#FFFFFF" : "#1e222d";
+                drawQuadRoundedRect(ctx, bx, by, bw, bh, 5);
+                ctx.fill();
+                ctx.strokeStyle = color;
+                ctx.stroke();
+                ctx.fillStyle = (QUAD_DATA.theme === 'light') ? "#0F172A" : "#FFFFFF";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(text, bx + bw / 2, by + bh / 2);
             }}
+
+            if (selectedDrawing && selectedDrawing.id === item.id) {{
+                drawSelectionHandles(ctx, id, item);
+            }}
+
             ctx.restore();
         }}
 
@@ -5422,33 +5899,43 @@ def generate_quad_chart_html(
             const h = q.mainContainer.clientHeight;
             ctx.clearRect(0, 0, w, h);
 
-            // Render all synced drawings or drawings originating from this quadrant
             for (const d of globalQuadDrawings) {{
                 if (d.isSync || d.sourceQuad === id) {{
                     drawQuadSingleItem(ctx, id, d, w, h);
                 }}
             }}
 
-            // Render live preview on currently active drawing quadrant
             if (activeDrawingQuad === id && isQuadDrawing && quadStartPoint && quadCurrentPoint) {{
                 const previewItem = {{
                     type: activeQuadTool,
                     p1: quadStartPoint,
                     p2: quadCurrentPoint,
                     color: activeQuadColor,
-                    width: 2,
+                    width: activeQuadWidth,
                     isPreview: true
                 }};
                 drawQuadSingleItem(ctx, id, previewItem, w, h);
-            }} else if (activeDrawingQuad === id && isQuadDrawing && activeQuadTool === 'brush' && quadBrushPoints.length > 1) {{
+            }} else if (activeDrawingQuad === id && isQuadDrawing && ['brush', 'highlighter'].includes(activeQuadTool) && quadBrushPoints.length > 1) {{
                 const previewItem = {{
-                    type: 'brush',
+                    type: activeQuadTool,
                     points: quadBrushPoints,
                     color: activeQuadColor,
-                    width: 2,
+                    width: activeQuadWidth,
                     isPreview: true
                 }};
                 drawQuadSingleItem(ctx, id, previewItem, w, h);
+            }}
+
+            if (isMagnetEnabled && lastSnappedPoint && lastSnappedPoint.id === id) {{
+                ctx.save();
+                ctx.strokeStyle = "#00E5FF";
+                ctx.fillStyle = "rgba(0, 229, 255, 0.4)";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(lastSnappedPoint.x, lastSnappedPoint.y, 5, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.stroke();
+                ctx.restore();
             }}
         }}
 
@@ -5458,6 +5945,9 @@ def generate_quad_chart_html(
 
         function setQuadTool(toolName) {{
             activeQuadTool = toolName;
+            if (activeQuadTool !== 'pointer') {{
+                selectedDrawing = null;
+            }}
             const toolBtns = quadToolbar ? quadToolbar.querySelectorAll(".tv-tool-btn[data-tool]") : [];
             toolBtns.forEach(btn => {{
                 btn.classList.toggle("active", btn.getAttribute("data-tool") === toolName);
@@ -5467,7 +5957,7 @@ def generate_quad_chart_html(
                 const canvas = document.getElementById('draw_canvas_' + k);
                 if (canvas) {{
                     if (activeQuadTool === 'pointer') {{
-                        canvas.style.pointerEvents = 'none';
+                        canvas.style.pointerEvents = 'auto';
                         canvas.style.cursor = 'default';
                     }} else {{
                         canvas.style.pointerEvents = 'auto';
@@ -5475,15 +5965,24 @@ def generate_quad_chart_html(
                     }}
                 }}
             }});
+            renderAllQuadDrawings();
         }}
 
         if (quadToolbar) {{
             quadToolbar.addEventListener("click", (e) => {{
                 const btn = e.target.closest(".tv-tool-btn[data-tool]");
                 if (btn) {{
-                    const t = btn.getAttribute("data-tool");
-                    setQuadTool(t);
+                    setQuadTool(btn.getAttribute("data-tool"));
                 }}
+            }});
+        }}
+
+        if (magnetBtnQuad) {{
+            magnetBtnQuad.addEventListener("click", () => {{
+                isMagnetEnabled = !isMagnetEnabled;
+                magnetBtnQuad.classList.toggle("magnet-active", isMagnetEnabled);
+                magnetBtnQuad.title = isMagnetEnabled ? "Magnet Mode: ON (Snap to Candle OHLC) [M]" : "Magnet Mode: OFF (Snap to Candle OHLC) [M]";
+                renderAllQuadDrawings();
             }});
         }}
 
@@ -5504,6 +6003,20 @@ def generate_quad_chart_html(
             colorInputQuad.addEventListener("input", (e) => {{
                 activeQuadColor = e.target.value;
                 if (colorDotQuad) colorDotQuad.style.backgroundColor = activeQuadColor;
+                if (selectedDrawing) {{
+                    selectedDrawing.color = activeQuadColor;
+                    renderAllQuadDrawings();
+                }}
+            }});
+        }}
+
+        if (widthInputQuad) {{
+            widthInputQuad.addEventListener("change", (e) => {{
+                activeQuadWidth = parseInt(e.target.value, 10) || 2;
+                if (selectedDrawing) {{
+                    selectedDrawing.width = activeQuadWidth;
+                    renderAllQuadDrawings();
+                }}
             }});
         }}
 
@@ -5511,7 +6024,21 @@ def generate_quad_chart_html(
             undoBtnQuad.addEventListener("click", () => {{
                 if (globalQuadDrawings.length > 0) {{
                     globalQuadDrawings.pop();
+                    selectedDrawing = null;
                     renderAllQuadDrawings();
+                }}
+            }});
+        }}
+
+        if (deleteSelBtnQuad) {{
+            deleteSelBtnQuad.addEventListener("click", () => {{
+                if (selectedDrawing) {{
+                    const idx = globalQuadDrawings.findIndex(d => d.id === selectedDrawing.id);
+                    if (idx !== -1) {{
+                        globalQuadDrawings.splice(idx, 1);
+                        selectedDrawing = null;
+                        renderAllQuadDrawings();
+                    }}
                 }}
             }});
         }}
@@ -5520,6 +6047,7 @@ def generate_quad_chart_html(
             clearBtnQuad.addEventListener("click", () => {{
                 if (globalQuadDrawings.length > 0 && confirm("Clear all drawings across all 4 quadrants?")) {{
                     globalQuadDrawings.length = 0;
+                    selectedDrawing = null;
                     renderAllQuadDrawings();
                 }}
             }});
@@ -5530,21 +6058,51 @@ def generate_quad_chart_html(
             if (!canvas) return;
 
             canvas.addEventListener("mousedown", (e) => {{
-                if (activeQuadTool === 'pointer') return;
-                activeDrawingQuad = id;
                 const rect = canvas.getBoundingClientRect();
                 const px = e.clientX - rect.left;
                 const py = e.clientY - rect.top;
 
+                if (activeQuadTool === 'pointer') {{
+                    if (selectedDrawing) {{
+                        const handle = findHandleAtPoint(id, selectedDrawing, px, py);
+                        if (handle) {{
+                            isDraggingHandle = handle;
+                            activeDrawingQuad = id;
+                            dragStartScreen = {{ px, py }};
+                            return;
+                        }}
+                    }}
+
+                    const clicked = findDrawingAtPoint(id, px, py);
+                    if (clicked) {{
+                        selectedDrawing = clicked;
+                        isDraggingDrawing = true;
+                        activeDrawingQuad = id;
+                        dragStartScreen = {{ px, py }};
+                        dragInitialPoints = {{
+                            p1: clicked.p1 ? {{ ...clicked.p1 }} : null,
+                            p2: clicked.p2 ? {{ ...clicked.p2 }} : null,
+                            price: clicked.price,
+                            origY: clicked.origY
+                        }};
+                    }} else {{
+                        selectedDrawing = null;
+                    }}
+                    renderAllQuadDrawings();
+                    return;
+                }}
+
+                activeDrawingQuad = id;
+                const pt = getMagnetOrChartPoint(id, px, py);
+
                 if (activeQuadTool === 'horizontal') {{
-                    const pt = quadScreenToChart(id, px, py);
                     globalQuadDrawings.push({{
                         id: Date.now(),
                         type: 'horizontal',
                         price: pt.price,
                         origY: py,
                         color: activeQuadColor,
-                        width: 2,
+                        width: activeQuadWidth,
                         sourceQuad: id,
                         isSync: isSyncEnabled
                     }});
@@ -5552,14 +6110,28 @@ def generate_quad_chart_html(
                     return;
                 }}
 
-                if (activeQuadTool === 'ray') {{
-                    const pt = quadScreenToChart(id, px, py);
+                if (activeQuadTool === 'vertical') {{
                     globalQuadDrawings.push({{
                         id: Date.now(),
-                        type: 'ray',
+                        type: 'vertical',
+                        time: pt.time,
+                        origX: px,
+                        color: activeQuadColor,
+                        width: activeQuadWidth,
+                        sourceQuad: id,
+                        isSync: isSyncEnabled
+                    }});
+                    renderAllQuadDrawings();
+                    return;
+                }}
+
+                if (activeQuadTool === 'cross') {{
+                    globalQuadDrawings.push({{
+                        id: Date.now(),
+                        type: 'cross',
                         p1: pt,
                         color: activeQuadColor,
-                        width: 2,
+                        width: activeQuadWidth,
                         sourceQuad: id,
                         isSync: isSyncEnabled
                     }});
@@ -5568,7 +6140,6 @@ def generate_quad_chart_html(
                 }}
 
                 if (activeQuadTool === 'text') {{
-                    const pt = quadScreenToChart(id, px, py);
                     const textVal = prompt("Enter chart annotation:", "Key Level");
                     if (textVal && textVal.trim()) {{
                         globalQuadDrawings.push({{
@@ -5577,6 +6148,7 @@ def generate_quad_chart_html(
                             p1: pt,
                             text: textVal.trim(),
                             color: activeQuadColor,
+                            width: activeQuadWidth,
                             sourceQuad: id,
                             isSync: isSyncEnabled
                         }});
@@ -5585,38 +6157,87 @@ def generate_quad_chart_html(
                     return;
                 }}
 
-                if (activeQuadTool === 'brush') {{
+                if (['brush', 'highlighter'].includes(activeQuadTool)) {{
                     isQuadDrawing = true;
-                    quadBrushPoints = [quadScreenToChart(id, px, py)];
+                    quadBrushPoints = [pt];
                     renderQuadDrawings(id);
                     return;
                 }}
 
-                if (['trendline', 'rectangle', 'fib'].includes(activeQuadTool)) {{
-                    isQuadDrawing = true;
-                    quadStartPoint = quadScreenToChart(id, px, py);
-                    quadCurrentPoint = quadStartPoint;
-                    renderQuadDrawings(id);
-                }}
+                isQuadDrawing = true;
+                quadStartPoint = pt;
+                quadCurrentPoint = pt;
+                renderQuadDrawings(id);
             }});
 
             canvas.addEventListener("mousemove", (e) => {{
-                if (!isQuadDrawing || activeDrawingQuad !== id) return;
                 const rect = canvas.getBoundingClientRect();
                 const px = e.clientX - rect.left;
                 const py = e.clientY - rect.top;
 
-                if (activeQuadTool === 'brush') {{
-                    quadBrushPoints.push(quadScreenToChart(id, px, py));
+                if (activeQuadTool === 'pointer') {{
+                    if (isDraggingHandle && selectedDrawing) {{
+                        const newPt = getMagnetOrChartPoint(id, px, py);
+                        selectedDrawing[isDraggingHandle] = newPt;
+                        renderAllQuadDrawings();
+                        return;
+                    }}
+                    if (isDraggingDrawing && selectedDrawing && dragStartScreen && dragInitialPoints) {{
+                        const dx = px - dragStartScreen.px;
+                        const dy = py - dragStartScreen.py;
+                        if (selectedDrawing.p1 && dragInitialPoints.p1) {{
+                            selectedDrawing.p1 = quadScreenToChart(id, dragInitialPoints.p1.origX + dx, dragInitialPoints.p1.origY + dy);
+                        }}
+                        if (selectedDrawing.p2 && dragInitialPoints.p2) {{
+                            selectedDrawing.p2 = quadScreenToChart(id, dragInitialPoints.p2.origX + dx, dragInitialPoints.p2.origY + dy);
+                        }}
+                        if (selectedDrawing.type === 'horizontal') {{
+                            const qPt = quadScreenToChart(id, px, (dragInitialPoints.origY || 0) + dy);
+                            selectedDrawing.price = qPt.price;
+                            selectedDrawing.origY = (dragInitialPoints.origY || 0) + dy;
+                        }}
+                        renderAllQuadDrawings();
+                        return;
+                    }}
+
+                    if (selectedDrawing && findHandleAtPoint(id, selectedDrawing, px, py)) {{
+                        canvas.style.cursor = 'crosshair';
+                    }} else if (findDrawingAtPoint(id, px, py)) {{
+                        canvas.style.cursor = 'move';
+                    }} else {{
+                        canvas.style.cursor = 'default';
+                    }}
+                    return;
+                }}
+
+                if (!isQuadDrawing || activeDrawingQuad !== id) {{
+                    if (isMagnetEnabled) {{
+                        getMagnetOrChartPoint(id, px, py);
+                        renderQuadDrawings(id);
+                    }}
+                    return;
+                }}
+
+                const pt = getMagnetOrChartPoint(id, px, py);
+                if (['brush', 'highlighter'].includes(activeQuadTool)) {{
+                    quadBrushPoints.push(pt);
                     renderQuadDrawings(id);
-                }} else if (['trendline', 'rectangle', 'fib'].includes(activeQuadTool)) {{
-                    quadCurrentPoint = quadScreenToChart(id, px, py);
+                }} else {{
+                    quadCurrentPoint = pt;
                     renderQuadDrawings(id);
                 }}
             }});
         }});
 
         window.addEventListener("mouseup", (e) => {{
+            if (isDraggingHandle || isDraggingDrawing) {{
+                isDraggingHandle = null;
+                isDraggingDrawing = false;
+                dragStartScreen = null;
+                dragInitialPoints = null;
+                renderAllQuadDrawings();
+            }}
+
             if (!isQuadDrawing || !activeDrawingQuad) return;
             const id = activeDrawingQuad;
             const canvas = document.getElementById('draw_canvas_' + id);
@@ -5624,23 +6245,38 @@ def generate_quad_chart_html(
                 const rect = canvas.getBoundingClientRect();
                 const px = e.clientX - rect.left;
                 const py = e.clientY - rect.top;
+                const endPt = getMagnetOrChartPoint(id, px, py);
 
-                if (activeQuadTool === 'brush') {{
+                if (['brush', 'highlighter'].includes(activeQuadTool)) {{
                     if (quadBrushPoints.length > 1) {{
                         globalQuadDrawings.push({{
                             id: Date.now(),
-                            type: 'brush',
+                            type: activeQuadTool,
                             points: quadBrushPoints,
                             color: activeQuadColor,
-                            width: 2,
+                            width: activeQuadWidth,
                             sourceQuad: id,
                             isSync: isSyncEnabled
                         }});
                     }}
                     quadBrushPoints = [];
-                }} else if (['trendline', 'rectangle', 'fib'].includes(activeQuadTool)) {{
+                }} else if (activeQuadTool === 'callout') {{
                     if (quadStartPoint) {{
-                        const endPt = quadScreenToChart(id, px, py);
+                        const textVal = prompt("Enter callout note:", "Key Pivot") || "Note";
+                        globalQuadDrawings.push({{
+                            id: Date.now(),
+                            type: 'callout',
+                            p1: quadStartPoint,
+                            p2: endPt,
+                            text: textVal.trim(),
+                            color: activeQuadColor,
+                            width: activeQuadWidth,
+                            sourceQuad: id,
+                            isSync: isSyncEnabled
+                        }});
+                    }}
+                }} else if (['trendline', 'ray', 'extended', 'arrow', 'channel', 'rectangle', 'circle', 'fib', 'measure', 'risk_reward'].includes(activeQuadTool)) {{
+                    if (quadStartPoint) {{
                         const dist = Math.hypot(px - quadStartPoint.origX, py - quadStartPoint.origY);
                         if (dist > 5) {{
                             globalQuadDrawings.push({{
@@ -5648,8 +6284,9 @@ def generate_quad_chart_html(
                                 type: activeQuadTool,
                                 p1: quadStartPoint,
                                 p2: endPt,
+                                channelOffsetY: (activeQuadTool === 'channel') ? 35 : 0,
                                 color: activeQuadColor,
-                                width: 2,
+                                width: activeQuadWidth,
                                 sourceQuad: id,
                                 isSync: isSyncEnabled
                             }});
@@ -5662,6 +6299,7 @@ def generate_quad_chart_html(
             activeDrawingQuad = null;
             quadStartPoint = null;
             quadCurrentPoint = null;
+            lastSnappedPoint = null;
             renderAllQuadDrawings();
         }});
 
@@ -5675,12 +6313,31 @@ def generate_quad_chart_html(
                     quadBrushPoints = [];
                     renderAllQuadDrawings();
                 }} else {{
+                    selectedDrawing = null;
                     setQuadTool('pointer');
+                }}
+            }}
+            if (e.key === 'm' || e.key === 'M') {{
+                if (magnetBtnQuad) {{
+                    isMagnetEnabled = !isMagnetEnabled;
+                    magnetBtnQuad.classList.toggle("magnet-active", isMagnetEnabled);
+                    renderAllQuadDrawings();
+                }}
+            }}
+            if (e.key === 'Delete' || e.key === 'Backspace') {{
+                if (selectedDrawing) {{
+                    const idx = globalQuadDrawings.findIndex(d => d.id === selectedDrawing.id);
+                    if (idx !== -1) {{
+                        globalQuadDrawings.splice(idx, 1);
+                        selectedDrawing = null;
+                        renderAllQuadDrawings();
+                    }}
                 }}
             }}
             if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {{
                 if (globalQuadDrawings.length > 0) {{
                     globalQuadDrawings.pop();
+                    selectedDrawing = null;
                     renderAllQuadDrawings();
                 }}
             }}
