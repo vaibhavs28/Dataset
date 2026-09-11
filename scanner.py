@@ -299,19 +299,35 @@ def run_scan(
     return df_res
 
 
-def evaluate_multiframe_alignment(symbol: str) -> Optional[Dict[str, Any]]:
+def evaluate_multiframe_alignment(
+    symbol: str,
+    stage_filter: Optional[str] = None,
+    names_map: Optional[Dict[str, str]] = None,
+    duckdb_cursor: Optional[Any] = None
+) -> Optional[Dict[str, Any]]:
     """
-    Evaluates the exact user strategy across timeframes:
+    Evaluates the exact user strategy across timeframes with zero blocking network calls:
     1. Monthly: Close > 5 EMA and 5 EMA > 20 EMA
     2. Weekly:  Close > 20 EMA and 20 EMA > 50 EMA > 200 EMA
     3. Daily:   Close > 20 EMA and 20 EMA > 50 EMA > 200 EMA
     4. 75-Min:  Candles available with 5 EMA and 20 EMA
     """
-    daily_df = database.get_candles_df(symbol)
-    if daily_df.empty or len(daily_df) < 50:
-        import downloader
-        downloader.sync_symbol_history(symbol, from_date="2022-01-01")
-        daily_df = database.get_candles_df(symbol)
+    clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
+    
+    # 1. Fetch daily candles via dedicated DuckDB cursor or database fallback
+    if duckdb_cursor is not None:
+        try:
+            daily_df = duckdb_cursor.execute(
+                "SELECT date, open, high, low, close, volume FROM daily_candles WHERE trading_symbol = ? ORDER BY date ASC;",
+                [clean_sym]
+            ).df()
+            if not daily_df.empty:
+                daily_df["date"] = pd.to_datetime(daily_df["date"])
+                daily_df.set_index("date", inplace=True)
+        except Exception:
+            daily_df = database.get_candles_df(clean_sym)
+    else:
+        daily_df = database.get_candles_df(clean_sym)
 
     if daily_df.empty or len(daily_df) < 50:
         return None
@@ -331,6 +347,27 @@ def evaluate_multiframe_alignment(symbol: str) -> Optional[Dict[str, Any]]:
     m_rule2 = m_ema5 > m_ema20
     monthly_pass = m_rule1 and m_rule2
 
+    # Calculate RSI (span=9) on Monthly
+    m_rsi_series = calculate_rsi(m_df["close"], span=9)
+    m_rsi_ema3_series = calculate_ema(m_rsi_series, span=3)
+    m_rsi_wma21_series = calculate_wma(m_rsi_series, period=21)
+
+    m_rsi = round(float(m_rsi_series.iloc[-1]), 2)
+    m_rsi_ema3 = round(float(m_rsi_ema3_series.iloc[-1]), 2)
+    m_rsi_wma21 = round(float(m_rsi_wma21_series.iloc[-1]), 2)
+
+    m_rsi_rule_50 = m_rsi >= 50.0
+    m_rsi_rule_cross = m_rsi_ema3 >= m_rsi_wma21
+    m_rsi_pass = m_rsi_rule_50 and m_rsi_rule_cross
+
+    # Early-exit filters on Monthly
+    if stage_filter == "Monthly RSI Scan Only (RSI>=50 & EMA3>=WMA21)" and not m_rsi_pass:
+        return None
+    if stage_filter == "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)" and (not monthly_pass or not m_rsi_pass):
+        return None
+    if stage_filter in ("Stage 3 (Full Alignment Only)", "Stage 2+ (M+W Aligned)", "Stage 1+ (Monthly Pass)") and not monthly_pass:
+        return None
+
     # --- 2. Weekly Timeframe ---
     w_df = resample_ohlcv(daily_df, "weekly")
     w_df["EMA_20"] = w_df["close"].ewm(span=20, adjust=False).mean()
@@ -346,6 +383,10 @@ def evaluate_multiframe_alignment(symbol: str) -> Optional[Dict[str, Any]]:
     w_rule2 = w_ema20 > w_ema50
     w_rule3 = w_ema50 > w_ema200
     weekly_pass = w_rule1 and w_rule2 and w_rule3
+
+    # Early-exit filters on Weekly
+    if stage_filter in ("Stage 3 (Full Alignment Only)", "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)", "Stage 2+ (M+W Aligned)") and not weekly_pass:
+        return None
 
     # --- 3. Daily Timeframe ---
     d_df = daily_df.copy()
@@ -363,25 +404,9 @@ def evaluate_multiframe_alignment(symbol: str) -> Optional[Dict[str, Any]]:
     d_rule3 = d_ema50 > d_ema200
     daily_pass = d_rule1 and d_rule2 and d_rule3
 
-    # --- 4. 75-Minute Timeframe (strictly resampled from 1-min candles) ---
-    import parquet_loader
-    intra_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=200)
-    if intra_df.empty or len(intra_df) < 26:
-        intra_pass = False
-        i_close = d_close
-        i_ema9 = d_close
-        i_ema26 = d_close
-    else:
-        intra_df["EMA_9"] = intra_df["close"].ewm(span=9, adjust=False).mean()
-        intra_df["EMA_13"] = intra_df["close"].ewm(span=13, adjust=False).mean()
-        intra_df["EMA_26"] = intra_df["close"].ewm(span=26, adjust=False).mean()
-        intra_df["EMA_50"] = intra_df["close"].ewm(span=50, adjust=False).mean()
-        intra_df["EMA_200"] = intra_df["close"].ewm(span=200, adjust=False).mean()
-        i_last = intra_df.iloc[-1]
-        i_close = float(i_last["close"])
-        i_ema9 = float(i_last["EMA_9"])
-        i_ema26 = float(i_last["EMA_26"])
-        intra_pass = (i_close > i_ema26) and (i_ema9 > i_ema26)
+    # Early-exit filters on Daily
+    if stage_filter in ("Stage 3 (Full Alignment Only)", "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)") and not daily_pass:
+        return None
 
     # Calculate overall stage
     if monthly_pass and weekly_pass and daily_pass:
@@ -397,31 +422,60 @@ def evaluate_multiframe_alignment(symbol: str) -> Optional[Dict[str, Any]]:
         stage = "NO ALIGNMENT ⚪"
         score = 0
 
-    # Calculate RSI (span=9) across timeframes
-    m_rsi_series = calculate_rsi(m_df["close"], span=9)
-    m_rsi_ema3_series = calculate_ema(m_rsi_series, span=3)
-    m_rsi_wma21_series = calculate_wma(m_rsi_series, period=21)
+    # --- 4. 75-Minute Timeframe ---
+    # Only load 75m candles if the stock has some alignment or if explicitly requested
+    intra_pass = False
+    i_close = d_close
+    i_ema9 = d_close
+    i_ema26 = d_close
+    i_rsi = 0.0
 
-    m_rsi = round(float(m_rsi_series.iloc[-1]), 2)
-    m_rsi_ema3 = round(float(m_rsi_ema3_series.iloc[-1]), 2)
-    m_rsi_wma21 = round(float(m_rsi_wma21_series.iloc[-1]), 2)
+    if score > 0 or stage_filter is None or stage_filter == "All":
+        intra_df = pd.DataFrame()
+        if duckdb_cursor is not None:
+            try:
+                intra_df = duckdb_cursor.execute(
+                    "SELECT timestamp, open, high, low, close, volume FROM intraday_candles WHERE trading_symbol = ? AND timeframe = '75m' ORDER BY timestamp DESC LIMIT 60;",
+                    [clean_sym]
+                ).df()
+                if not intra_df.empty:
+                    intra_df = intra_df.iloc[::-1].reset_index(drop=True)
+            except Exception:
+                intra_df = pd.DataFrame()
+        
+        if intra_df.empty:
+            try:
+                import parquet_loader
+                intra_df = parquet_loader.ensure_symbol_75m_candles(clean_sym, min_bars=26)
+            except Exception:
+                intra_df = pd.DataFrame()
 
-    # Monthly RSI Strategy Rules:
-    # 1. Monthly RSI >= 50
-    # 2. Monthly EMA 3 on RSI >= WMA 21 on RSI
-    m_rsi_rule_50 = m_rsi >= 50.0
-    m_rsi_rule_cross = m_rsi_ema3 >= m_rsi_wma21
-    m_rsi_pass = m_rsi_rule_50 and m_rsi_rule_cross
+        if not intra_df.empty and len(intra_df) >= 26:
+            intra_df["EMA_9"] = intra_df["close"].ewm(span=9, adjust=False).mean()
+            intra_df["EMA_26"] = intra_df["close"].ewm(span=26, adjust=False).mean()
+            i_last = intra_df.iloc[-1]
+            i_close = float(i_last["close"])
+            i_ema9 = float(i_last["EMA_9"])
+            i_ema26 = float(i_last["EMA_26"])
+            intra_pass = (i_close > i_ema26) and (i_ema9 > i_ema26)
+            try:
+                i_rsi = round(float(calculate_rsi(intra_df["close"], span=9).iloc[-1]), 2)
+            except Exception:
+                i_rsi = 0.0
 
     w_rsi = round(float(calculate_rsi(w_df["close"], span=9).iloc[-1]), 2) if (not w_df.empty and "close" in w_df.columns) else 0.0
     d_rsi = round(float(calculate_rsi(d_df["close"], span=9).iloc[-1]), 2) if (not d_df.empty and "close" in d_df.columns) else 0.0
-    i_rsi = round(float(calculate_rsi(intra_df["close"], span=9).iloc[-1]), 2) if (intra_df is not None and not intra_df.empty and "close" in intra_df.columns) else 0.0
 
-    inst_meta = database.get_instrument_by_symbol(symbol) or {}
+    # Instrument metadata name lookup (in-memory map is O(1))
+    if names_map and clean_sym in names_map:
+        stock_name = names_map[clean_sym]
+    else:
+        inst_meta = database.get_instrument_by_symbol(clean_sym) or {}
+        stock_name = inst_meta.get("name", clean_sym)
 
     return {
-        "Symbol": symbol.upper(),
-        "Name": inst_meta.get("name", symbol),
+        "Symbol": clean_sym,
+        "Name": stock_name,
         "Price": round(d_close, 2),
         "Stage": stage,
         "Score": score,
@@ -471,10 +525,10 @@ def evaluate_multiframe_alignment(symbol: str) -> Optional[Dict[str, Any]]:
     }
 
 
-
 def run_multiframe_alignment_scan(symbols: Optional[List[str]] = None, stage_filter: str = "All") -> pd.DataFrame:
     """
-    Runs the full multi-timeframe alignment scan across all symbols.
+    Runs the full multi-timeframe alignment scan across all symbols with high-performance
+    DuckDB per-thread cursors, early-exit filtering, and zero blocking network calls.
     Strictly excludes:
     - All Indices (NSE_INDEX, BSE_INDEX, NIFTY, BANKNIFTY, SENSEX, etc.)
     - All BSE equity stocks
@@ -483,21 +537,37 @@ def run_multiframe_alignment_scan(symbols: Optional[List[str]] = None, stage_fil
     database.init_db()
     valid_nse_equities = set(database.get_alignment_scanner_symbols())
 
+    import duckdb_store
+    conn = duckdb_store.get_connection()
+
+    # Preload instrument names into memory for instant O(1) lookups
+    names_map = {}
+    try:
+        with duckdb_store._lock:
+            rows = conn.execute("SELECT trading_symbol, name FROM instruments WHERE trading_symbol IS NOT NULL;").fetchall()
+            names_map = {r[0].replace("-EQ", "").replace(".NS", ""): r[1] for r in rows if r[0]}
+    except Exception as e:
+        logger.warning(f"Note loading instruments names map: {e}")
+
     if not symbols:
-        # Check which pure NSE equity symbols have daily candle data in DuckDB (fallback to SQLite)
+        # Pre-filter: only scan symbols that actually have >= 50 daily candles in DuckDB
         db_symbols = []
         try:
-            import duckdb_store
-            conn = duckdb_store.get_connection()
             with duckdb_store._lock:
-                rows = conn.execute("SELECT DISTINCT trading_symbol FROM daily_candles WHERE trading_symbol NOT LIKE '0%';").fetchall()
+                rows = conn.execute("""
+                    SELECT trading_symbol 
+                    FROM daily_candles 
+                    WHERE trading_symbol NOT LIKE '0%'
+                    GROUP BY trading_symbol 
+                    HAVING COUNT(*) >= 50;
+                """).fetchall()
                 db_symbols = [r[0].replace("-EQ", "").replace(".NS", "") for r in rows if r[0]]
         except Exception as e:
             logger.warning(f"Error querying DuckDB symbols for scanner: {e}")
 
         if not db_symbols:
-            with database.get_connection() as conn:
-                cursor = conn.cursor()
+            with database.get_connection() as sql_conn:
+                cursor = sql_conn.cursor()
                 cursor.execute("SELECT DISTINCT trading_symbol FROM daily_candles WHERE trading_symbol NOT LIKE '0%';")
                 db_symbols = [row[0] for row in cursor.fetchall()]
 
@@ -513,12 +583,19 @@ def run_multiframe_alignment_scan(symbols: Optional[List[str]] = None, stage_fil
 
     def _eval(sym):
         try:
-            return evaluate_multiframe_alignment(sym)
+            # Each worker gets its own DuckDB cursor for lock-free parallel execution
+            c = conn.cursor()
+            return evaluate_multiframe_alignment(
+                sym,
+                stage_filter=stage_filter,
+                names_map=names_map,
+                duckdb_cursor=c
+            )
         except Exception:
             return None
 
-    # Bounded thread pool for fast concurrent in-database evaluation
-    with ThreadPoolExecutor(max_workers=8) as executor:
+    # Multi-threaded parallel scanning across CPU threads
+    with ThreadPoolExecutor(max_workers=12) as executor:
         futures = {executor.submit(_eval, sym): sym for sym in symbols}
         for fut in as_completed(futures):
             res = fut.result()
