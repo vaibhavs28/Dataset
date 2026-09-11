@@ -4309,6 +4309,8 @@ def generate_quad_chart_html(
 
             // RSI Chart
             let rsiChart = null;
+            let hmCloud = null;
+            let rsiSeries = null;
             if (payload.hasRsi && rsiContainer) {{
                 const rw = rsiContainer.clientWidth || 300;
                 const rh = rsiContainer.clientHeight || 100;
@@ -4346,7 +4348,6 @@ def generate_quad_chart_html(
                 rsiChart = LightweightCharts.createChart(rsiContainer, rsiOptions);
 
                 // Baseline Cloud for Hilega Milega (Pink cloud above 50, Soft blue cloud below 50)
-                let hmCloud = null;
                 try {{
                     hmCloud = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
@@ -4363,7 +4364,7 @@ def generate_quad_chart_html(
                 }} catch(e) {{}}
 
                 const rsiColor = isLightInit ? '#131722' : '#F8FAFC';
-                const rsiSeries = rsiChart.addLineSeries({{
+                rsiSeries = rsiChart.addLineSeries({{
                     color: rsiColor,
                     lineWidth: 1.8,
                     lastValueVisible: true,
