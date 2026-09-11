@@ -3436,6 +3436,10 @@ def generate_quad_chart_html(
             width: 100%;
             height: 100%;
         }}
+        body.light-theme {{
+            background-color: #f8fafc !important;
+            color: #131722 !important;
+        }}
         .quad-root {{
             width: 100%;
             height: {height}px;
@@ -3981,6 +3985,7 @@ def generate_quad_chart_html(
         }}
         .light-theme .hm-vals {{
             color: #475569;
+        }}
         .qc-rsi-canvas .hm-title {{
             color: #94A3B8;
             font-weight: 700;
@@ -4041,11 +4046,32 @@ def generate_quad_chart_html(
             background: #ffffff !important;
             border-bottom: 1px solid #e0e3eb !important;
         }}
+        .light-theme .qm-brand {{
+            background: #2563EB !important;
+            color: #ffffff !important;
+        }}
         .light-theme .qm-stock {{
             color: #0052FF !important;
         }}
         .light-theme .qm-badge {{
             color: #64748b !important;
+        }}
+        .light-theme #sync_status_badge {{
+            color: #0284c7 !important;
+        }}
+        .light-theme .qm-select {{
+            background: #ffffff !important;
+            color: #0052FF !important;
+            border-color: #cbd5e1 !important;
+        }}
+        .light-theme .qm-select option {{
+            background: #ffffff !important;
+            color: #0f172a !important;
+        }}
+        .light-theme .qm-select-tf {{
+            color: #16a34a !important;
+            border-color: #86efac !important;
+            background: #f0fdf4 !important;
         }}
         .light-theme .qm-btn-group {{
             background: #f0f3fa !important;
@@ -4066,7 +4092,7 @@ def generate_quad_chart_html(
         .light-theme .qm-btn-vol {{
             background: #ffffff !important;
             color: #1e293b !important;
-            border-color: #d1d5db !important;
+            border-color: #cbd5e1 !important;
         }}
         .light-theme .qm-btn-fs:hover,
         .light-theme .qm-btn-vol:hover {{
@@ -4079,6 +4105,28 @@ def generate_quad_chart_html(
             border-color: #2962FF !important;
             color: #ffffff !important;
         }}
+        .light-theme .tv-draw-bar {{
+            background: #ffffff !important;
+            border-right: 1px solid #e0e3eb !important;
+        }}
+        .light-theme .tv-tool-btn {{
+            color: #64748b !important;
+        }}
+        .light-theme .tv-tool-btn:hover {{
+            background: #f1f5f9 !important;
+            color: #0f172a !important;
+        }}
+        .light-theme .tv-tool-btn.active {{
+            background: #2962FF !important;
+            color: #ffffff !important;
+            border-color: #2962FF !important;
+        }}
+        .light-theme .tv-tool-sep {{
+            background: #e0e3eb !important;
+        }}
+        .light-theme .tv-color-wrapper {{
+            border-color: #cbd5e1 !important;
+        }}
         .light-theme .quad-grid {{
             background: #f0f3fa !important;
         }}
@@ -4087,9 +4135,13 @@ def generate_quad_chart_html(
             border-color: #e0e3eb !important;
         }}
         .light-theme .qc-header {{
-            background: #f8f9fa !important;
+            background: #ffffff !important;
             border-bottom: 1px solid #e0e3eb !important;
         }}
+        .light-theme .qc-tf-m {{ background: #fef9c3 !important; color: #854d0e !important; }}
+        .light-theme .qc-tf-w {{ background: #e0f2fe !important; color: #0369a1 !important; }}
+        .light-theme .qc-tf-d {{ background: #ffedd5 !important; color: #c2410c !important; }}
+        .light-theme .qc-tf-75 {{ background: #dcfce7 !important; color: #15803d !important; }}
         .light-theme .qc-sub {{
             color: #64748b !important;
         }}
@@ -4102,10 +4154,10 @@ def generate_quad_chart_html(
         .light-theme .qc-btn-zoom {{
             background: #ffffff !important;
             color: #475569 !important;
-            border-color: #d1d5db !important;
+            border-color: #cbd5e1 !important;
         }}
         .light-theme .qc-btn-zoom:hover {{
-            background: #e2e8f0 !important;
+            background: #f1f5f9 !important;
             color: #0052FF !important;
         }}
         .light-theme .qc-btn-zoom.active {{
@@ -4135,7 +4187,7 @@ def generate_quad_chart_html(
         }}
     </style>
 </head>
-<body>
+<body class="{'light-theme' if is_light else ''}">
     <div id="quad_root" class="quad-root {'light-theme' if is_light else ''}">
         <!-- Master Navigation Header -->
         <div class="quad-master-header">
@@ -5838,6 +5890,9 @@ def generate_quad_chart_html(
             if (root) {{
                 root.classList.toggle('light-theme', isLight);
             }}
+            if (document.body) {{
+                document.body.classList.toggle('light-theme', isLight);
+            }}
             const themeBtn = document.getElementById('btn_q_theme');
             if (themeBtn) {{
                 themeBtn.innerHTML = isLight ? "☀️ Light" : "🌙 Dark";
@@ -5852,7 +5907,17 @@ def generate_quad_chart_html(
                 layout: {{ background: {{ type: 'solid', color: bgCol }}, textColor: txtCol }},
                 grid: {{ vertLines: {{ color: gridCol }}, horzLines: {{ color: gridCol }} }},
                 rightPriceScale: {{ borderColor: borderCol }},
-                timeScale: {{ borderColor: borderCol }}
+                timeScale: {{ borderColor: borderCol }},
+                crosshair: {{
+                    vertLine: {{
+                        color: isLight ? 'rgba(0, 0, 0, 0.22)' : 'rgba(255, 255, 255, 0.28)',
+                        labelBackgroundColor: isLight ? '#2563EB' : '#1E293B',
+                    }},
+                    horzLine: {{
+                        color: isLight ? 'rgba(0, 0, 0, 0.22)' : 'rgba(255, 255, 255, 0.28)',
+                        labelBackgroundColor: isLight ? '#2563EB' : '#1E293B',
+                    }}
+                }}
             }};
 
             Object.keys(quadsRegistry).forEach(key => {{
