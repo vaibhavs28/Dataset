@@ -5261,6 +5261,38 @@ def generate_quad_chart_html(
             return {{ time: time, price: price, logical: logical, origX: px, origY: py, sourceQuad: id }};
         }}
 
+        function quadLogicalToCoordinate(q, logical) {{
+            if (!q || !q.mainChart || logical === null || isNaN(logical)) return null;
+            const ts = q.mainChart.timeScale();
+            const i0 = Math.floor(logical);
+            const i1 = i0 + 1;
+            try {{
+                const c0 = ts.logicalToCoordinate(i0);
+                const c1 = ts.logicalToCoordinate(i1);
+                if (c0 !== null && c1 !== null && !isNaN(c0) && !isNaN(c1) && c0 !== c1) {{
+                    return c0 + (logical - i0) * (c1 - c0);
+                }}
+            }} catch(e) {{}}
+
+            try {{
+                const range = ts.getVisibleLogicalRange();
+                if (range && range.from !== null && range.to !== null) {{
+                    const rf = Math.round(range.from);
+                    const rt = Math.round(range.to);
+                    if (rt !== rf) {{
+                        const xf = ts.logicalToCoordinate(rf);
+                        const xt = ts.logicalToCoordinate(rt);
+                        if (xf !== null && xt !== null && !isNaN(xf) && !isNaN(xt) && xt !== xf) {{
+                            const step = (xt - xf) / (rt - rf);
+                            return xf + (logical - rf) * step;
+                        }}
+                    }}
+                }}
+            }} catch(e) {{}}
+
+            return null;
+        }}
+
         function quadChartToScreen(id, pt) {{
             const q = quadsRegistry[id];
             if (!q || !q.mainChart || !pt) return {{ x: pt ? (pt.origX || 0) : 0, y: pt ? (pt.origY || 0) : 0 }};
@@ -5275,13 +5307,12 @@ def generate_quad_chart_html(
 
             let x = 0;
             let xResolved = false;
-            try {{
-                const cx = q.mainChart.timeScale().logicalToCoordinate(logical);
-                if (cx !== null && !isNaN(cx)) {{
-                    x = cx;
-                    xResolved = true;
-                }}
-            }} catch(e) {{}}
+            const cx = quadLogicalToCoordinate(q, logical);
+            if (cx !== null && !isNaN(cx)) {{
+                x = cx;
+                xResolved = true;
+            }}
+
             if (!xResolved) {{
                 try {{
                     const range = q.mainChart.timeScale().getVisibleLogicalRange();
