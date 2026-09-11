@@ -537,37 +537,159 @@ def main():
     if theme == "light":
         st.markdown("""
         <style>
-            .stApp {
-                background-color: #F8F9FA !important;
-                color: #131722 !important;
+            /* Global Background & Base Text */
+            .stApp, .stApp [data-testid="stAppViewContainer"] {
+                background-color: #F8FAFC !important;
+                color: #0F172A !important;
             }
-            [data-testid="stSidebar"] {
+            /* Sidebar Styling in Light Mode */
+            [data-testid="stSidebar"], section[data-testid="stSidebar"] {
                 background-color: #FFFFFF !important;
                 border-right: 1px solid #E2E8F0 !important;
             }
-            .metric-box {
+            [data-testid="stSidebar"] p, 
+            [data-testid="stSidebar"] span, 
+            [data-testid="stSidebar"] label,
+            [data-testid="stSidebar"] div {
+                color: #1E293B !important;
+            }
+            [data-testid="stSidebar"] h1, 
+            [data-testid="stSidebar"] h2, 
+            [data-testid="stSidebar"] h3,
+            [data-testid="stSidebar"] h4 {
+                color: #0F172A !important;
+                font-weight: 700 !important;
+            }
+            /* Header Metric Cards in Light Mode */
+            div[data-testid="stMetric"] {
                 background-color: #FFFFFF !important;
                 border: 1px solid #E2E8F0 !important;
-                color: #131722 !important;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+                border-radius: 8px !important;
+                padding: 8px 12px !important;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
             }
-            .rule-card {
-                background-color: #F0F4F8 !important;
-                border-left: 4px solid #2563EB !important;
+            div[data-testid="stMetricLabel"], div[data-testid="stMetricLabel"] * {
+                color: #475569 !important;
+                font-size: 13px !important;
+                font-weight: 600 !important;
+            }
+            div[data-testid="stMetricValue"], div[data-testid="stMetricValue"] * {
+                color: #0F172A !important;
+                font-size: 22px !important;
+                font-weight: 700 !important;
+            }
+            /* Quick Symbol Chips (Buttons) in Light Mode */
+            div[data-testid="stHorizontalBlock"] button, .stButton > button {
+                background-color: #F1F5F9 !important;
+                color: #0F172A !important;
+                border: 1px solid #CBD5E1 !important;
+                font-weight: 600 !important;
+                border-radius: 6px !important;
+            }
+            div[data-testid="stHorizontalBlock"] button:hover, .stButton > button:hover {
+                background-color: #E2E8F0 !important;
+                border-color: #94A3B8 !important;
+                color: #0284C7 !important;
+            }
+            /* Primary Action Buttons */
+            .stButton > button[kind="primary"] {
+                background-color: #0284C7 !important;
+                color: #FFFFFF !important;
+                border: none !important;
+            }
+            /* Form Labels & Dropdown Headers in Light Mode */
+            label, .stSelectbox label, .stRadio label, .stCheckbox label, .stNumberInput label {
+                color: #1E293B !important;
+                font-weight: 600 !important;
+            }
+            /* Selectbox Input Controls */
+            div[data-baseweb="select"] > div {
+                background-color: #FFFFFF !important;
+                border-color: #CBD5E1 !important;
                 color: #0F172A !important;
             }
-            div[data-testid="stMetricValue"] {
-                color: #131722 !important;
+            div[data-baseweb="select"] * {
+                color: #0F172A !important;
             }
-            div[data-testid="stMetricLabel"] {
-                color: #64748B !important;
+            /* Markdown headings & body */
+            h1, h2, h3, h4, h5, h6 {
+                color: #0F172A !important;
+            }
+            p, span {
+                color: #1E293B;
+            }
+            .rule-card {
+                background-color: #EFF6FF !important;
+                border-left: 4px solid #2563EB !important;
+                color: #1E3A8A !important;
             }
             .stTabs [data-baseweb="tab"] {
                 color: #475569 !important;
             }
             .stTabs [aria-selected="true"] {
-                color: #2563EB !important;
+                color: #0284C7 !important;
                 font-weight: 700 !important;
+            }
+        </style>
+        """, unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <style>
+            .stApp, .stApp [data-testid="stAppViewContainer"] {
+                background-color: #0F172A !important;
+                color: #F8FAFC !important;
+            }
+            [data-testid="stSidebar"], section[data-testid="stSidebar"] {
+                background-color: #1E293B !important;
+                border-right: 1px solid #334155 !important;
+            }
+            [data-testid="stSidebar"] p, 
+            [data-testid="stSidebar"] span, 
+            [data-testid="stSidebar"] label,
+            [data-testid="stSidebar"] div {
+                color: #F1F5F9 !important;
+            }
+            [data-testid="stSidebar"] h1, 
+            [data-testid="stSidebar"] h2, 
+            [data-testid="stSidebar"] h3,
+            [data-testid="stSidebar"] h4 {
+                color: #F8FAFC !important;
+                font-weight: 700 !important;
+            }
+            div[data-testid="stMetric"] {
+                background-color: #1E293B !important;
+                border: 1px solid #334155 !important;
+                border-radius: 8px !important;
+                padding: 8px 12px !important;
+            }
+            div[data-testid="stMetricLabel"], div[data-testid="stMetricLabel"] * {
+                color: #94A3B8 !important;
+                font-size: 13px !important;
+            }
+            div[data-testid="stMetricValue"], div[data-testid="stMetricValue"] * {
+                color: #F8FAFC !important;
+                font-size: 22px !important;
+                font-weight: 700 !important;
+            }
+            div[data-testid="stHorizontalBlock"] button, .stButton > button {
+                background-color: #1E293B !important;
+                color: #F1F5F9 !important;
+                border: 1px solid #334155 !important;
+                font-weight: 600 !important;
+                border-radius: 6px !important;
+            }
+            div[data-testid="stHorizontalBlock"] button:hover, .stButton > button:hover {
+                background-color: #334155 !important;
+                border-color: #0284C7 !important;
+                color: #38BDF8 !important;
+            }
+            .stButton > button[kind="primary"] {
+                background-color: #0284C7 !important;
+                color: #FFFFFF !important;
+                border: none !important;
+            }
+            label, .stSelectbox label, .stRadio label, .stCheckbox label, .stNumberInput label {
+                color: #E2E8F0 !important;
             }
         </style>
         """, unsafe_allow_html=True)
