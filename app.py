@@ -278,7 +278,7 @@ def create_candlestick_chart(
                 ),
                 row=rsi_row, col=1
             )
-            pink_col = "rgba(255, 237, 237, 0.75)" if is_light else "rgba(248, 113, 113, 0.25)"
+            pink_col = "rgba(244, 143, 177, 0.45)" if is_light else "rgba(239, 83, 80, 0.35)"
             fig.add_trace(
                 go.Scatter(
                     x=x_labels,
@@ -305,7 +305,7 @@ def create_candlestick_chart(
                 ),
                 row=rsi_row, col=1
             )
-            blue_col = "rgba(233, 239, 255, 0.75)" if is_light else "rgba(96, 165, 250, 0.25)"
+            blue_col = "rgba(144, 202, 249, 0.45)" if is_light else "rgba(33, 150, 243, 0.35)"
             fig.add_trace(
                 go.Scatter(
                     x=x_labels,

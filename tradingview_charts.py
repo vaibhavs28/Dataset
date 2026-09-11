@@ -728,7 +728,9 @@ def generate_lightweight_chart_html(
                         }}
                         return null;
                     }},
-                }}
+                }},
+                handleScroll: {{ mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
+                handleScale: {{ axisPressedMouseMove: true, mouseWheel: true, pinch: true }},
             }};
 
             const chart = LightweightCharts.createChart(mainContainer, chartOptions);
@@ -879,19 +881,22 @@ def generate_lightweight_chart_html(
                         secondsVisible: false,
                         visible: false,
                         rightOffset: 8
-                    }}
+                    }},
+                    handleScroll: {{ mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
+                    handleScale: {{ axisPressedMouseMove: true, mouseWheel: true, pinch: true }},
                 }});
 
                 // Baseline Cloud for Hilega Milega (Pink cloud above 50, Soft blue cloud below 50)
                 try {{
                     hmCloudSeries = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        topFillColor2: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        bottomFillColor1: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        bottomFillColor2: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        topLineColor: 'rgba(0,0,0,0)',
-                        bottomLineColor: 'rgba(0,0,0,0)',
+                        topFillColor1: isLightInit ? 'rgba(244, 143, 177, 0.45)' : 'rgba(239, 83, 80, 0.35)',
+                        topFillColor2: isLightInit ? 'rgba(244, 143, 177, 0.20)' : 'rgba(239, 83, 80, 0.15)',
+                        bottomFillColor1: isLightInit ? 'rgba(144, 202, 249, 0.20)' : 'rgba(33, 150, 243, 0.15)',
+                        bottomFillColor2: isLightInit ? 'rgba(144, 202, 249, 0.45)' : 'rgba(33, 150, 243, 0.35)',
+                        topLineColor: isLightInit ? 'rgba(233, 30, 99, 0.35)' : 'rgba(244, 67, 54, 0.35)',
+                        bottomLineColor: isLightInit ? 'rgba(33, 150, 243, 0.35)' : 'rgba(33, 150, 243, 0.35)',
+                        lineWidth: 1,
                         lastValueVisible: false,
                         priceLineVisible: false
                     }});
@@ -1740,10 +1745,12 @@ def generate_lightweight_chart_html(
                 }}
                 if (hmCloudSeries) {{
                     hmCloudSeries.applyOptions({{
-                        topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)'
+                        topFillColor1: isLight ? 'rgba(244, 143, 177, 0.45)' : 'rgba(239, 83, 80, 0.35)',
+                        topFillColor2: isLight ? 'rgba(244, 143, 177, 0.20)' : 'rgba(239, 83, 80, 0.15)',
+                        bottomFillColor1: isLight ? 'rgba(144, 202, 249, 0.20)' : 'rgba(33, 150, 243, 0.15)',
+                        bottomFillColor2: isLight ? 'rgba(144, 202, 249, 0.45)' : 'rgba(33, 150, 243, 0.35)',
+                        topLineColor: isLight ? 'rgba(233, 30, 99, 0.35)' : 'rgba(244, 67, 54, 0.35)',
+                        bottomLineColor: isLight ? 'rgba(33, 150, 243, 0.35)' : 'rgba(33, 150, 243, 0.35)'
                     }});
                 }}
                 if (rsiSeries) {{
@@ -2614,7 +2621,7 @@ def generate_advanced_terminal_html(
                     barSpacing: 8,
                     minBarSpacing: 0.5
                 }},
-                handleScroll: {{ mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true }},
+                handleScroll: {{ mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
                 handleScale: {{ axisPressedMouseMove: true, mouseWheel: true, pinch: true, axisReset: true }}
             }};
 
@@ -2759,19 +2766,20 @@ def generate_advanced_terminal_html(
                     crosshair: {{ mode: LightweightCharts.CrosshairMode.Normal }},
                     rightPriceScale: {{ borderColor: isLight ? '#e0e3eb' : '#2A2E39', autoScale: false, scaleMargins: {{ top: 0.05, bottom: 0.05 }} }},
                     timeScale: {{ visible: false, rightOffset: 10, barSpacing: 8 }},
-                    handleScroll: {{ mouseWheel: true, pressedMouseMove: true }},
-                    handleScale: {{ axisPressedMouseMove: true, mouseWheel: true }}
+                    handleScroll: {{ mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
+                    handleScale: {{ axisPressedMouseMove: true, mouseWheel: true, pinch: true }}
                 }});
                 // Baseline Cloud for Hilega Milega (Pink cloud above 50, Soft blue cloud below 50)
                 try {{
                     hmCloud = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        topLineColor: 'rgba(0,0,0,0)',
-                        bottomLineColor: 'rgba(0,0,0,0)',
+                        topFillColor1: isLight ? 'rgba(244, 143, 177, 0.45)' : 'rgba(239, 83, 80, 0.35)',
+                        topFillColor2: isLight ? 'rgba(244, 143, 177, 0.20)' : 'rgba(239, 83, 80, 0.15)',
+                        bottomFillColor1: isLight ? 'rgba(144, 202, 249, 0.20)' : 'rgba(33, 150, 243, 0.15)',
+                        bottomFillColor2: isLight ? 'rgba(144, 202, 249, 0.45)' : 'rgba(33, 150, 243, 0.35)',
+                        topLineColor: isLight ? 'rgba(233, 30, 99, 0.35)' : 'rgba(244, 67, 54, 0.35)',
+                        bottomLineColor: isLight ? 'rgba(33, 150, 243, 0.35)' : 'rgba(33, 150, 243, 0.35)',
+                        lineWidth: 1,
                         lastValueVisible: false,
                         priceLineVisible: false
                     }});
@@ -3000,10 +3008,12 @@ def generate_advanced_terminal_html(
                     }});
                     if (hmCloud) {{
                         hmCloud.applyOptions({{
-                            topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                            topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                            bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                            bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)'
+                            topFillColor1: isLight ? 'rgba(244, 143, 177, 0.45)' : 'rgba(239, 83, 80, 0.35)',
+                            topFillColor2: isLight ? 'rgba(244, 143, 177, 0.20)' : 'rgba(239, 83, 80, 0.15)',
+                            bottomFillColor1: isLight ? 'rgba(144, 202, 249, 0.20)' : 'rgba(33, 150, 243, 0.15)',
+                            bottomFillColor2: isLight ? 'rgba(144, 202, 249, 0.45)' : 'rgba(33, 150, 243, 0.35)',
+                            topLineColor: isLight ? 'rgba(233, 30, 99, 0.35)' : 'rgba(244, 67, 54, 0.35)',
+                            bottomLineColor: isLight ? 'rgba(33, 150, 243, 0.35)' : 'rgba(33, 150, 243, 0.35)'
                         }});
                     }}
                     if (rsiSeries) {{
@@ -4412,11 +4422,11 @@ def generate_quad_chart_html(
                         if (typeof time === 'number') {{
                             const d = new Date(time * 1000);
                             if (tickMarkType === 0) {{
-                                return d.toLocaleDateString('en-IN', {{ timeZone: 'Asia/Kolkata', year: 'numeric' }});
+                                return d.getFullYear();
                             }} else if (tickMarkType === 1) {{
                                 return d.toLocaleDateString('en-IN', {{ timeZone: 'Asia/Kolkata', month: 'short' }});
                             }} else if (tickMarkType === 2) {{
-                                return d.toLocaleDateString('en-IN', {{ timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short' }});
+                                return d.toLocaleDateString('en-IN', {{ timeZone: 'Asia/Kolkata', day: 'numeric' }});
                             }} else {{
                                 return d.toLocaleTimeString('en-IN', {{ timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }});
                             }}
@@ -4424,16 +4434,11 @@ def generate_quad_chart_html(
                         return null;
                     }},
                 }},
-                handleScroll: {{ mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
+                handleScroll: {{ mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
                 handleScale: {{ axisPressedMouseMove: true, mouseWheel: true, pinch: true }},
             }};
 
             const mainChart = LightweightCharts.createChart(mainContainer, chartOptions);
-
-            // Isolate wheel event inside chart canvas for fluid mousewheel zooming without page jump
-            mainContainer.addEventListener('wheel', (e) => {{
-                e.preventDefault();
-            }}, {{ passive: false }});
 
             // Candles with active right price badge and dashed current price line
             const isCandleInit = QUAD_DATA.showCandles !== false;
@@ -4565,7 +4570,7 @@ def generate_quad_chart_html(
                         visible: false,
                         borderVisible: false,
                     }},
-                    handleScroll: {{ mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
+                    handleScroll: {{ mouseWheel: false, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: false }},
                     handleScale: {{ axisPressedMouseMove: true, mouseWheel: true, pinch: true }},
                 }};
 
@@ -4575,12 +4580,13 @@ def generate_quad_chart_html(
                 try {{
                     hmCloud = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        topFillColor2: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        bottomFillColor1: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        bottomFillColor2: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        topLineColor: 'rgba(0,0,0,0)',
-                        bottomLineColor: 'rgba(0,0,0,0)',
+                        topFillColor1: isLightInit ? 'rgba(244, 143, 177, 0.45)' : 'rgba(239, 83, 80, 0.35)',
+                        topFillColor2: isLightInit ? 'rgba(244, 143, 177, 0.20)' : 'rgba(239, 83, 80, 0.15)',
+                        bottomFillColor1: isLightInit ? 'rgba(144, 202, 249, 0.20)' : 'rgba(33, 150, 243, 0.15)',
+                        bottomFillColor2: isLightInit ? 'rgba(144, 202, 249, 0.45)' : 'rgba(33, 150, 243, 0.35)',
+                        topLineColor: isLightInit ? 'rgba(233, 30, 99, 0.35)' : 'rgba(244, 67, 54, 0.35)',
+                        bottomLineColor: isLightInit ? 'rgba(33, 150, 243, 0.35)' : 'rgba(33, 150, 243, 0.35)',
+                        lineWidth: 1,
                         lastValueVisible: false,
                         priceLineVisible: false
                     }});
@@ -4626,23 +4632,51 @@ def generate_quad_chart_html(
                 rsiSeries.createPriceLine({{ price: 70, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
                 rsiSeries.createPriceLine({{ price: 30, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
 
-                // Sync visible ranges between main & RSI charts
+                // Fluid, non-blocking visible ranges sync between main & RSI charts
                 let isSyncing = false;
+                let syncRaf = null;
                 mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => {{
-                    if (isSyncing || !range) return;
-                    isSyncing = true;
-                    rsiChart.timeScale().setVisibleLogicalRange(range);
-                    isSyncing = false;
+                    if (isSyncing || !range || !rsiChart) return;
+                    if (syncRaf) cancelAnimationFrame(syncRaf);
+                    syncRaf = requestAnimationFrame(() => {{
+                        if (!rsiChart) return;
+                        isSyncing = true;
+                        try {{
+                            const cur = rsiChart.timeScale().getVisibleLogicalRange();
+                            if (!cur || Math.abs(cur.from - range.from) > 0.05 || Math.abs(cur.to - range.to) > 0.05) {{
+                                rsiChart.timeScale().setVisibleLogicalRange(range);
+                            }}
+                        }} catch(e) {{}}
+                        isSyncing = false;
+                    }});
                 }});
                 rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {{
-                    if (isSyncing || !range) return;
-                    isSyncing = true;
-                    mainChart.timeScale().setVisibleLogicalRange(range);
-                    isSyncing = false;
+                    if (isSyncing || !range || !mainChart) return;
+                    if (syncRaf) cancelAnimationFrame(syncRaf);
+                    syncRaf = requestAnimationFrame(() => {{
+                        if (!mainChart) return;
+                        isSyncing = true;
+                        try {{
+                            const cur = mainChart.timeScale().getVisibleLogicalRange();
+                            if (!cur || Math.abs(cur.from - range.from) > 0.05 || Math.abs(cur.to - range.to) > 0.05) {{
+                                mainChart.timeScale().setVisibleLogicalRange(range);
+                            }}
+                        }} catch(e) {{}}
+                        isSyncing = false;
+                    }});
                 }});
             }}
 
-            // Initial view range
+            // Pre-index candle & indicator data for instant O(1) crosshair performance
+            const cMap = new Map();
+            (payload.candles || []).forEach(p => {{ cMap.set(p.time, p); }});
+            const rMap = new Map();
+            (payload.rsi || []).forEach(p => {{ rMap.set(p.time, p); }});
+            const eMap = new Map();
+            (payload.rsi_ema3 || []).forEach(p => {{ eMap.set(p.time, p); }});
+            const wMap = new Map();
+            (payload.rsi_wma21 || []).forEach(p => {{ wMap.set(p.time, p); }});
+
             // Initial view range
             if (payload.candles && payload.candles.length) {{
                 const totalBars = payload.candles.length;
@@ -4709,19 +4743,15 @@ def generate_quad_chart_html(
                     if (typeof ema3Series !== 'undefined' && ema3Series) eVal = param.seriesData.get(ema3Series);
                     if (typeof w21Series !== 'undefined' && w21Series) wVal = param.seriesData.get(w21Series);
 
-                    // If hover event originated on mainChart, lookup matching RSI point by time
-                    if (!rVal && payload.rsi && payload.rsi.length) {{
+                    // If hover event originated on mainChart, instant O(1) Map lookup
+                    if (!rVal) {{
                         const tMatch = (typeof param.time === 'number') ? param.time : (param.time.year ? `${{param.time.year}}-${{String(param.time.month).padStart(2,'0')}}-${{String(param.time.day).padStart(2,'0')}}` : String(param.time));
-                        const rPt = payload.rsi.find(p => p.time === tMatch || p.time === param.time);
+                        const rPt = rMap.get(tMatch) || rMap.get(param.time);
                         if (rPt) rVal = {{ value: rPt.value }};
-                        if (payload.rsi_ema3) {{
-                            const ePt = payload.rsi_ema3.find(p => p.time === tMatch || p.time === param.time);
-                            if (ePt) eVal = {{ value: ePt.value }};
-                        }}
-                        if (payload.rsi_wma21) {{
-                            const wPt = payload.rsi_wma21.find(p => p.time === tMatch || p.time === param.time);
-                            if (wPt) wVal = {{ value: wPt.value }};
-                        }}
+                        const ePt = eMap.get(tMatch) || eMap.get(param.time);
+                        if (ePt) eVal = {{ value: ePt.value }};
+                        const wPt = wMap.get(tMatch) || wMap.get(param.time);
+                        if (wPt) wVal = {{ value: wPt.value }};
                     }}
 
                     if (rVal && rVal.value !== undefined) {{
@@ -4742,9 +4772,9 @@ def generate_quad_chart_html(
                     const lVal = param.seriesData.get(lineSeries);
                     if (lVal && lVal.value !== undefined) {{
                         o = h = l = c = lVal.value;
-                    }} else if (payload.candles && payload.candles.length) {{
+                    }} else {{
                         const tMatch = (typeof param.time === 'number') ? param.time : (param.time.year ? `${{param.time.year}}-${{String(param.time.month).padStart(2,'0')}}-${{String(param.time.day).padStart(2,'0')}}` : String(param.time));
-                        const cPt = payload.candles.find(p => p.time === tMatch || p.time === param.time);
+                        const cPt = cMap.get(tMatch) || cMap.get(param.time);
                         if (cPt) {{
                             o = cPt.open; h = cPt.high; l = cPt.low; c = cPt.close;
                         }}
@@ -5549,6 +5579,10 @@ def generate_quad_chart_html(
         const lastQuadScaleState = {{}};
 
         function syncQuadDrawingsWithChart() {{
+            if (globalQuadDrawings.length === 0 && !isQuadDrawing) {{
+                requestAnimationFrame(syncQuadDrawingsWithChart);
+                return;
+            }}
             Object.keys(quadsRegistry).forEach(k => {{
                 const q = quadsRegistry[k];
                 if (!q || !q.mainChart) return;
@@ -5828,10 +5862,12 @@ def generate_quad_chart_html(
                 if (q.rsiChart) q.rsiChart.applyOptions(opts);
                 if (q.hmCloud) {{
                     q.hmCloud.applyOptions({{
-                        topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
-                        bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
-                        bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)'
+                        topFillColor1: isLight ? 'rgba(244, 143, 177, 0.45)' : 'rgba(239, 83, 80, 0.35)',
+                        topFillColor2: isLight ? 'rgba(244, 143, 177, 0.20)' : 'rgba(239, 83, 80, 0.15)',
+                        bottomFillColor1: isLight ? 'rgba(144, 202, 249, 0.20)' : 'rgba(33, 150, 243, 0.15)',
+                        bottomFillColor2: isLight ? 'rgba(144, 202, 249, 0.45)' : 'rgba(33, 150, 243, 0.35)',
+                        topLineColor: isLight ? 'rgba(233, 30, 99, 0.35)' : 'rgba(244, 67, 54, 0.35)',
+                        bottomLineColor: isLight ? 'rgba(33, 150, 243, 0.35)' : 'rgba(33, 150, 243, 0.35)'
                     }});
                 }}
                 if (q.rsiSeries) {{
