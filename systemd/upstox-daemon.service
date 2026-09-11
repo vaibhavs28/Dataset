@@ -1,0 +1,15 @@
+[Unit]
+Description=Upstox 24*7 Market Data Sync Daemon
+After=network.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/home/trader/Dataset
+ExecStart=/usr/bin/python3 daemon_runner.py 15
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
