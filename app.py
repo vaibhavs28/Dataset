@@ -19,6 +19,8 @@ import upstox_parquet_updater
 import sector_data
 import strategy_engine
 import strategy_ui
+import screener_engine
+import screener_ui
 import importlib
 import re
 
@@ -32,6 +34,8 @@ importlib.reload(parquet_loader)
 importlib.reload(sector_data)
 importlib.reload(strategy_engine)
 importlib.reload(strategy_ui)
+importlib.reload(screener_engine)
+importlib.reload(screener_ui)
 
 
 # Set Streamlit Page Configuration
@@ -543,6 +547,7 @@ def main():
         [
             "📊 Quad-Chart View",
             "🚀 Alignment Scanner",
+            "🔍 Chartink Screener",
             "📈 Trading Terminal",
             "🗺️ Market Heatmap",
             "🧪 Strategy Lab & Testing"
@@ -1273,6 +1278,9 @@ def main():
                 file_name=f"alignment_scan_{datetime.today().strftime('%Y%m%d')}.csv",
                 mime="text/csv"
             )
+
+    elif selected_page == "🔍 Chartink Screener":
+        screener_ui.render_screener_page(theme=theme)
 
     elif selected_page == "📈 Trading Terminal":
         db_symbols = database.get_all_symbols()
