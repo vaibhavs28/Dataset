@@ -5028,15 +5028,43 @@ def generate_quad_chart_html(
             }}
 
             function candleTimeToSeconds(t) {{
-                if (typeof t === 'number') return t;
+                if (typeof t === 'number') {{
+                    return id === '75' ? (t + 2250) : t;
+                }}
                 if (typeof t === 'string') {{
                     const parts = t.split('-');
                     if (parts.length === 3) {{
-                        return Math.floor(Date.UTC(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10), 9, 15, 0) / 1000);
+                        const y = parseInt(parts[0], 10);
+                        const m = parseInt(parts[1], 10);
+                        const d = parseInt(parts[2], 10);
+                        if (id === 'm') {{
+                            return Math.floor(Date.UTC(y, m - 1, 15, 6, 52, 30) / 1000);
+                        }}
+                        if (id === 'w') {{
+                            const dt = new Date(Date.UTC(y, m - 1, d, 6, 52, 30));
+                            const uDay = dt.getUTCDay();
+                            let shift = (uDay === 0) ? -4 : (uDay === 5 ? -2 : (uDay === 1 ? 2 : (3 - uDay)));
+                            dt.setUTCDate(dt.getUTCDate() + shift);
+                            return Math.floor(dt.getTime() / 1000);
+                        }}
+                        return Math.floor(Date.UTC(y, m - 1, d, 6, 52, 30) / 1000);
                     }}
                 }}
                 if (typeof t === 'object' && t && t.year) {{
-                    return Math.floor(Date.UTC(t.year, t.month - 1, t.day, 9, 15, 0) / 1000);
+                    const y = t.year;
+                    const m = t.month;
+                    const d = t.day;
+                    if (id === 'm') {{
+                        return Math.floor(Date.UTC(y, m - 1, 15, 6, 52, 30) / 1000);
+                    }}
+                    if (id === 'w') {{
+                        const dt = new Date(Date.UTC(y, m - 1, d, 6, 52, 30));
+                        const uDay = dt.getUTCDay();
+                        let shift = (uDay === 0) ? -4 : (uDay === 5 ? -2 : (uDay === 1 ? 2 : (3 - uDay)));
+                        dt.setUTCDate(dt.getUTCDate() + shift);
+                        return Math.floor(dt.getTime() / 1000);
+                    }}
+                    return Math.floor(Date.UTC(y, m - 1, d, 6, 52, 30) / 1000);
                 }}
                 return 0;
             }}
@@ -5155,16 +5183,20 @@ def generate_quad_chart_html(
             if (!q || !q.candleTimestamps || q.candleTimestamps.length === 0) return Math.floor(Date.now() / 1000);
             const tsList = q.candleTimestamps;
             const len = tsList.length;
-            const idx = Math.round(logical);
-            if (idx <= 0) {{
-                const step = len > 1 ? (tsList[1] - tsList[0]) : 86400;
-                return tsList[0] + idx * step;
+            if (len === 1) return tsList[0];
+
+            if (logical <= 0) {{
+                const step = Math.max(1, tsList[1] - tsList[0]);
+                return tsList[0] + logical * step;
             }}
-            if (idx >= len) {{
-                const step = len > 1 ? (tsList[len - 1] - tsList[len - 2]) : 86400;
-                return tsList[len - 1] + (idx - (len - 1)) * step;
+            if (logical >= len - 1) {{
+                const step = Math.max(1, tsList[len - 1] - tsList[len - 2]);
+                return tsList[len - 1] + (logical - (len - 1)) * step;
             }}
-            return tsList[idx];
+
+            const base = Math.floor(logical);
+            const frac = logical - base;
+            return tsList[base] + frac * (tsList[base + 1] - tsList[base]);
         }}
 
         function timestampToLogical(id, targetTs) {{
@@ -5172,14 +5204,15 @@ def generate_quad_chart_html(
             if (!q || !q.candleTimestamps || q.candleTimestamps.length === 0) return 0;
             const tsList = q.candleTimestamps;
             const len = tsList.length;
+            if (len === 1) return 0;
 
             if (targetTs <= tsList[0]) {{
-                const step = len > 1 ? (tsList[1] - tsList[0]) : 86400;
-                return (targetTs - tsList[0]) / Math.max(1, step);
+                const step = Math.max(1, tsList[1] - tsList[0]);
+                return (targetTs - tsList[0]) / step;
             }}
             if (targetTs >= tsList[len - 1]) {{
-                const step = len > 1 ? (tsList[len - 1] - tsList[len - 2]) : 86400;
-                return (len - 1) + (targetTs - tsList[len - 1]) / Math.max(1, step);
+                const step = Math.max(1, tsList[len - 1] - tsList[len - 2]);
+                return (len - 1) + (targetTs - tsList[len - 1]) / step;
             }}
 
             let low = 0, high = len - 1;
@@ -5191,10 +5224,13 @@ def generate_quad_chart_html(
                 else high = mid - 1;
             }}
 
-            const tHigh = tsList[low];
-            const tLow = tsList[high];
-            const frac = (targetTs - tLow) / Math.max(1, (tHigh - tLow));
-            return high + frac;
+            const idxLow = Math.max(0, Math.min(len - 2, high));
+            const idxHigh = idxLow + 1;
+            const t0 = tsList[idxLow];
+            const t1 = tsList[idxHigh];
+            const span = Math.max(1, t1 - t0);
+            const frac = (targetTs - t0) / span;
+            return idxLow + frac;
         }}
 
         function getActivePriceSeries(q) {{
@@ -5231,29 +5267,57 @@ def generate_quad_chart_html(
             const s = getActivePriceSeries(q);
 
             let logical = 0;
-            if (pt.time !== undefined && pt.time > 0) {{
+            if (pt.time !== undefined && pt.time !== null && pt.time !== 0) {{
                 logical = timestampToLogical(id, pt.time);
             }} else if (pt.logical !== undefined && pt.sourceQuad === id) {{
                 logical = pt.logical;
             }}
 
             let x = 0;
+            let xResolved = false;
             try {{
                 const cx = q.mainChart.timeScale().logicalToCoordinate(logical);
-                if (cx !== null && !isNaN(cx)) x = cx;
-                else if (pt.origX !== undefined && pt.sourceQuad === id) x = pt.origX;
+                if (cx !== null && !isNaN(cx)) {{
+                    x = cx;
+                    xResolved = true;
+                }}
             }} catch(e) {{}}
+            if (!xResolved) {{
+                try {{
+                    const range = q.mainChart.timeScale().getVisibleLogicalRange();
+                    const w = q.mainContainer ? (q.mainContainer.clientWidth || 300) : 300;
+                    if (range && range.from !== null && range.to !== null && range.to !== range.from) {{
+                        x = (logical - range.from) / (range.to - range.from) * w;
+                        xResolved = true;
+                    }}
+                }} catch(e) {{}}
+            }}
+            if (!xResolved && pt.origX !== undefined && pt.sourceQuad === id) {{
+                x = pt.origX;
+            }}
 
             let y = 0;
+            let yResolved = false;
             try {{
                 if (s && pt.price !== undefined && pt.price !== null) {{
                     const cy = s.priceToCoordinate(pt.price);
-                    if (cy !== null && !isNaN(cy)) y = cy;
-                    else if (pt.origY !== undefined && pt.sourceQuad === id) y = pt.origY;
-                }} else if (pt.origY !== undefined && pt.sourceQuad === id) {{
-                    y = pt.origY;
+                    if (cy !== null && !isNaN(cy)) {{
+                        y = cy;
+                        yResolved = true;
+                    }} else {{
+                        const h = q.mainContainer ? (q.mainContainer.clientHeight || 200) : 200;
+                        const p0 = s.coordinateToPrice(0);
+                        const ph = s.coordinateToPrice(h);
+                        if (p0 !== null && ph !== null && p0 !== ph) {{
+                            y = (p0 - pt.price) / (p0 - ph) * h;
+                            yResolved = true;
+                        }}
+                    }}
                 }}
             }} catch(e) {{}}
+            if (!yResolved && pt.origY !== undefined && pt.sourceQuad === id) {{
+                y = pt.origY;
+            }}
 
             return {{ x, y }};
         }}
@@ -5298,7 +5362,7 @@ def generate_quad_chart_html(
             if (bestDist <= 35 && bestPrice !== null) {{
                 lastSnappedPoint = {{ id, x: cx, y: bestY }};
                 return {{
-                    time: c.time,
+                    time: logicalToTimestamp(id, idx),
                     price: bestPrice,
                     logical: idx,
                     origX: cx,
@@ -5330,20 +5394,11 @@ def generate_quad_chart_html(
                 if (!item.isSync && item.sourceQuad !== id) continue;
 
                 if (item.type === 'horizontal') {{
-                    let y = 0;
-                    if (s && item.price !== undefined) {{
-                        const cy = s.priceToCoordinate(item.price);
-                        if (cy !== null && !isNaN(cy)) y = cy;
-                    }} else if (item.origY !== undefined) y = item.origY;
-                    if (Math.abs(py - y) <= 8) return item;
+                    const pt = quadChartToScreen(id, {{ price: item.price, time: 0 }});
+                    if (Math.abs(py - pt.y) <= 8) return item;
                 }} else if (item.type === 'vertical') {{
-                    let x = 0;
-                    if (item.time) {{
-                        const log = timestampToLogical(id, item.time);
-                        const cx = q.mainChart.timeScale().logicalToCoordinate(log);
-                        if (cx !== null && !isNaN(cx)) x = cx;
-                    }}
-                    if (Math.abs(px - x) <= 8) return item;
+                    const pt = quadChartToScreen(id, {{ time: item.time, price: 0 }});
+                    if (Math.abs(px - pt.x) <= 8) return item;
                 }} else if (item.type === 'cross') {{
                     if (item.p1) {{
                         const s1 = quadChartToScreen(id, item.p1);
@@ -5583,7 +5638,11 @@ def generate_quad_chart_html(
             }} else if (item.type === 'channel') {{
                 const s1 = quadChartToScreen(id, item.p1);
                 const s2 = quadChartToScreen(id, item.p2);
-                const offY = item.channelOffsetY || 30;
+                let offY = item.channelOffsetY || 30;
+                if (item.channelPriceDelta !== undefined && item.channelPriceDelta !== null) {{
+                    const sOff = quadChartToScreen(id, {{ price: (item.p1 ? item.p1.price : 0) + item.channelPriceDelta, time: item.p1 ? item.p1.time : 0 }});
+                    offY = sOff.y - s1.y;
+                }}
                 ctx.fillStyle = hexToRgbaQuad(color, 0.12);
                 ctx.beginPath();
                 ctx.moveTo(s1.x, s1.y);
@@ -5607,15 +5666,8 @@ def generate_quad_chart_html(
                 ctx.stroke();
                 ctx.setLineDash([]);
             }} else if (item.type === 'horizontal') {{
-                const s = getActivePriceSeries(quadsRegistry[id]);
-                let y = 0;
-                if (s && item.price !== undefined && item.price !== null) {{
-                    try {{
-                        const cy = s.priceToCoordinate(item.price);
-                        if (cy !== null && !isNaN(cy)) y = cy;
-                        else if (item.origY !== undefined && item.sourceQuad === id) y = item.origY;
-                    }} catch(e) {{}}
-                }}
+                const pt = quadChartToScreen(id, {{ price: item.price, time: 0 }});
+                const y = pt.y;
                 ctx.setLineDash([5, 4]);
                 ctx.beginPath();
                 ctx.moveTo(0, y);
@@ -5624,9 +5676,8 @@ def generate_quad_chart_html(
                 ctx.setLineDash([]);
                 drawQuadPriceBadge(ctx, item.price, y, color, w);
             }} else if (item.type === 'vertical') {{
-                const q = quadsRegistry[id];
-                const log = timestampToLogical(id, item.time);
-                const x = (q && q.mainChart) ? q.mainChart.timeScale().logicalToCoordinate(log) : (item.origX || 0);
+                const pt = quadChartToScreen(id, {{ time: item.time, price: 0 }});
+                const x = pt.x;
                 ctx.setLineDash([5, 4]);
                 ctx.beginPath();
                 ctx.moveTo(x, 0);
@@ -6080,10 +6131,12 @@ def generate_quad_chart_html(
                         activeDrawingQuad = id;
                         dragStartScreen = {{ px, py }};
                         dragInitialPoints = {{
-                            p1: clicked.p1 ? {{ ...clicked.p1 }} : null,
-                            p2: clicked.p2 ? {{ ...clicked.p2 }} : null,
-                            price: clicked.price,
-                            origY: clicked.origY
+                            s1: clicked.p1 ? quadChartToScreen(id, clicked.p1) : null,
+                            s2: clicked.p2 ? quadChartToScreen(id, clicked.p2) : null,
+                            s3: clicked.p3 ? quadChartToScreen(id, clicked.p3) : null,
+                            horizY: clicked.type === 'horizontal' ? quadChartToScreen(id, {{ price: clicked.price, time: 0 }}).y : py,
+                            vertX: clicked.type === 'vertical' ? quadChartToScreen(id, {{ time: clicked.time, price: 0 }}).x : px,
+                            points: clicked.points ? clicked.points.map(p => quadChartToScreen(id, p)) : null
                         }};
                     }} else {{
                         selectedDrawing = null;
@@ -6185,16 +6238,25 @@ def generate_quad_chart_html(
                     if (isDraggingDrawing && selectedDrawing && dragStartScreen && dragInitialPoints) {{
                         const dx = px - dragStartScreen.px;
                         const dy = py - dragStartScreen.py;
-                        if (selectedDrawing.p1 && dragInitialPoints.p1) {{
-                            selectedDrawing.p1 = quadScreenToChart(id, dragInitialPoints.p1.origX + dx, dragInitialPoints.p1.origY + dy);
+                        if (selectedDrawing.p1 && dragInitialPoints.s1) {{
+                            selectedDrawing.p1 = quadScreenToChart(id, dragInitialPoints.s1.x + dx, dragInitialPoints.s1.y + dy);
                         }}
-                        if (selectedDrawing.p2 && dragInitialPoints.p2) {{
-                            selectedDrawing.p2 = quadScreenToChart(id, dragInitialPoints.p2.origX + dx, dragInitialPoints.p2.origY + dy);
+                        if (selectedDrawing.p2 && dragInitialPoints.s2) {{
+                            selectedDrawing.p2 = quadScreenToChart(id, dragInitialPoints.s2.x + dx, dragInitialPoints.s2.y + dy);
+                        }}
+                        if (selectedDrawing.p3 && dragInitialPoints.s3) {{
+                            selectedDrawing.p3 = quadScreenToChart(id, dragInitialPoints.s3.x + dx, dragInitialPoints.s3.y + dy);
                         }}
                         if (selectedDrawing.type === 'horizontal') {{
-                            const qPt = quadScreenToChart(id, px, (dragInitialPoints.origY || 0) + dy);
+                            const qPt = quadScreenToChart(id, px, dragInitialPoints.horizY + dy);
                             selectedDrawing.price = qPt.price;
-                            selectedDrawing.origY = (dragInitialPoints.origY || 0) + dy;
+                        }}
+                        if (selectedDrawing.type === 'vertical') {{
+                            const qPt = quadScreenToChart(id, dragInitialPoints.vertX + dx, py);
+                            selectedDrawing.time = qPt.time;
+                        }}
+                        if (selectedDrawing.points && dragInitialPoints.points) {{
+                            selectedDrawing.points = dragInitialPoints.points.map(sp => quadScreenToChart(id, sp.x + dx, sp.y + dy));
                         }}
                         renderAllQuadDrawings();
                         return;
@@ -6285,6 +6347,7 @@ def generate_quad_chart_html(
                                 p1: quadStartPoint,
                                 p2: endPt,
                                 channelOffsetY: (activeQuadTool === 'channel') ? 35 : 0,
+                                channelPriceDelta: (activeQuadTool === 'channel' && quadStartPoint.price) ? (quadStartPoint.price * 0.015) : 0,
                                 color: activeQuadColor,
                                 width: activeQuadWidth,
                                 sourceQuad: id,
