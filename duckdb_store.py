@@ -27,6 +27,13 @@ def get_connection() -> duckdb.DuckDBPyConnection:
         with _lock:
             if _conn is None:
                 DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+                if not DUCKDB_PATH.exists() or DUCKDB_PATH.stat().st_size < 1024 * 1024:
+                    logger.warning(f"DuckDB database not found at {DUCKDB_PATH}. Attempting automatic download from GitHub...")
+                    try:
+                        import download_dataset
+                        download_dataset.download()
+                    except Exception as dl_err:
+                        logger.error(f"Could not auto-download database: {dl_err}. You can manually run: python3 download_dataset.py")
                 try:
                     _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
                     _conn.execute("PRAGMA threads=4;")
