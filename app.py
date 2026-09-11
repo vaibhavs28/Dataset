@@ -356,9 +356,27 @@ def create_candlestick_chart(
 
 
 @st.cache_data(ttl=600, show_spinner=False)
+def get_master_alignment_scan() -> pd.DataFrame:
+    """Caches master scan results across the universe for instantaneous sub-millisecond filtering."""
+    return scanner.run_multiframe_alignment_scan()
+
+
 def get_cached_alignment_scan(stage_filter: str) -> pd.DataFrame:
-    """Caches scan results to ensure instantaneous page navigation without database contention."""
-    return scanner.run_multiframe_alignment_scan(stage_filter=stage_filter)
+    """Instantaneous in-memory filtering from the cached master scan."""
+    df = get_master_alignment_scan()
+    if df.empty or stage_filter == "All":
+        return df
+    if stage_filter == "Stage 3 (Full Alignment Only)":
+        return df[df["Score"] == 3].reset_index(drop=True)
+    elif stage_filter == "Stage 2+ (M+W Aligned)":
+        return df[df["Score"] >= 2].reset_index(drop=True)
+    elif stage_filter == "Stage 1+ (Monthly Pass)":
+        return df[df["Score"] >= 1].reset_index(drop=True)
+    elif stage_filter == "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)":
+        return df[(df["Score"] == 3) & (df["Monthly_RSI_Match"] == "✅ PASS")].reset_index(drop=True)
+    elif stage_filter == "Monthly RSI Scan Only (RSI>=50 & EMA3>=WMA21)":
+        return df[df["Monthly_RSI_Match"] == "✅ PASS"].reset_index(drop=True)
+    return df
 
 
 def main():
@@ -972,8 +990,8 @@ def main():
             stage_filter = st.selectbox(
                 "Filter Alignment Stage",
                 options=[
-                    "All",
                     "Stage 3 (Full Alignment Only)",
+                    "All",
                     "Stage 2+ (M+W Aligned)",
                     "Stage 1+ (Monthly Pass)",
                     "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)",
