@@ -137,6 +137,21 @@ def get_latest_candle_date(symbol: str) -> Optional[str]:
 def get_all_symbols(include_indices: bool = True, exchange: Optional[str] = None) -> List[str]:
     """Returns all unique Equity and Index trading symbols strictly from NSE or specified exchange."""
     conn = get_connection()
+
+    # Check if instruments table is populated; if fresh/empty, automatically sync from Upstox
+    with _lock:
+        try:
+            inst_cnt = conn.execute("SELECT count(*) FROM instruments;").fetchone()[0]
+        except Exception:
+            inst_cnt = 0
+
+    if inst_cnt < 500:
+        try:
+            import instruments
+            instruments.sync_all_instruments()
+        except Exception as e:
+            logger.warning(f"Auto-syncing instruments in get_all_symbols: {e}")
+
     with _lock:
         try:
             if exchange:
@@ -188,6 +203,19 @@ def get_alignment_scanner_symbols() -> List[str]:
     - Any debt/bond instruments starting with '0'
     """
     conn = get_connection()
+    with _lock:
+        try:
+            inst_cnt = conn.execute("SELECT count(*) FROM instruments;").fetchone()[0]
+        except Exception:
+            inst_cnt = 0
+
+    if inst_cnt < 500:
+        try:
+            import instruments
+            instruments.sync_all_instruments()
+        except Exception as e:
+            logger.warning(f"Auto-syncing instruments in get_alignment_scanner_symbols: {e}")
+
     with _lock:
         try:
             rows = conn.execute("""

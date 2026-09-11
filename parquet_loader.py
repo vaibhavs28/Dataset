@@ -393,17 +393,27 @@ def ensure_symbol_75m_candles(symbol: str, min_bars: int = 1) -> pd.DataFrame:
     except Exception as e:
         logger.warning(f"Error loading and resampling 1-min to 75m for {sym}: {e}")
 
-    # 2. If missing from local parquet or missing recent bars, fetch from Upstox API
+    # 2. If missing from local parquet or missing recent bars, fetch on-demand 1-min chunks from Upstox
     try:
-        import downloader
-        downloader.sync_live_market_candles(sym)
-        df_1m = load_symbol_1min(sym, limit=10000)
-        if not df_1m.empty:
+        import instruments
+        inst_key = instruments.resolve_instrument_key(sym) or f"NSE_EQ|{sym}"
+        start_1min_dt = datetime.now() - timedelta(days=60)
+        end_1min_dt = datetime.now() + timedelta(days=1)
+        import upstox_parquet_updater
+        chunks = upstox_parquet_updater.generate_date_chunks(start_1min_dt, end_1min_dt, chunk_days=28)
+        all_raw = []
+        for f_d, t_d in chunks:
+            c_list = upstox_parquet_updater.fetch_upstox_1min_chunk(inst_key, f_d, t_d)
+            if c_list:
+                all_raw.extend(c_list)
+        if all_raw:
+            df_1m = upstox_parquet_updater.parse_upstox_candles_to_dataframe(sym, all_raw)
+            upstox_parquet_updater.append_bars_to_symbol_file(sym, df_1m)
             df_75_new = resample_1min_to_75min(df_1m)
             if not df_75_new.empty and is_genuine_75m_df(df_75_new):
                 return df_75_new
     except Exception as e:
-        logger.warning(f"Could not fetch live 1-min data from Upstox for {sym}: {e}")
+        logger.warning(f"Could not fetch on-demand 1-min data from Upstox for {sym}: {e}")
 
     # Fallback to whatever authentic 75m bars exist (or empty dataframe) - NEVER fake or simulate
     df_final = database.get_intraday_candles_df(sym, "75m", limit=1000)
