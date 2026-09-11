@@ -245,36 +245,7 @@ def create_candlestick_chart(
         has_e3 = "RSI_EMA3" in df.columns and not df["RSI_EMA3"].dropna().empty
         has_w21 = "RSI_WMA21" in df.columns and not df["RSI_WMA21"].dropna().empty
 
-        # 1. Bearish Blue Cloud below 50
-        if has_e3:
-            e3_s = df["RSI_EMA3"].fillna(50.0)
-            below_50 = np.minimum(e3_s, 50.0)
-            fig.add_trace(
-                go.Scatter(
-                    x=x_labels,
-                    y=[50.0] * len(df),
-                    mode="lines",
-                    line=dict(color="rgba(0,0,0,0)", width=0),
-                    showlegend=False,
-                    hoverinfo="skip"
-                ),
-                row=rsi_row, col=1
-            )
-            fig.add_trace(
-                go.Scatter(
-                    x=x_labels,
-                    y=below_50,
-                    mode="lines",
-                    fill="tonexty",
-                    fillcolor="rgba(230, 237, 255, 0.65)" if is_light else "rgba(59, 130, 246, 0.2)",
-                    line=dict(color="rgba(0,0,0,0)", width=0),
-                    showlegend=False,
-                    hoverinfo="skip"
-                ),
-                row=rsi_row, col=1
-            )
-
-        # 2. Bullish Pink Cloud between EMA 3 and WMA 21
+        # 1. Bullish Pink Cloud between EMA 3 and WMA 21 (when Green > Red)
         if has_e3 and has_w21:
             fig.add_trace(
                 go.Scatter(
@@ -301,8 +272,8 @@ def create_candlestick_chart(
                 row=rsi_row, col=1
             )
 
-        # 3. Primary RSI(9) Line: Black in Light, White in Dark
-        rsi_clr = "#0F172A" if is_light else "#F8FAFC"
+        # 2. Primary RSI(9) Line: Black in Light, White in Dark
+        rsi_clr = "#131722" if is_light else "#F8FAFC"
         fig.add_trace(
             go.Scatter(
                 x=x_labels,
@@ -315,7 +286,7 @@ def create_candlestick_chart(
             row=rsi_row, col=1
         )
 
-        # 4. Fast EMA 3 on RSI: Bright Green
+        # 3. Fast EMA 3 on RSI: Exact TradingView Green (#4CAF50)
         if has_e3:
             fig.add_trace(
                 go.Scatter(
@@ -323,13 +294,13 @@ def create_candlestick_chart(
                     y=df["RSI_EMA3"],
                     mode="lines",
                     name="EMA 3 (Green)",
-                    line=dict(color="#16A34A", width=2.0),
+                    line=dict(color="#4CAF50", width=2.0),
                     hovertemplate="<b>EMA 3 (Green)</b>: %{y:.2f}<extra></extra>"
                 ),
                 row=rsi_row, col=1
             )
 
-        # 5. Slow WMA 21 on RSI: Bright Red
+        # 4. Slow WMA 21 on RSI: Exact TradingView Red (#FF5252)
         if has_w21:
             fig.add_trace(
                 go.Scatter(
@@ -337,21 +308,21 @@ def create_candlestick_chart(
                     y=df["RSI_WMA21"],
                     mode="lines",
                     name="WMA 21 (Red)",
-                    line=dict(color="#DC2626", width=2.0),
+                    line=dict(color="#FF5252", width=2.0),
                     hovertemplate="<b>WMA 21 (Red)</b>: %{y:.2f}<extra></extra>"
                 ),
                 row=rsi_row, col=1
             )
 
-        # 6. Solid Blue 50 Line with Badge
+        # 5. Exact TradingView Blue 50 Line (#7695F9) with Badge
         fig.add_hline(
             y=50,
-            line=dict(color="#2563EB", width=2, dash="solid"),
+            line=dict(color="#7695F9", width=2, dash="solid"),
             annotation_text="50",
             annotation_position="top right",
-            annotation_font=dict(size=10, color="#2563EB", family="monospace"),
-            annotation_bgcolor="rgba(219, 234, 254, 0.95)" if is_light else "rgba(30, 58, 138, 0.95)",
-            annotation_bordercolor="#2563EB",
+            annotation_font=dict(size=10, color="#7695F9", family="monospace"),
+            annotation_bgcolor="rgba(255, 255, 255, 0.95)" if is_light else "rgba(30, 58, 138, 0.95)",
+            annotation_bordercolor="#7695F9",
             annotation_borderwidth=1.5,
             row=rsi_row, col=1
         )

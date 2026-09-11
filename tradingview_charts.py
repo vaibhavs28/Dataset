@@ -469,21 +469,9 @@ def generate_lightweight_chart_html(
         .light-theme #rsi_container_{safe_id} {{
             border-top: 1px solid #e0e3eb;
         }}
-        /* Light white background tint above 50 line on RSI pane */
+        /* Remove any background tint on RSI / Hilega Milega pane */
         .rsi-bull-tint {{
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 55px;
-            height: 50%;
-            background: rgba(255, 255, 255, 0.08);
-            pointer-events: none;
-            z-index: 2;
-            border-bottom: 1px dashed rgba(255, 255, 255, 0.25);
-        }}
-        .light-theme .rsi-bull-tint {{
-            background: rgba(41, 98, 255, 0.06);
-            border-bottom: 1px dashed rgba(41, 98, 255, 0.25);
+            display: none !important;
         }}
         /* Hilega Milega Header & Live Value Badges */
         .hm-header {{
@@ -515,13 +503,13 @@ def generate_lightweight_chart_html(
             color: #F8FAFC;
         }}
         .light-theme .hm-rsi {{
-            color: #0F172A;
+            color: #131722;
         }}
         .hm-ema3 {{
-            color: #22C55E;
+            color: #4CAF50;
         }}
         .hm-wma21 {{
-            color: #EF4444;
+            color: #FF5252;
         }}
         /* Floating Interactive Tooltip attached directly to chart-wrapper */
         .tv-floating-tooltip {{
@@ -846,14 +834,14 @@ def generate_lightweight_chart_html(
                     }}
                 }});
 
-                // Baseline Cloud for Hilega Milega (Pink cloud above 50, Blue cloud below 50)
+                // Baseline Cloud for Hilega Milega (Pink cloud above 50, completely transparent below 50)
                 try {{
                     const hmCloudSeries = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: 'rgba(255, 237, 237, 0.45)',
-                        topFillColor2: 'rgba(255, 237, 237, 0.1)',
-                        bottomFillColor1: 'rgba(230, 237, 255, 0.1)',
-                        bottomFillColor2: 'rgba(230, 237, 255, 0.45)',
+                        topFillColor1: 'rgba(255, 237, 237, 0.55)',
+                        topFillColor2: 'rgba(255, 237, 237, 0.15)',
+                        bottomFillColor1: 'rgba(0, 0, 0, 0)',
+                        bottomFillColor2: 'rgba(0, 0, 0, 0)',
                         topLineColor: 'rgba(0,0,0,0)',
                         bottomLineColor: 'rgba(0,0,0,0)',
                         lastValueVisible: false,
@@ -865,7 +853,7 @@ def generate_lightweight_chart_html(
                 }} catch(e) {{}}
 
                 // 1. Primary RSI(9) Line: Black in Light Mode, White in Dark Mode
-                const rsiColor = isLightInit ? '#0F172A' : '#F8FAFC';
+                const rsiColor = isLightInit ? '#131722' : '#F8FAFC';
                 const rsiSeries = rsiChart.addLineSeries({{
                     color: rsiColor,
                     lineWidth: 1.8,
@@ -875,11 +863,11 @@ def generate_lightweight_chart_html(
                 }});
                 rsiSeries.setData(rsiData);
 
-                // 2. Fast EMA 3 on RSI: Bright Green
+                // 2. Fast EMA 3 on RSI: Exact TradingView Green (#4CAF50)
                 let ema3Series = null;
                 if (rsiEma3Data && rsiEma3Data.length > 0) {{
                     ema3Series = rsiChart.addLineSeries({{
-                        color: '#22C55E',
+                        color: '#4CAF50',
                         lineWidth: 1.8,
                         priceLineVisible: false,
                         lastValueVisible: true,
@@ -888,11 +876,11 @@ def generate_lightweight_chart_html(
                     ema3Series.setData(rsiEma3Data);
                 }}
 
-                // 3. Slow WMA 21 on RSI: Bright Red
+                // 3. Slow WMA 21 on RSI: Exact TradingView Red (#FF5252)
                 let wma21Series = null;
                 if (rsiWma21Data && rsiWma21Data.length > 0) {{
                     wma21Series = rsiChart.addLineSeries({{
-                        color: '#EF4444',
+                        color: '#FF5252',
                         lineWidth: 1.8,
                         priceLineVisible: false,
                         lastValueVisible: true,
@@ -901,10 +889,10 @@ def generate_lightweight_chart_html(
                     wma21Series.setData(rsiWma21Data);
                 }}
 
-                // 4. Solid Blue 50 Line with Price Badge
+                // 4. Exact TradingView Blue 50 Line (#7695F9) with Price Badge
                 rsiSeries.createPriceLine({{
                     price: 50,
-                    color: '#3B82F6',
+                    color: '#7695F9',
                     lineWidth: 2,
                     lineStyle: LightweightCharts.LineStyle.Solid,
                     axisLabelVisible: true,
@@ -2662,14 +2650,14 @@ def generate_advanced_terminal_html(
                     handleScroll: {{ mouseWheel: true, pressedMouseMove: true }},
                     handleScale: {{ axisPressedMouseMove: true, mouseWheel: true }}
                 }});
-                // Baseline Cloud for Hilega Milega
+                // Baseline Cloud for Hilega Milega (Pink cloud above 50, transparent below 50)
                 try {{
                     const hmCloud = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: 'rgba(255, 237, 237, 0.45)',
-                        topFillColor2: 'rgba(255, 237, 237, 0.1)',
-                        bottomFillColor1: 'rgba(230, 237, 255, 0.1)',
-                        bottomFillColor2: 'rgba(230, 237, 255, 0.45)',
+                        topFillColor1: 'rgba(255, 237, 237, 0.55)',
+                        topFillColor2: 'rgba(255, 237, 237, 0.15)',
+                        bottomFillColor1: 'rgba(0, 0, 0, 0)',
+                        bottomFillColor2: 'rgba(0, 0, 0, 0)',
                         topLineColor: 'rgba(0,0,0,0)',
                         bottomLineColor: 'rgba(0,0,0,0)',
                         lastValueVisible: false,
@@ -2678,18 +2666,18 @@ def generate_advanced_terminal_html(
                     if (rsiEma3 && rsiEma3.length > 0) hmCloud.setData(rsiEma3);
                 }} catch(e) {{}}
 
-                const rsiColor = isLight ? '#0F172A' : '#F8FAFC';
+                const rsiColor = isLight ? '#131722' : '#F8FAFC';
                 const rsiSeries = rsiChart.addLineSeries({{ color: rsiColor, lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'RSI(9)' }});
                 rsiSeries.setData(rsi);
                 if (rsiEma3 && rsiEma3.length > 0) {{
-                    const e3 = rsiChart.addLineSeries({{ color: '#22C55E', lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'EMA(3)' }});
+                    const e3 = rsiChart.addLineSeries({{ color: '#4CAF50', lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'EMA(3)' }});
                     e3.setData(rsiEma3);
                 }}
                 if (rsiWma21 && rsiWma21.length > 0) {{
-                    const w21 = rsiChart.addLineSeries({{ color: '#EF4444', lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'WMA(21)' }});
+                    const w21 = rsiChart.addLineSeries({{ color: '#FF5252', lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'WMA(21)' }});
                     w21.setData(rsiWma21);
                 }}
-                rsiSeries.createPriceLine({{ price: 50, color: '#3B82F6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '50' }});
+                rsiSeries.createPriceLine({{ price: 50, color: '#7695F9', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '50' }});
                 rsiSeries.createPriceLine({{ price: 70, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
                 rsiSeries.createPriceLine({{ price: 30, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
                 allCharts.push(rsiChart);
@@ -3749,15 +3737,7 @@ def generate_quad_chart_html(
             color: #1E293B;
         }}
         .rsi-bull-tint {{
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 55px;
-            height: 50%;
-            background: rgba(255, 255, 255, 0.08);
-            pointer-events: none;
-            z-index: 2;
-            border-bottom: 1px dashed rgba(255, 255, 255, 0.25);
+            display: none !important;
         }}
         /* Tooltip */
         .tv-floating-tooltip {{
@@ -4335,14 +4315,14 @@ def generate_quad_chart_html(
 
                 rsiChart = LightweightCharts.createChart(rsiContainer, rsiOptions);
 
-                // Baseline Cloud for Hilega Milega
+                // Baseline Cloud for Hilega Milega (Pink cloud above 50, transparent below 50)
                 try {{
                     const hmCloud = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: 'rgba(255, 237, 237, 0.45)',
-                        topFillColor2: 'rgba(255, 237, 237, 0.1)',
-                        bottomFillColor1: 'rgba(230, 237, 255, 0.1)',
-                        bottomFillColor2: 'rgba(230, 237, 255, 0.45)',
+                        topFillColor1: 'rgba(255, 237, 237, 0.55)',
+                        topFillColor2: 'rgba(255, 237, 237, 0.15)',
+                        bottomFillColor1: 'rgba(0, 0, 0, 0)',
+                        bottomFillColor2: 'rgba(0, 0, 0, 0)',
                         topLineColor: 'rgba(0,0,0,0)',
                         bottomLineColor: 'rgba(0,0,0,0)',
                         lastValueVisible: false,
@@ -4351,7 +4331,7 @@ def generate_quad_chart_html(
                     if (payload.rsi_ema3 && payload.rsi_ema3.length) hmCloud.setData(payload.rsi_ema3);
                 }} catch(e) {{}}
 
-                const rsiColor = isLightInit ? '#0F172A' : '#F8FAFC';
+                const rsiColor = isLightInit ? '#131722' : '#F8FAFC';
                 const rsiSeries = rsiChart.addLineSeries({{
                     color: rsiColor,
                     lineWidth: 1.8,
@@ -4365,7 +4345,7 @@ def generate_quad_chart_html(
 
                 if (payload.rsi_ema3 && payload.rsi_ema3.length) {{
                     const e3Series = rsiChart.addLineSeries({{
-                        color: '#22C55E',
+                        color: '#4CAF50',
                         lineWidth: 1.8,
                         lastValueVisible: true,
                         priceLineVisible: false,
@@ -4376,7 +4356,7 @@ def generate_quad_chart_html(
 
                 if (payload.rsi_wma21 && payload.rsi_wma21.length) {{
                     const w21Series = rsiChart.addLineSeries({{
-                        color: '#EF4444',
+                        color: '#FF5252',
                         lineWidth: 1.8,
                         lastValueVisible: true,
                         priceLineVisible: false,
@@ -4385,8 +4365,8 @@ def generate_quad_chart_html(
                     w21Series.setData(payload.rsi_wma21);
                 }}
 
-                // Solid 50 Blue Line with Price Badge
-                rsiSeries.createPriceLine({{ price: 50, color: '#3B82F6', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '50' }});
+                // Solid 50 Blue Line (#7695F9) with Price Badge
+                rsiSeries.createPriceLine({{ price: 50, color: '#7695F9', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '50' }});
                 rsiSeries.createPriceLine({{ price: 70, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
                 rsiSeries.createPriceLine({{ price: 30, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
 
