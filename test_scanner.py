@@ -10,8 +10,6 @@ class TestScanner(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         database.init_db()
-        # Seed test data for 5 stocks
-        downloader.seed_demo_data(symbols=["TEST_A", "TEST_B"], years=2)
 
     def test_database_stats(self):
         stats = database.get_db_stats()
@@ -19,7 +17,7 @@ class TestScanner(unittest.TestCase):
         self.assertGreaterEqual(stats["symbols_with_candles"], 2)
 
     def test_resampling_monthly(self):
-        df = database.get_candles_df("TEST_A")
+        df = database.get_candles_df("RELIANCE")
         self.assertFalse(df.empty)
         
         monthly_df = scanner.resample_ohlcv(df, timeframe="monthly")
@@ -29,7 +27,7 @@ class TestScanner(unittest.TestCase):
         self.assertIn("open", monthly_df.columns)
 
     def test_ema_calculation(self):
-        df = database.get_candles_df("TEST_A")
+        df = database.get_candles_df("RELIANCE")
         monthly_df = scanner.resample_ohlcv(df, timeframe="monthly")
         ind_df = scanner.calculate_indicator(monthly_df, indicator_type="EMA", period=5)
         
@@ -39,7 +37,7 @@ class TestScanner(unittest.TestCase):
         self.assertGreater(len(valid_ema), 0)
 
     def test_scanner_run(self):
-        results = scanner.run_scan(symbols=["TEST_A", "TEST_B"], timeframe="monthly", period=5, condition="Close > Indicator")
+        results = scanner.run_scan(symbols=["RELIANCE", "TCS"], timeframe="monthly", period=5, condition="Close > Indicator")
         # Results should be a DataFrame (might be empty or have matching rows depending on generated values)
         self.assertIsInstance(results, pd.DataFrame)
         if not results.empty:
@@ -50,7 +48,7 @@ class TestScanner(unittest.TestCase):
 
 
     def test_rsi_calculation(self):
-        df = database.get_candles_df("TEST_A")
+        df = database.get_candles_df("RELIANCE")
         rsi_series = scanner.calculate_rsi(df["close"], span=14)
         self.assertFalse(rsi_series.empty)
         # RSI must be bounded between 0 and 100
@@ -63,7 +61,7 @@ class TestScanner(unittest.TestCase):
         self.assertTrue((ind_df["RSI_14"] <= 100).all())
 
     def test_monthly_rsi_scan(self):
-        df = database.get_candles_df("TEST_A")
+        df = database.get_candles_df("RELIANCE")
         m_df = scanner.resample_ohlcv(df, timeframe="monthly")
         rsi = scanner.calculate_rsi(m_df["close"], span=14)
         ema3 = scanner.calculate_ema(rsi, span=3)
@@ -75,7 +73,7 @@ class TestScanner(unittest.TestCase):
         self.assertFalse(wma21.isna().all())
 
         # Test scan symbol condition
-        res = scanner.scan_symbol("TEST_A", timeframe="monthly", condition="RSI > 50")
+        res = scanner.scan_symbol("RELIANCE", timeframe="monthly", condition="RSI > 50")
         if res:
             self.assertIn("Symbol", res)
 

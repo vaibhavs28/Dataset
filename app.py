@@ -1,6 +1,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from datetime import datetime
@@ -124,7 +125,7 @@ def create_candlestick_chart(
     if show_volume and has_rsi:
         rows = 3
         row_heights = [0.60, 0.18, 0.22]
-        subplot_titles = (f"{symbol.upper()} - {title}", "Volume", f"RSI ({rsi_span})")
+        subplot_titles = (f"{symbol.upper()} - {title}", "Volume", "Hilega Milega(by NK sir) [anuragM]")
         vol_row = 2
         rsi_row = 3
     elif show_volume and not has_rsi:
@@ -136,7 +137,7 @@ def create_candlestick_chart(
     elif not show_volume and has_rsi:
         rows = 2
         row_heights = [0.75, 0.25]
-        subplot_titles = (f"{symbol.upper()} - {title}", f"RSI ({rsi_span})")
+        subplot_titles = (f"{symbol.upper()} - {title}", "Hilega Milega(by NK sir) [anuragM]")
         vol_row = None
         rsi_row = 2
     else:
@@ -239,94 +240,134 @@ def create_candlestick_chart(
             row=vol_row, col=1
         )
 
-    # RSI Subplot Panel
+    # Hilega Milega Subplot Panel
     if rsi_row and "RSI" in df.columns:
-        # 1. Add RSI traces first so Plotly registers and binds the subplot axis
-        fig.add_trace(
-            go.Scatter(
-                x=x_labels,
-                y=df["RSI"],
-                mode="lines",
-                name=f"RSI ({rsi_span})",
-                line=dict(color="#C084FC", width=1.8),
-                hovertemplate=f"RSI ({rsi_span}): " + "%{y:.1f}<extra></extra>"
-            ),
-            row=rsi_row, col=1
-        )
-        # EMA 3 on RSI
-        if "RSI_EMA3" in df.columns and not df["RSI_EMA3"].dropna().empty:
+        has_e3 = "RSI_EMA3" in df.columns and not df["RSI_EMA3"].dropna().empty
+        has_w21 = "RSI_WMA21" in df.columns and not df["RSI_WMA21"].dropna().empty
+
+        # 1. Bearish Blue Cloud below 50
+        if has_e3:
+            e3_s = df["RSI_EMA3"].fillna(50.0)
+            below_50 = np.minimum(e3_s, 50.0)
             fig.add_trace(
                 go.Scatter(
                     x=x_labels,
-                    y=df["RSI_EMA3"],
+                    y=[50.0] * len(df),
                     mode="lines",
-                    name="EMA 3 on RSI",
-                    line=dict(color="#FACC15", width=1.8),
-                    hovertemplate="EMA 3 (RSI): %{y:.1f}<extra></extra>"
+                    line=dict(color="rgba(0,0,0,0)", width=0),
+                    showlegend=False,
+                    hoverinfo="skip"
                 ),
                 row=rsi_row, col=1
             )
-        # WMA 21 on RSI
-        if "RSI_WMA21" in df.columns and not df["RSI_WMA21"].dropna().empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels,
+                    y=below_50,
+                    mode="lines",
+                    fill="tonexty",
+                    fillcolor="rgba(230, 237, 255, 0.65)" if is_light else "rgba(59, 130, 246, 0.2)",
+                    line=dict(color="rgba(0,0,0,0)", width=0),
+                    showlegend=False,
+                    hoverinfo="skip"
+                ),
+                row=rsi_row, col=1
+            )
+
+        # 2. Bullish Pink Cloud between EMA 3 and WMA 21
+        if has_e3 and has_w21:
             fig.add_trace(
                 go.Scatter(
                     x=x_labels,
                     y=df["RSI_WMA21"],
                     mode="lines",
-                    name="WMA 21 on RSI",
-                    line=dict(color="#38BDF8", width=1.8),
-                    hovertemplate="WMA 21 (RSI): %{y:.1f}<extra></extra>"
+                    line=dict(color="rgba(0,0,0,0)", width=0),
+                    showlegend=False,
+                    hoverinfo="skip"
+                ),
+                row=rsi_row, col=1
+            )
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels,
+                    y=df["RSI_EMA3"],
+                    mode="lines",
+                    fill="tonexty",
+                    fillcolor="rgba(255, 237, 237, 0.7)" if is_light else "rgba(248, 113, 113, 0.25)",
+                    line=dict(color="rgba(0,0,0,0)", width=0),
+                    showlegend=False,
+                    hoverinfo="skip"
                 ),
                 row=rsi_row, col=1
             )
 
-        # 2. Add background shading and reference lines now that the axis is registered
-        if highlight_rsi_50:
-            # Subtle light shading above line 50 (Bull Zone 50 - 100)
-            bull_fill = "rgba(41, 98, 255, 0.08)" if is_light else "rgba(255, 255, 255, 0.08)"
-            fig.add_hrect(
-                y0=50, y1=100, fillcolor=bull_fill, line_width=0,
-                layer="below",
-                row=rsi_row, col=1
-            )
-        else:
-            # Shaded 30-70 normal range
-            fig.add_hrect(
-                y0=30, y1=70, fillcolor="#8B5CF6", opacity=0.08, line_width=0,
-                layer="below",
-                row=rsi_row, col=1
-            )
-
-        # Overbought (70)
-        fig.add_hline(
-            y=70, line=dict(color="#EF4444", width=1, dash="dash"),
+        # 3. Primary RSI(9) Line: Black in Light, White in Dark
+        rsi_clr = "#0F172A" if is_light else "#F8FAFC"
+        fig.add_trace(
+            go.Scatter(
+                x=x_labels,
+                y=df["RSI"],
+                mode="lines",
+                name=f"RSI ({rsi_span}) [Black]",
+                line=dict(color=rsi_clr, width=1.8),
+                hovertemplate="<b>Hilega Milega RSI (9)</b>: %{y:.2f}<extra></extra>"
+            ),
             row=rsi_row, col=1
         )
 
-        # 50 Line (Highlighted with linewidth 2)
-        rsi_50_clr = "#475569" if is_light else "#FFFFFF"
-        rsi_50_bg = "rgba(241, 245, 249, 0.95)" if is_light else "rgba(24, 24, 27, 0.85)"
-        rsi_50_border = "#94A3B8" if is_light else "rgba(255, 255, 255, 0.8)"
+        # 4. Fast EMA 3 on RSI: Bright Green
+        if has_e3:
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels,
+                    y=df["RSI_EMA3"],
+                    mode="lines",
+                    name="EMA 3 (Green)",
+                    line=dict(color="#16A34A", width=2.0),
+                    hovertemplate="<b>EMA 3 (Green)</b>: %{y:.2f}<extra></extra>"
+                ),
+                row=rsi_row, col=1
+            )
 
+        # 5. Slow WMA 21 on RSI: Bright Red
+        if has_w21:
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels,
+                    y=df["RSI_WMA21"],
+                    mode="lines",
+                    name="WMA 21 (Red)",
+                    line=dict(color="#DC2626", width=2.0),
+                    hovertemplate="<b>WMA 21 (Red)</b>: %{y:.2f}<extra></extra>"
+                ),
+                row=rsi_row, col=1
+            )
+
+        # 6. Solid Blue 50 Line with Badge
         fig.add_hline(
             y=50,
-            line=dict(color=rsi_50_clr, width=2, dash="solid"),
+            line=dict(color="#2563EB", width=2, dash="solid"),
             annotation_text="50",
             annotation_position="top right",
-            annotation_font=dict(size=10, color=rsi_50_clr, family="monospace"),
-            annotation_bgcolor=rsi_50_bg,
-            annotation_bordercolor=rsi_50_border,
+            annotation_font=dict(size=10, color="#2563EB", family="monospace"),
+            annotation_bgcolor="rgba(219, 234, 254, 0.95)" if is_light else "rgba(30, 58, 138, 0.95)",
+            annotation_bordercolor="#2563EB",
             annotation_borderwidth=1.5,
             row=rsi_row, col=1
         )
 
-        # Oversold (30)
+        # 70 and 30 dashed reference lines
         fig.add_hline(
-            y=30, line=dict(color="#10B981", width=1, dash="dash"),
+            y=70, line=dict(color="#94A3B8", width=1, dash="dash"),
             row=rsi_row, col=1
         )
+        fig.add_hline(
+            y=30, line=dict(color="#94A3B8", width=1, dash="dash"),
+            row=rsi_row, col=1
+        )
+
         fig.update_yaxes(
-            title_text="RSI",
+            title_text="Hilega Milega",
             range=[0, 100],
             tickvals=[30, 50, 70],
             gridcolor=grid_clr,
@@ -372,9 +413,9 @@ def get_cached_alignment_scan(stage_filter: str) -> pd.DataFrame:
         return df[df["Score"] >= 2].reset_index(drop=True)
     elif stage_filter == "Stage 1+ (Monthly Pass)":
         return df[df["Score"] >= 1].reset_index(drop=True)
-    elif stage_filter == "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)":
+    elif stage_filter in ("Stage 3 + Hilega Milega Bullish (RSI>=50 & EMA3>=WMA21)", "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)"):
         return df[(df["Score"] == 3) & (df["Monthly_RSI_Match"] == "✅ PASS")].reset_index(drop=True)
-    elif stage_filter == "Monthly RSI Scan Only (RSI>=50 & EMA3>=WMA21)":
+    elif stage_filter in ("Hilega Milega Bullish Only (RSI>=50 & EMA3>=WMA21)", "Monthly RSI Scan Only (RSI>=50 & EMA3>=WMA21)"):
         return df[df["Monthly_RSI_Match"] == "✅ PASS"].reset_index(drop=True)
     return df
 
@@ -909,7 +950,7 @@ def main():
             with col_rsi_s:
                 rsi_span = int(st.number_input("RSI Span", min_value=2, max_value=100, value=9, step=1))
             with col_rsi_chk:
-                show_rsi_panel = st.checkbox("Show RSI Panel", value=True)
+                show_rsi_panel = st.checkbox("Show Hilega Milega (NK Sir)", value=True)
             with col_vol_chk:
                 show_volume = st.checkbox("Show Volume", value=True)
 
@@ -1100,7 +1141,7 @@ def main():
             <b>Strategy Rules Enforced:</b><br/>
             • <b>Universe:</b> Pure NSE Equities only (all Indices &amp; BSE stocks strictly excluded)<br/>
             • <b>Monthly (Macro):</b> Price Close &gt; 5 EMA &nbsp;AND&nbsp; 5 EMA &gt; 20 EMA<br/>
-            • <b>Monthly RSI (Momentum):</b> RSI &ge; 50 &nbsp;AND&nbsp; EMA 3 on RSI &ge; WMA 21 on RSI<br/>
+            • <b>Hilega Milega (NK Sir):</b> RSI(9) &ge; 50 (Blue Line) &nbsp;AND&nbsp; EMA 3 (Green) &ge; WMA 21 (Red)<br/>
             • <b>Weekly (Trend):</b> Price Close &gt; 20 EMA &nbsp;AND&nbsp; 20 EMA &gt; 50 EMA &gt; 200 EMA<br/>
             • <b>Daily (Setup):</b> Price Close &gt; 20 EMA &nbsp;AND&nbsp; 20 EMA &gt; 50 EMA &gt; 200 EMA<br/>
             • <b>75-Min (Trigger):</b> Price Close &gt; 20 EMA &nbsp;AND&nbsp; 5 EMA &gt; 20 EMA
@@ -1116,8 +1157,8 @@ def main():
                     "Stage 3 (Full Alignment Only)",
                     "Stage 2+ (M+W Aligned)",
                     "Stage 1+ (Monthly Pass)",
-                    "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)",
-                    "Monthly RSI Scan Only (RSI>=50 & EMA3>=WMA21)"
+                    "Stage 3 + Hilega Milega Bullish (RSI>=50 & EMA3>=WMA21)",
+                    "Hilega Milega Bullish Only (RSI>=50 & EMA3>=WMA21)"
                 ],
                 index=0
             )
