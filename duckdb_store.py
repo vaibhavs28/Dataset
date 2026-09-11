@@ -20,16 +20,21 @@ def get_connection() -> duckdb.DuckDBPyConnection:
     """
     Returns a shared, thread-safe DuckDB connection.
     DuckDB connections are thread-safe when queries are dispatched through cursor().
+    If a write lock is held by another process, falls back to read-only mode gracefully.
     """
     global _conn
     if _conn is None:
         with _lock:
             if _conn is None:
                 DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-                _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
-                _conn.execute("PRAGMA threads=4;")
-                _conn.execute("PRAGMA memory_limit='4GB';")
-                _init_schema(_conn)
+                try:
+                    _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
+                    _conn.execute("PRAGMA threads=4;")
+                    _conn.execute("PRAGMA memory_limit='4GB';")
+                    _init_schema(_conn)
+                except Exception as e:
+                    logger.warning(f"Opening DuckDB in read-only mode due to lock: {e}")
+                    _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=True)
     return _conn
 
 
@@ -129,27 +134,133 @@ def get_latest_candle_date(symbol: str) -> Optional[str]:
     return res[0] if res and res[0] else None
 
 
-def get_all_symbols(exchange: Optional[str] = None) -> List[str]:
-    """Returns a sorted list of all unique trading symbols in daily_candles or instruments."""
+def get_all_symbols(include_indices: bool = True, exchange: Optional[str] = None) -> List[str]:
+    """Returns all unique Equity and Index trading symbols strictly from NSE or specified exchange."""
     conn = get_connection()
     with _lock:
-        query = "SELECT DISTINCT trading_symbol FROM daily_candles"
-        if exchange:
-            query = """
-                SELECT DISTINCT d.trading_symbol
-                FROM daily_candles d
-                JOIN instruments i ON d.instrument_key = i.instrument_key
-                WHERE i.exchange = ?
-            """
-            rows = conn.execute(query, [exchange]).fetchall()
-        else:
-            rows = conn.execute(query).fetchall()
+        try:
+            if exchange:
+                query = "SELECT DISTINCT trading_symbol FROM instruments WHERE exchange = ? AND trading_symbol NOT LIKE '0%';"
+                rows = conn.execute(query, [exchange]).fetchall()
+            elif include_indices:
+                query = """
+                    SELECT DISTINCT trading_symbol 
+                    FROM instruments 
+                    WHERE exchange IN ('NSE_EQ', 'NSE_INDEX')
+                      AND trading_symbol NOT LIKE '0%'
+                    ORDER BY trading_symbol ASC;
+                """
+                rows = conn.execute(query).fetchall()
+            else:
+                query = """
+                    SELECT DISTINCT trading_symbol 
+                    FROM instruments 
+                    WHERE exchange = 'NSE_EQ'
+                      AND instrument_type IN ('EQUITY', 'EQ', 'BE', 'SM', 'BZ')
+                      AND trading_symbol NOT LIKE '0%'
+                    ORDER BY trading_symbol ASC;
+                """
+                rows = conn.execute(query).fetchall()
 
-    syms = sorted(list(set(
-        r[0].replace("-EQ", "").replace(".NS", "")
-        for r in rows if r[0]
-    )))
-    return syms
+            if rows:
+                return sorted(list(set(r[0].replace("-EQ", "").replace(".NS", "") for r in rows if r[0])))
+        except Exception as e:
+            logger.warning(f"Error querying instruments for symbols: {e}")
+
+        # Fallback to daily_candles if instruments table is empty
+        try:
+            rows = conn.execute("SELECT DISTINCT trading_symbol FROM daily_candles WHERE trading_symbol NOT LIKE '0%';").fetchall()
+            if rows:
+                return sorted(list(set(r[0].replace("-EQ", "").replace(".NS", "") for r in rows if r[0])))
+        except Exception:
+            pass
+
+    return []
+
+
+def get_alignment_scanner_symbols() -> List[str]:
+    """
+    Returns only pure NSE Equity symbols for the Multi-Timeframe Alignment Scanner.
+    Strictly excludes:
+    - All Indices (NSE_INDEX, BSE_INDEX, instrument_type == 'INDEX', NIFTY 50, BANKNIFTY, SENSEX, etc.)
+    - All Index ETFs & Trackers (*ETF*, *BEES*, *NIFTY*, *SENSEX*, etc.)
+    - All BSE Equity stocks (exchange == 'BSE_EQ')
+    - Any debt/bond instruments starting with '0'
+    """
+    conn = get_connection()
+    with _lock:
+        try:
+            rows = conn.execute("""
+                SELECT DISTINCT trading_symbol 
+                FROM instruments 
+                WHERE exchange = 'NSE_EQ' 
+                  AND instrument_type IN ('EQ', 'BE', 'SM', 'BZ', 'EQUITY')
+                  AND trading_symbol NOT LIKE '0%'
+                  AND trading_symbol NOT LIKE '%NIFTY%'
+                  AND trading_symbol NOT LIKE '%SENSEX%'
+                  AND trading_symbol NOT LIKE '%BEES%'
+                  AND trading_symbol NOT LIKE '%ETF%'
+                  AND trading_symbol NOT LIKE 'INDIA VIX%'
+                ORDER BY trading_symbol ASC;
+            """).fetchall()
+            if rows:
+                return sorted(list(set(r[0].replace("-EQ", "").replace(".NS", "") for r in rows if r[0])))
+        except Exception as e:
+            logger.warning(f"Error querying alignment scanner symbols from DuckDB: {e}")
+
+        # Fallback to daily_candles
+        try:
+            rows = conn.execute("""
+                SELECT DISTINCT trading_symbol 
+                FROM daily_candles 
+                WHERE trading_symbol NOT LIKE '0%'
+                  AND trading_symbol NOT LIKE '%NIFTY%'
+                  AND trading_symbol NOT LIKE '%SENSEX%'
+                  AND trading_symbol NOT LIKE '%BEES%'
+                  AND trading_symbol NOT LIKE '%ETF%'
+                  AND trading_symbol NOT LIKE 'INDIA VIX%'
+                ORDER BY trading_symbol ASC;
+            """).fetchall()
+            if rows:
+                return sorted(list(set(r[0].replace("-EQ", "").replace(".NS", "") for r in rows if r[0])))
+        except Exception:
+            pass
+
+    return []
+
+
+def get_db_stats() -> Dict[str, Any]:
+    """Returns overview statistics of stored database records from DuckDB."""
+    conn = get_connection()
+    with _lock:
+        try:
+            inst_count = conn.execute("SELECT COUNT(*) FROM instruments;").fetchone()[0]
+        except Exception:
+            inst_count = 0
+
+        try:
+            candles_res = conn.execute("SELECT COUNT(DISTINCT trading_symbol), COUNT(*) FROM daily_candles;").fetchone()
+            symbols_with_data = candles_res[0] or 0
+            total_candles = candles_res[1] or 0
+        except Exception:
+            symbols_with_data = 0
+            total_candles = 0
+
+        try:
+            date_range = conn.execute("SELECT MIN(date), MAX(date) FROM daily_candles;").fetchone()
+            earliest = date_range[0] if date_range else None
+            latest = date_range[1] if date_range else None
+        except Exception:
+            earliest = None
+            latest = None
+
+        return {
+            "total_instruments": inst_count,
+            "symbols_with_candles": symbols_with_data,
+            "total_candles": total_candles,
+            "earliest_date": earliest,
+            "latest_date": latest
+        }
 
 
 def save_daily_candles(candles: List[dict]):

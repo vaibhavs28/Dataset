@@ -161,6 +161,14 @@ def get_instrument_by_symbol(symbol: str, exchange: Optional[str] = None) -> Opt
 
 def get_all_symbols(include_indices: bool = True) -> List[str]:
     """Returns all unique Equity and Index trading symbols strictly from NSE, excluding debt, bonds, and NCDs."""
+    try:
+        import duckdb_store
+        syms = duckdb_store.get_all_symbols(include_indices=include_indices)
+        if syms:
+            return syms
+    except Exception:
+        pass
+
     with get_connection() as conn:
         cursor = conn.cursor()
         if include_indices:
@@ -192,6 +200,14 @@ def get_alignment_scanner_symbols() -> List[str]:
     - All BSE Equity stocks (exchange == 'BSE_EQ')
     - Any debt/bond instruments starting with '0'
     """
+    try:
+        import duckdb_store
+        syms = duckdb_store.get_alignment_scanner_symbols()
+        if syms:
+            return syms
+    except Exception:
+        pass
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("""
@@ -345,6 +361,14 @@ def get_latest_candle_date(symbol: str) -> Optional[str]:
 
 def get_db_stats() -> Dict[str, Any]:
     """Returns overview statistics of stored database records."""
+    try:
+        import duckdb_store
+        stats = duckdb_store.get_db_stats()
+        if stats.get("total_instruments", 0) > 0 or stats.get("total_candles", 0) > 0:
+            return stats
+    except Exception:
+        pass
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) FROM instruments;")
