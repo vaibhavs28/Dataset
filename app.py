@@ -21,6 +21,8 @@ import strategy_engine
 import strategy_ui
 import screener_engine
 import screener_ui
+import alert_engine
+import alert_ui
 import importlib
 import re
 
@@ -36,6 +38,8 @@ importlib.reload(strategy_engine)
 importlib.reload(strategy_ui)
 importlib.reload(screener_engine)
 importlib.reload(screener_ui)
+importlib.reload(alert_engine)
+importlib.reload(alert_ui)
 
 
 # Set Streamlit Page Configuration
@@ -548,6 +552,7 @@ def main():
             "📊 Quad-Chart View",
             "🚀 Alignment Scanner",
             "🔍 Chartink Screener",
+            "🔔 Alert Station",
             "📈 Trading Terminal",
             "🗺️ Market Heatmap",
             "🧪 Strategy Lab & Testing"
@@ -1281,6 +1286,9 @@ def main():
 
     elif selected_page == "🔍 Chartink Screener":
         screener_ui.render_screener_page(theme=theme)
+
+    elif selected_page == "🔔 Alert Station":
+        alert_ui.render_alert_page(theme=theme)
 
     elif selected_page == "📈 Trading Terminal":
         db_symbols = database.get_all_symbols()
