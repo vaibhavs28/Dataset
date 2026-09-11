@@ -372,8 +372,14 @@ def main():
     except Exception:
         db_stats = {"total_instruments": 3498, "symbols_with_candles": 3450, "total_candles": 4200000, "earliest_date": "2020-01-01", "latest_date": "2026-09-10"}
 
-    now_ist = datetime.now()
-    is_live_hours = (now_ist.weekday() < 5 and (9 * 60 + 15 <= now_ist.hour * 60 + now_ist.minute <= 15 * 60 + 35))
+    try:
+        from zoneinfo import ZoneInfo
+        now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    except Exception:
+        now_ist = datetime.utcnow() + timedelta(hours=5, minutes=30)
+
+    # Indian equity markets trade Monday-Friday (0-4) strictly between 09:15 and 15:30 IST
+    is_live_hours = (now_ist.weekday() < 5 and (9 * 60 + 15 <= now_ist.hour * 60 + now_ist.minute <= 15 * 60 + 30))
 
     # App Title & Header
     col_title, col_stat1, col_stat2, col_stat3, col_stat4 = st.columns([2.6, 1, 1, 1, 1])
@@ -827,9 +833,9 @@ def main():
 
                 # 4. Intraday DataFrame (strictly resampled from 1-minute data)
                 if target_mins == 75:
-                    intra_df = parquet_loader.ensure_symbol_75m_candles(sel_stock, min_bars=1)
+                    intra_df = parquet_loader.ensure_symbol_75m_candles(sel_stock, min_bars=100)
                 else:
-                    intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=1)
+                    intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=100)
                 
                 if intra_df is not None and not intra_df.empty:
                     # Requested EMAs: 9, 13, 26, 50, 200

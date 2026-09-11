@@ -23,7 +23,7 @@ def get_parquet_symbols() -> List[str]:
     """Returns the list of available symbols in the local parquet dataset."""
     if PARQUET_BY_SYMBOL_DIR.exists():
         files = list(PARQUET_BY_SYMBOL_DIR.glob("*.parquet"))
-        if len(files) > 100:
+        if len(files) > 0:
             return sorted([f.stem for f in files])
 
     if SYMBOLS_CACHE_FILE.exists():
@@ -35,19 +35,24 @@ def get_parquet_symbols() -> List[str]:
 
     # Build cache if missing
     try:
-        dataset = ds.dataset(str(PARQUET_DIR), format="parquet")
-        scanner = dataset.scanner(columns=["symbol"])
-        unique_syms = set()
-        for batch in scanner.to_batches():
-            unique_syms.update(batch["symbol"].unique().to_pylist())
+        if PARQUET_DIR.exists():
+            pq_files = list(PARQUET_DIR.glob("*.parquet"))
+            if pq_files:
+                dataset = ds.dataset(str(PARQUET_DIR), format="parquet")
+                if "symbol" in dataset.schema.names:
+                    scanner = dataset.scanner(columns=["symbol"])
+                    unique_syms = set()
+                    for batch in scanner.to_batches():
+                        unique_syms.update(batch["symbol"].unique().to_pylist())
 
-        sorted_syms = sorted(list(unique_syms))
-        with open(SYMBOLS_CACHE_FILE, "w") as f:
-            json.dump(sorted_syms, f)
-        return sorted_syms
+                    sorted_syms = sorted(list(unique_syms))
+                    with open(SYMBOLS_CACHE_FILE, "w") as f:
+                        json.dump(sorted_syms, f)
+                    return sorted_syms
     except Exception as e:
-        logger.error(f"Error reading parquet symbols: {e}")
-        return []
+        logger.warning(f"Error reading parquet symbols: {e}")
+
+    return []
 
 
 def get_symbol_date_range(symbol: str) -> Tuple[Optional[str], Optional[str]]:
@@ -63,17 +68,20 @@ def get_symbol_date_range(symbol: str) -> Tuple[Optional[str], Optional[str]]:
         except Exception:
             pass
 
-    if tbl is None:
+    if tbl is None and PARQUET_DIR.exists():
         try:
-            dataset = ds.dataset(str(PARQUET_DIR), format="parquet")
-            filter_expr = (ds.field("symbol") == sym)
-            scanner = dataset.scanner(filter=filter_expr, columns=["timestamp"])
-            tbl = scanner.to_table()
+            pq_files = list(PARQUET_DIR.glob("*.parquet"))
+            if pq_files:
+                dataset = ds.dataset(str(PARQUET_DIR), format="parquet")
+                if "symbol" in dataset.schema.names:
+                    filter_expr = (ds.field("symbol") == sym)
+                    scanner = dataset.scanner(filter=filter_expr, columns=["timestamp"])
+                    tbl = scanner.to_table()
         except Exception as e:
-            logger.error(f"Error getting date range for {sym}: {e}")
+            logger.warning(f"Error getting date range for {sym}: {e}")
             return None, None
 
-    if tbl.num_rows == 0:
+    if tbl is None or tbl.num_rows == 0:
         return None, None
     s = tbl["timestamp"].to_pandas().dt.tz_convert("Asia/Kolkata")
     min_d = s.min().strftime("%Y-%m-%d %H:%M")
@@ -332,10 +340,11 @@ def is_genuine_75m_df(df: pd.DataFrame) -> bool:
     return True
 
 
-def ensure_symbol_75m_candles(symbol: str, min_bars: int = 1) -> pd.DataFrame:
+def ensure_symbol_75m_candles(symbol: str, min_bars: int = 100) -> pd.DataFrame:
     """
     Guarantees 75-minute candles strictly resampled from 1-minute data.
     Uses DuckDB's vectorized C++ SQL engine for sub-10ms resampling.
+    Requires at least min_bars (default 100) so EMAs (9, 13, 26, 50, 200) and CPR render smoothly.
     """
     sym = symbol.upper().strip()
 
@@ -356,6 +365,7 @@ def ensure_symbol_75m_candles(symbol: str, min_bars: int = 1) -> pd.DataFrame:
         if max_dt and str(max_dt).startswith(today_str):
             has_today = True
 
+    # Accept cached 75m only if it has enough historical bars (>= min_bars) AND today's bar
     if not df_75m.empty and len(df_75m) >= min_bars and is_genuine_75m_df(df_75m) and has_today:
         return df_75m
 
@@ -368,10 +378,10 @@ def ensure_symbol_75m_candles(symbol: str, min_bars: int = 1) -> pd.DataFrame:
 
     # 1. Try to load and resample from local 1-minute Parquet data
     try:
-        df_1m = load_symbol_1min(sym, limit=10000)
-        if not df_1m.empty:
+        df_1m = load_symbol_1min(sym, limit=15000)
+        if not df_1m.empty and len(df_1m) >= min_bars * 5:
             df_75_new = resample_1min_to_75min(df_1m)
-            if not df_75_new.empty and is_genuine_75m_df(df_75_new):
+            if not df_75_new.empty and len(df_75_new) >= min_bars and is_genuine_75m_df(df_75_new):
                 import instruments
                 inst_key = instruments.resolve_instrument_key(sym) or f"NSE_EQ|{sym}"
                 records = []
@@ -393,14 +403,14 @@ def ensure_symbol_75m_candles(symbol: str, min_bars: int = 1) -> pd.DataFrame:
     except Exception as e:
         logger.warning(f"Error loading and resampling 1-min to 75m for {sym}: {e}")
 
-    # 2. If missing from local parquet or missing recent bars, fetch on-demand 1-min chunks from Upstox
+    # 2. If missing from local parquet or fewer than min_bars, fetch on-demand 60 days of 1-min chunks from Upstox
     try:
         import instruments
         inst_key = instruments.resolve_instrument_key(sym) or f"NSE_EQ|{sym}"
         start_1min_dt = datetime.now() - timedelta(days=60)
         end_1min_dt = datetime.now() + timedelta(days=1)
         import upstox_parquet_updater
-        chunks = upstox_parquet_updater.generate_date_chunks(start_1min_dt, end_1min_dt, chunk_days=28)
+        chunks = upstox_parquet_updater.generate_date_chunks(start_1min_dt, end_1min_dt, chunk_days=25)
         all_raw = []
         for f_d, t_d in chunks:
             c_list = upstox_parquet_updater.fetch_upstox_1min_chunk(inst_key, f_d, t_d)
@@ -411,6 +421,21 @@ def ensure_symbol_75m_candles(symbol: str, min_bars: int = 1) -> pd.DataFrame:
             upstox_parquet_updater.append_bars_to_symbol_file(sym, df_1m)
             df_75_new = resample_1min_to_75min(df_1m)
             if not df_75_new.empty and is_genuine_75m_df(df_75_new):
+                records = []
+                for ts, row in df_75_new.iterrows():
+                    ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
+                    records.append({
+                        "instrument_key": inst_key,
+                        "trading_symbol": sym,
+                        "timeframe": "75m",
+                        "timestamp": ts_str,
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["close"]),
+                        "volume": int(row.get("volume", 0))
+                    })
+                database.upsert_intraday_candles(records)
                 return df_75_new
     except Exception as e:
         logger.warning(f"Could not fetch on-demand 1-min data from Upstox for {sym}: {e}")
@@ -514,17 +539,20 @@ def load_symbol_1min(symbol: str, limit: int = 5000) -> pd.DataFrame:
         except Exception:
             pass
 
-    if tbl is None:
+    if tbl is None and PARQUET_DIR.exists():
         try:
-            dataset = ds.dataset(str(PARQUET_DIR), format="parquet")
-            filter_expr = (ds.field("symbol") == sym)
-            scanner = dataset.scanner(
-                filter=filter_expr,
-                columns=["timestamp", "open", "high", "low", "close", "volume"]
-            )
-            tbl = scanner.to_table()
+            pq_files = list(PARQUET_DIR.glob("*.parquet"))
+            if pq_files:
+                dataset = ds.dataset(str(PARQUET_DIR), format="parquet")
+                if "symbol" in dataset.schema.names:
+                    filter_expr = (ds.field("symbol") == sym)
+                    scanner = dataset.scanner(
+                        filter=filter_expr,
+                        columns=["timestamp", "open", "high", "low", "close", "volume"]
+                    )
+                    tbl = scanner.to_table()
         except Exception as e:
-            logger.error(f"Error reading 1-minute data for {sym}: {e}")
+            logger.warning(f"Error reading 1-minute data for {sym}: {e}")
             return pd.DataFrame()
 
     if tbl is None or tbl.num_rows == 0:
