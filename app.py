@@ -245,11 +245,11 @@ def create_candlestick_chart(
         has_e3 = "RSI_EMA3" in df.columns and not df["RSI_EMA3"].dropna().empty
         has_w21 = "RSI_WMA21" in df.columns and not df["RSI_WMA21"].dropna().empty
 
-        # Cloud above 50 (Pink) and below 50 (Soft Blue)
-        if has_e3:
-            ema3_vals = df["RSI_EMA3"].to_numpy(dtype=float)
-            above_50 = np.where(np.isnan(ema3_vals), np.nan, np.maximum(ema3_vals, 50.0))
-            below_50 = np.where(np.isnan(ema3_vals), np.nan, np.minimum(ema3_vals, 50.0))
+        # Cloud above 50 (Pink) and below 50 (Soft Blue) filled till RSI line
+        if "RSI" in df.columns and not df["RSI"].dropna().empty:
+            rsi_vals = df["RSI"].to_numpy(dtype=float)
+            above_50 = np.where(np.isnan(rsi_vals), np.nan, np.maximum(rsi_vals, 50.0))
+            below_50 = np.where(np.isnan(rsi_vals), np.nan, np.minimum(rsi_vals, 50.0))
             fifty_line = [50.0] * len(df)
 
             # 1. Pink cloud above 50

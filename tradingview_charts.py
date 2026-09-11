@@ -849,8 +849,8 @@ def generate_lightweight_chart_html(
                         lastValueVisible: false,
                         priceLineVisible: false
                     }});
-                    if (rsiEma3Data && rsiEma3Data.length > 0) {{
-                        hmCloudSeries.setData(rsiEma3Data);
+                    if (rsiData && rsiData.length > 0) {{
+                        hmCloudSeries.setData(rsiData);
                     }}
                 }} catch(e) {{}}
 
@@ -2680,7 +2680,7 @@ def generate_advanced_terminal_html(
                         lastValueVisible: false,
                         priceLineVisible: false
                     }});
-                    if (rsiEma3 && rsiEma3.length > 0) hmCloud.setData(rsiEma3);
+                    if (rsi && rsi.length > 0) hmCloud.setData(rsi);
                 }} catch(e) {{}}
 
                 const rsiColor = isLight ? '#131722' : '#F8FAFC';
@@ -4360,7 +4360,7 @@ def generate_quad_chart_html(
                         lastValueVisible: false,
                         priceLineVisible: false
                     }});
-                    if (payload.rsi_ema3 && payload.rsi_ema3.length) hmCloud.setData(payload.rsi_ema3);
+                    if (payload.rsi && payload.rsi.length) hmCloud.setData(payload.rsi);
                 }} catch(e) {{}}
 
                 const rsiColor = isLightInit ? '#131722' : '#F8FAFC';
