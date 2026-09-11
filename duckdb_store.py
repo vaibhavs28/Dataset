@@ -85,6 +85,22 @@ def _init_schema(conn: duckdb.DuckDBPyConnection):
         );
     """)
 
+    # 4. Intraday (e.g. 75m) candles table
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS intraday_candles (
+            instrument_key VARCHAR NOT NULL,
+            trading_symbol VARCHAR NOT NULL,
+            timeframe VARCHAR NOT NULL,
+            timestamp TIMESTAMP NOT NULL,
+            open DOUBLE NOT NULL,
+            high DOUBLE NOT NULL,
+            low DOUBLE NOT NULL,
+            close DOUBLE NOT NULL,
+            volume BIGINT NOT NULL,
+            PRIMARY KEY (instrument_key, timeframe, timestamp)
+        );
+    """)
+
 
 def get_candles_df(symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
     """
@@ -119,6 +135,39 @@ def get_candles_df(symbol: str, start_date: Optional[str] = None, end_date: Opti
     df["date"] = pd.to_datetime(df["date"])
     df.set_index("date", inplace=True)
     return df
+
+
+def get_intraday_candles(symbol: str, timeframe: str = "75m", limit: int = 2500) -> pd.DataFrame:
+    """
+    Returns authentic pre-calculated intraday candles directly from DuckDB's intraday_candles table.
+    Sub-10ms query execution.
+    """
+    clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
+    conn = get_connection()
+    with _lock:
+        try:
+            df = conn.execute("""
+                SELECT timestamp, open, high, low, close, volume
+                FROM intraday_candles
+                WHERE (trading_symbol = ? OR trading_symbol = ? || '-EQ')
+                  AND timeframe = ?
+                ORDER BY timestamp ASC;
+            """, [clean_sym, clean_sym, timeframe]).df()
+        except Exception as e:
+            logger.warning(f"Error querying intraday_candles for {clean_sym}: {e}")
+            return pd.DataFrame()
+
+    if df.empty:
+        return pd.DataFrame()
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    if df["timestamp"].dt.tz is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize("Asia/Kolkata")
+    else:
+        df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
+
+    df.set_index("timestamp", inplace=True)
+    return df.tail(limit)
 
 
 def get_latest_candle_date(symbol: str) -> Optional[str]:

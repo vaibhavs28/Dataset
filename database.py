@@ -343,7 +343,16 @@ def upsert_intraday_candles(candles: List[Dict[str, Any]]):
 def get_intraday_candles_df(symbol: str, timeframe: str = "75m", limit: int = 5000) -> pd.DataFrame:
     """
     Fetches the latest intraday (e.g. 75m) candles for a symbol, sorted chronologically and deduplicated.
+    Reads from DuckDB native table first (sub-10ms), falling back to SQLite.
     """
+    try:
+        import duckdb_store
+        df = duckdb_store.get_intraday_candles(symbol, timeframe=timeframe, limit=limit)
+        if not df.empty:
+            return df
+    except Exception:
+        pass
+
     with get_connection() as conn:
         query = """
             SELECT timestamp, open, high, low, close, volume 

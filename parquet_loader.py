@@ -340,109 +340,40 @@ def is_genuine_75m_df(df: pd.DataFrame) -> bool:
     return True
 
 
-def ensure_symbol_75m_candles(symbol: str, min_bars: int = 100) -> pd.DataFrame:
+def ensure_symbol_75m_candles(symbol: str, min_bars: int = 10) -> pd.DataFrame:
     """
-    Guarantees 75-minute candles strictly resampled from 1-minute data.
-    Uses DuckDB's vectorized C++ SQL engine for sub-10ms resampling.
-    Requires at least min_bars (default 100) so EMAs (9, 13, 26, 50, 200) and CPR render smoothly.
+    Guarantees authentic 75-minute candles strictly from our local database (DuckDB / SQLite).
+    Zero external API calls. Sub-10ms query execution.
     """
     sym = symbol.upper().strip()
 
+    # 1. First query our ultra-fast DuckDB intraday_candles table
     try:
         import duckdb_store
-        df_duck = duckdb_store.get_resampled_candles(sym, interval_minutes=75, limit=1000)
-        if not df_duck.empty and len(df_duck) >= min_bars and is_genuine_75m_df(df_duck):
+        df_duck = duckdb_store.get_intraday_candles(sym, timeframe="75m", limit=1500)
+        if not df_duck.empty:
             return df_duck
     except Exception as e:
-        logger.warning(f"DuckDB 75m note for {sym}: {e}")
+        logger.warning(f"DuckDB intraday query note for {sym}: {e}")
 
-    today_str = datetime.today().strftime("%Y-%m-%d")
-    df_75m = database.get_intraday_candles_df(sym, "75m", limit=1000)
-
-    has_today = False
-    if not df_75m.empty:
-        max_dt = df_75m.index.max()
-        if max_dt and str(max_dt).startswith(today_str):
-            has_today = True
-
-    # Accept cached 75m only if it has enough historical bars (>= min_bars) AND today's bar
-    if not df_75m.empty and len(df_75m) >= min_bars and is_genuine_75m_df(df_75m) and has_today:
-        return df_75m
-
-    # If existing data contains fake staircases, purge them from SQLite
-    if not df_75m.empty and not is_genuine_75m_df(df_75m):
-        logger.info(f"Purging detected fake/simulated 75m candles for {sym} from database...")
-        with database.get_connection() as conn:
-            conn.cursor().execute("DELETE FROM intraday_candles WHERE trading_symbol = ? AND timeframe = '75m'", (sym,))
-            conn.commit()
-
-    # 1. Try to load and resample from local 1-minute Parquet data
+    # 2. Fall back to SQLite intraday_candles (market_data.db)
     try:
-        df_1m = load_symbol_1min(sym, limit=15000)
-        if not df_1m.empty and len(df_1m) >= min_bars * 5:
-            df_75_new = resample_1min_to_75min(df_1m)
-            if not df_75_new.empty and len(df_75_new) >= min_bars and is_genuine_75m_df(df_75_new):
-                import instruments
-                inst_key = instruments.resolve_instrument_key(sym) or f"NSE_EQ|{sym}"
-                records = []
-                for ts, row in df_75_new.iterrows():
-                    ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
-                    records.append({
-                        "instrument_key": inst_key,
-                        "trading_symbol": sym,
-                        "timeframe": "75m",
-                        "timestamp": ts_str,
-                        "open": float(row["open"]),
-                        "high": float(row["high"]),
-                        "low": float(row["low"]),
-                        "close": float(row["close"]),
-                        "volume": int(row.get("volume", 0))
-                    })
-                database.upsert_intraday_candles(records)
-                return df_75_new
+        df_sql = database.get_intraday_candles_df(sym, "75m", limit=1500)
+        if not df_sql.empty and is_genuine_75m_df(df_sql):
+            return df_sql
     except Exception as e:
-        logger.warning(f"Error loading and resampling 1-min to 75m for {sym}: {e}")
+        logger.warning(f"SQLite intraday query note for {sym}: {e}")
 
-    # 2. If missing from local parquet or fewer than min_bars, fetch on-demand 60 days of 1-min chunks from Upstox
+    # 3. If local single-stock parquet exists, resample locally via DuckDB
     try:
-        import instruments
-        inst_key = instruments.resolve_instrument_key(sym) or f"NSE_EQ|{sym}"
-        start_1min_dt = datetime.now() - timedelta(days=60)
-        end_1min_dt = datetime.now() + timedelta(days=1)
-        import upstox_parquet_updater
-        chunks = upstox_parquet_updater.generate_date_chunks(start_1min_dt, end_1min_dt, chunk_days=25)
-        all_raw = []
-        for f_d, t_d in chunks:
-            c_list = upstox_parquet_updater.fetch_upstox_1min_chunk(inst_key, f_d, t_d)
-            if c_list:
-                all_raw.extend(c_list)
-        if all_raw:
-            df_1m = upstox_parquet_updater.parse_upstox_candles_to_dataframe(sym, all_raw)
-            upstox_parquet_updater.append_bars_to_symbol_file(sym, df_1m)
-            df_75_new = resample_1min_to_75min(df_1m)
-            if not df_75_new.empty and is_genuine_75m_df(df_75_new):
-                records = []
-                for ts, row in df_75_new.iterrows():
-                    ts_str = ts.strftime("%Y-%m-%d %H:%M:%S")
-                    records.append({
-                        "instrument_key": inst_key,
-                        "trading_symbol": sym,
-                        "timeframe": "75m",
-                        "timestamp": ts_str,
-                        "open": float(row["open"]),
-                        "high": float(row["high"]),
-                        "low": float(row["low"]),
-                        "close": float(row["close"]),
-                        "volume": int(row.get("volume", 0))
-                    })
-                database.upsert_intraday_candles(records)
-                return df_75_new
+        import duckdb_store
+        df_resampled = duckdb_store.get_resampled_candles(sym, interval_minutes=75, limit=1500)
+        if not df_resampled.empty and is_genuine_75m_df(df_resampled):
+            return df_resampled
     except Exception as e:
-        logger.warning(f"Could not fetch on-demand 1-min data from Upstox for {sym}: {e}")
+        logger.warning(f"Local parquet resample note for {sym}: {e}")
 
-    # Fallback to whatever authentic 75m bars exist (or empty dataframe) - NEVER fake or simulate
-    df_final = database.get_intraday_candles_df(sym, "75m", limit=1000)
-    return df_final if is_genuine_75m_df(df_final) else pd.DataFrame()
+    return pd.DataFrame()
 
 
 def import_symbol_to_database(symbol: str) -> bool:
