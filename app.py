@@ -17,6 +17,8 @@ import parquet_loader
 import tradingview_charts
 import upstox_parquet_updater
 import sector_data
+import strategy_engine
+import strategy_ui
 import importlib
 import re
 
@@ -28,6 +30,8 @@ importlib.reload(instruments)
 importlib.reload(upstox_parquet_updater)
 importlib.reload(parquet_loader)
 importlib.reload(sector_data)
+importlib.reload(strategy_engine)
+importlib.reload(strategy_ui)
 
 
 # Set Streamlit Page Configuration
@@ -540,7 +544,8 @@ def main():
             "📊 Quad-Chart View",
             "🚀 Alignment Scanner",
             "📈 Trading Terminal",
-            "🗺️ Market Heatmap"
+            "🗺️ Market Heatmap",
+            "🧪 Strategy Lab & Testing"
         ],
         index=0,
         key="app_active_nav_page",
@@ -1636,6 +1641,9 @@ def main():
                     use_container_width=True,
                     height=380
                 )
+
+    elif selected_page == "🧪 Strategy Lab & Testing":
+        strategy_ui.render_strategy_lab_page(theme=theme)
 
 
 if __name__ == "__main__":
