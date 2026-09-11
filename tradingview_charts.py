@@ -798,6 +798,8 @@ def generate_lightweight_chart_html(
 
             // Setup RSI Subchart if enabled
             let rsiChart = null;
+            let hmCloudSeries = null;
+            let rsiSeries = null;
             if (hasRsi) {{
                 const rsiContainer = document.getElementById("rsi_container_{safe_id}");
                 const rsiData = {rsi_json};
@@ -834,14 +836,14 @@ def generate_lightweight_chart_html(
                     }}
                 }});
 
-                // Baseline Cloud for Hilega Milega (Pink cloud above 50, completely transparent below 50)
+                // Baseline Cloud for Hilega Milega (Pink cloud above 50, Soft blue cloud below 50)
                 try {{
-                    const hmCloudSeries = rsiChart.addBaselineSeries({{
+                    hmCloudSeries = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: 'rgba(255, 237, 237, 0.55)',
-                        topFillColor2: 'rgba(255, 237, 237, 0.15)',
-                        bottomFillColor1: 'rgba(0, 0, 0, 0)',
-                        bottomFillColor2: 'rgba(0, 0, 0, 0)',
+                        topFillColor1: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        topFillColor2: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        bottomFillColor1: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
+                        bottomFillColor2: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
                         topLineColor: 'rgba(0,0,0,0)',
                         bottomLineColor: 'rgba(0,0,0,0)',
                         lastValueVisible: false,
@@ -854,7 +856,7 @@ def generate_lightweight_chart_html(
 
                 // 1. Primary RSI(9) Line: Black in Light Mode, White in Dark Mode
                 const rsiColor = isLightInit ? '#131722' : '#F8FAFC';
-                const rsiSeries = rsiChart.addLineSeries({{
+                rsiSeries = rsiChart.addLineSeries({{
                     color: rsiColor,
                     lineWidth: 1.8,
                     priceLineVisible: false,
@@ -1657,6 +1659,19 @@ def generate_lightweight_chart_html(
                         grid: {{ vertLines: {{ color: gridCol }}, horzLines: {{ color: gridCol }} }},
                         rightPriceScale: {{ borderColor: borderCol }},
                         timeScale: {{ borderColor: borderCol }}
+                    }});
+                }}
+                if (hmCloudSeries) {{
+                    hmCloudSeries.applyOptions({{
+                        topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
+                        bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)'
+                    }});
+                }}
+                if (rsiSeries) {{
+                    rsiSeries.applyOptions({{
+                        color: isLight ? '#131722' : '#F8FAFC'
                     }});
                 }}
                 renderDrawings();
@@ -2639,6 +2654,8 @@ def generate_advanced_terminal_html(
 
             // Setup RSI Sub-Chart
             let rsiChart = null;
+            let hmCloud = null;
+            let rsiSeries = null;
             const rsiElem = document.getElementById("rsi_chart_{safe_id}");
             if (rsiElem && rsi && rsi.length > 0) {{
                 rsiChart = LightweightCharts.createChart(rsiElem, {{
@@ -2650,14 +2667,14 @@ def generate_advanced_terminal_html(
                     handleScroll: {{ mouseWheel: true, pressedMouseMove: true }},
                     handleScale: {{ axisPressedMouseMove: true, mouseWheel: true }}
                 }});
-                // Baseline Cloud for Hilega Milega (Pink cloud above 50, transparent below 50)
+                // Baseline Cloud for Hilega Milega (Pink cloud above 50, Soft blue cloud below 50)
                 try {{
-                    const hmCloud = rsiChart.addBaselineSeries({{
+                    hmCloud = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: 'rgba(255, 237, 237, 0.55)',
-                        topFillColor2: 'rgba(255, 237, 237, 0.15)',
-                        bottomFillColor1: 'rgba(0, 0, 0, 0)',
-                        bottomFillColor2: 'rgba(0, 0, 0, 0)',
+                        topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
+                        bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
                         topLineColor: 'rgba(0,0,0,0)',
                         bottomLineColor: 'rgba(0,0,0,0)',
                         lastValueVisible: false,
@@ -2667,7 +2684,7 @@ def generate_advanced_terminal_html(
                 }} catch(e) {{}}
 
                 const rsiColor = isLight ? '#131722' : '#F8FAFC';
-                const rsiSeries = rsiChart.addLineSeries({{ color: rsiColor, lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'RSI(9)' }});
+                rsiSeries = rsiChart.addLineSeries({{ color: rsiColor, lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'RSI(9)' }});
                 rsiSeries.setData(rsi);
                 if (rsiEma3 && rsiEma3.length > 0) {{
                     const e3 = rsiChart.addLineSeries({{ color: '#4CAF50', lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'EMA(3)' }});
@@ -2886,6 +2903,19 @@ def generate_advanced_terminal_html(
                             timeScale: {{ borderColor: borderC }}
                         }});
                     }});
+                    if (hmCloud) {{
+                        hmCloud.applyOptions({{
+                            topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                            topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                            bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
+                            bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)'
+                        }});
+                    }}
+                    if (rsiSeries) {{
+                        rsiSeries.applyOptions({{
+                            color: isLight ? '#131722' : '#F8FAFC'
+                        }});
+                    }}
                 }});
             }}
 
@@ -4315,14 +4345,15 @@ def generate_quad_chart_html(
 
                 rsiChart = LightweightCharts.createChart(rsiContainer, rsiOptions);
 
-                // Baseline Cloud for Hilega Milega (Pink cloud above 50, transparent below 50)
+                // Baseline Cloud for Hilega Milega (Pink cloud above 50, Soft blue cloud below 50)
+                let hmCloud = null;
                 try {{
-                    const hmCloud = rsiChart.addBaselineSeries({{
+                    hmCloud = rsiChart.addBaselineSeries({{
                         baseValue: {{ type: 'price', price: 50 }},
-                        topFillColor1: 'rgba(255, 237, 237, 0.55)',
-                        topFillColor2: 'rgba(255, 237, 237, 0.15)',
-                        bottomFillColor1: 'rgba(0, 0, 0, 0)',
-                        bottomFillColor2: 'rgba(0, 0, 0, 0)',
+                        topFillColor1: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        topFillColor2: isLightInit ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        bottomFillColor1: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
+                        bottomFillColor2: isLightInit ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
                         topLineColor: 'rgba(0,0,0,0)',
                         bottomLineColor: 'rgba(0,0,0,0)',
                         lastValueVisible: false,
@@ -4524,7 +4555,7 @@ def generate_quad_chart_html(
 
             const candleTimestamps = (payload.candles || []).map(c => candleTimeToSeconds(c.time));
 
-            return {{ mainChart, candleSeries, lineSeries, candleTimestamps, rsiChart, volumeSeries, isVolVisible: isVolInit, isCandleVisible: isCandleInit, isLineVisible: isLineInit, mainContainer, rsiContainer, bodyEl, hasRsi: payload.hasRsi, payload }};
+            return {{ mainChart, candleSeries, lineSeries, candleTimestamps, rsiChart, hmCloud, rsiSeries, volumeSeries, isVolVisible: isVolInit, isCandleVisible: isCandleInit, isLineVisible: isLineInit, mainContainer, rsiContainer, bodyEl, hasRsi: payload.hasRsi, payload }};
         }}
 
         // Initialize all 4 quadrants
@@ -5513,6 +5544,19 @@ def generate_quad_chart_html(
                 if (!q) return;
                 if (q.mainChart) q.mainChart.applyOptions(opts);
                 if (q.rsiChart) q.rsiChart.applyOptions(opts);
+                if (q.hmCloud) {{
+                    q.hmCloud.applyOptions({{
+                        topFillColor1: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        topFillColor2: isLight ? 'rgba(255, 237, 237, 0.75)' : 'rgba(255, 82, 82, 0.22)',
+                        bottomFillColor1: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)',
+                        bottomFillColor2: isLight ? 'rgba(233, 239, 255, 0.75)' : 'rgba(118, 149, 249, 0.22)'
+                    }});
+                }}
+                if (q.rsiSeries) {{
+                    q.rsiSeries.applyOptions({{
+                        color: isLight ? '#131722' : '#F8FAFC'
+                    }});
+                }}
             }});
             renderAllQuadDrawings();
         }}

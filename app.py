@@ -245,12 +245,18 @@ def create_candlestick_chart(
         has_e3 = "RSI_EMA3" in df.columns and not df["RSI_EMA3"].dropna().empty
         has_w21 = "RSI_WMA21" in df.columns and not df["RSI_WMA21"].dropna().empty
 
-        # 1. Bullish Pink Cloud between EMA 3 and WMA 21 (when Green > Red)
-        if has_e3 and has_w21:
+        # Cloud above 50 (Pink) and below 50 (Soft Blue)
+        if has_e3:
+            ema3_vals = df["RSI_EMA3"].to_numpy(dtype=float)
+            above_50 = np.where(np.isnan(ema3_vals), np.nan, np.maximum(ema3_vals, 50.0))
+            below_50 = np.where(np.isnan(ema3_vals), np.nan, np.minimum(ema3_vals, 50.0))
+            fifty_line = [50.0] * len(df)
+
+            # 1. Pink cloud above 50
             fig.add_trace(
                 go.Scatter(
                     x=x_labels,
-                    y=df["RSI_WMA21"],
+                    y=fifty_line,
                     mode="lines",
                     line=dict(color="rgba(0,0,0,0)", width=0),
                     showlegend=False,
@@ -258,13 +264,41 @@ def create_candlestick_chart(
                 ),
                 row=rsi_row, col=1
             )
+            pink_col = "rgba(255, 237, 237, 0.75)" if is_light else "rgba(248, 113, 113, 0.25)"
             fig.add_trace(
                 go.Scatter(
                     x=x_labels,
-                    y=df["RSI_EMA3"],
+                    y=above_50,
                     mode="lines",
                     fill="tonexty",
-                    fillcolor="rgba(255, 237, 237, 0.7)" if is_light else "rgba(248, 113, 113, 0.25)",
+                    fillcolor=pink_col,
+                    line=dict(color="rgba(0,0,0,0)", width=0),
+                    showlegend=False,
+                    hoverinfo="skip"
+                ),
+                row=rsi_row, col=1
+            )
+
+            # 2. Soft blue cloud below 50
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels,
+                    y=fifty_line,
+                    mode="lines",
+                    line=dict(color="rgba(0,0,0,0)", width=0),
+                    showlegend=False,
+                    hoverinfo="skip"
+                ),
+                row=rsi_row, col=1
+            )
+            blue_col = "rgba(233, 239, 255, 0.75)" if is_light else "rgba(96, 165, 250, 0.25)"
+            fig.add_trace(
+                go.Scatter(
+                    x=x_labels,
+                    y=below_50,
+                    mode="lines",
+                    fill="tonexty",
+                    fillcolor=blue_col,
                     line=dict(color="rgba(0,0,0,0)", width=0),
                     showlegend=False,
                     hoverinfo="skip"
