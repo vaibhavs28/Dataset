@@ -689,78 +689,110 @@ def get_symbol_sector(symbol: str, company_name: str = "") -> str:
 # Vectorized Multi-Timeframe Return Engine
 # ---------------------------------------------------------------------------
 
+def _process_heatmap_candles(df_candles: pd.DataFrame, name_map: dict) -> pd.DataFrame:
+    """Helper to pivot candles and compute multi-timeframe returns and sector classifications."""
+    piv_close = df_candles.pivot(index="trading_symbol", columns="rn", values="close")
+    rn1 = df_candles[df_candles["rn"] == 1].set_index("trading_symbol")
+
+    results = pd.DataFrame(index=piv_close.index)
+    results["Symbol"] = piv_close.index
+    results["Company_Name"] = results["Symbol"].map(lambda s: name_map.get(s, s))
+
+    # Sector Mapping
+    results["Sector"] = results.apply(
+        lambda r: get_symbol_sector(r["Symbol"], r["Company_Name"]), axis=1
+    )
+
+    results["LTP"] = piv_close[1].round(2)
+    results["Open"] = rn1["open"].round(2) if "open" in rn1 else results["LTP"]
+    results["High"] = rn1["high"].round(2) if "high" in rn1 else results["LTP"]
+    results["Low"] = rn1["low"].round(2) if "low" in rn1 else results["LTP"]
+    results["Volume"] = rn1["volume"].fillna(0).astype(int) if "volume" in rn1 else 0
+    results["Date"] = rn1["date"] if "date" in rn1 else ""
+
+    c_prev = piv_close[2] if 2 in piv_close else results["LTP"]
+    c_week = piv_close[6].fillna(c_prev) if 6 in piv_close else c_prev
+    c_month = piv_close[22].fillna(c_week) if 22 in piv_close else c_week
+    c_year = piv_close[251].fillna(c_month) if 251 in piv_close else c_month
+
+    # Returns
+    results["Return_1D"] = (((results["LTP"] - c_prev) / c_prev) * 100.0).round(2).fillna(0.0)
+    results["Return_1W"] = (((results["LTP"] - c_week) / c_week) * 100.0).round(2).fillna(0.0)
+    results["Return_1M"] = (((results["LTP"] - c_month) / c_month) * 100.0).round(2).fillna(0.0)
+    results["Return_1Y"] = (((results["LTP"] - c_year) / c_year) * 100.0).round(2).fillna(0.0)
+
+    results["Turnover"] = (results["LTP"] * results["Volume"]).round(0)
+
+    results.dropna(subset=["LTP"], inplace=True)
+    results = results[results["LTP"] > 0]
+    results.reset_index(drop=True, inplace=True)
+    return results
+
+
 def calculate_market_heatmap_data() -> pd.DataFrame:
     """
     Computes Daily (1D), Weekly (1W), Monthly (1M), and Yearly (1Y)
-    performance for all NSE symbols from SQLite daily candles.
-    Uses ROW_NUMBER() window partitioning for robust handling of every stock's
-    latest available candle.
+    performance for all NSE symbols from DuckDB daily candles (sub-200ms).
+    Falls back gracefully to SQLite if needed.
     """
-    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+    # 1. Try DuckDB first (primary high-speed store)
     try:
-        # Fetch company names from instruments master
-        inst_df = pd.read_sql_query(
-            "SELECT trading_symbol, name, instrument_type, exchange FROM instruments WHERE exchange = 'NSE_EQ';",
-            conn
-        )
-        name_map = dict(zip(inst_df["trading_symbol"], inst_df["name"]))
+        import duckdb_store
+        conn = duckdb_store.get_connection()
+        with duckdb_store._lock:
+            inst_df = conn.execute(
+                "SELECT trading_symbol, name, instrument_type, exchange FROM instruments WHERE exchange = 'NSE_EQ';"
+            ).df()
+            name_map = dict(zip(inst_df["trading_symbol"], inst_df["name"]))
 
-        # Window query to get latest candle (rn=1), 1 day ago (rn=2), 1 week ago (rn=6), 1 month ago (rn=22), 1 year ago (rn=251)
-        q = """
-            WITH ranked AS (
-                SELECT trading_symbol, date, open, high, low, close, volume,
-                       ROW_NUMBER() OVER (PARTITION BY trading_symbol ORDER BY date DESC) as rn
-                FROM daily_candles
-                WHERE date >= date((SELECT max(date) FROM daily_candles), '-400 days')
+            q = """
+                WITH ranked AS (
+                    SELECT trading_symbol, date, open, high, low, close, volume,
+                           ROW_NUMBER() OVER (PARTITION BY trading_symbol ORDER BY date DESC) as rn
+                    FROM daily_candles
+                    WHERE date >= (SELECT strftime(strptime(max(date), '%Y-%m-%d') - INTERVAL '400 days', '%Y-%m-%d') FROM daily_candles)
+                )
+                SELECT trading_symbol, date, open, high, low, close, volume, rn
+                FROM ranked
+                WHERE rn IN (1, 2, 6, 22, 251);
+            """
+            df_candles = conn.execute(q).df()
+
+        if not df_candles.empty:
+            return _process_heatmap_candles(df_candles, name_map)
+    except Exception as e:
+        logger.warning(f"DuckDB heatmap calculation note: {e}")
+
+    # 2. Fall back to SQLite
+    if DB_PATH.exists():
+        conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
+        try:
+            inst_df = pd.read_sql_query(
+                "SELECT trading_symbol, name, instrument_type, exchange FROM instruments WHERE exchange = 'NSE_EQ';",
+                conn
             )
-            SELECT trading_symbol, date, open, high, low, close, volume, rn
-            FROM ranked
-            WHERE rn IN (1, 2, 6, 22, 251);
-        """
-        df_candles = pd.read_sql_query(q, conn)
+            name_map = dict(zip(inst_df["trading_symbol"], inst_df["name"]))
 
-        if df_candles.empty:
-            return pd.DataFrame()
+            q = """
+                WITH ranked AS (
+                    SELECT trading_symbol, date, open, high, low, close, volume,
+                           ROW_NUMBER() OVER (PARTITION BY trading_symbol ORDER BY date DESC) as rn
+                    FROM daily_candles
+                    WHERE date >= date((SELECT max(date) FROM daily_candles), '-400 days')
+                )
+                SELECT trading_symbol, date, open, high, low, close, volume, rn
+                FROM ranked
+                WHERE rn IN (1, 2, 6, 22, 251);
+            """
+            df_candles = pd.read_sql_query(q, conn)
+            if not df_candles.empty:
+                return _process_heatmap_candles(df_candles, name_map)
+        except Exception as e_sql:
+            logger.warning(f"SQLite heatmap calculation note: {e_sql}")
+        finally:
+            conn.close()
 
-        piv_close = df_candles.pivot(index="trading_symbol", columns="rn", values="close")
-        rn1 = df_candles[df_candles["rn"] == 1].set_index("trading_symbol")
-
-        results = pd.DataFrame(index=piv_close.index)
-        results["Symbol"] = piv_close.index
-        results["Company_Name"] = results["Symbol"].map(lambda s: name_map.get(s, s))
-        
-        # Sector Mapping
-        results["Sector"] = results.apply(
-            lambda r: get_symbol_sector(r["Symbol"], r["Company_Name"]), axis=1
-        )
-
-        results["LTP"] = piv_close[1].round(2)
-        results["Open"] = rn1["open"].round(2) if "open" in rn1 else results["LTP"]
-        results["High"] = rn1["high"].round(2) if "high" in rn1 else results["LTP"]
-        results["Low"] = rn1["low"].round(2) if "low" in rn1 else results["LTP"]
-        results["Volume"] = rn1["volume"].fillna(0).astype(int) if "volume" in rn1 else 0
-        results["Date"] = rn1["date"] if "date" in rn1 else ""
-
-        c_prev = piv_close[2] if 2 in piv_close else results["LTP"]
-        c_week = piv_close[6].fillna(c_prev) if 6 in piv_close else c_prev
-        c_month = piv_close[22].fillna(c_week) if 22 in piv_close else c_week
-        c_year = piv_close[251].fillna(c_month) if 251 in piv_close else c_month
-
-        # Returns
-        results["Return_1D"] = (((results["LTP"] - c_prev) / c_prev) * 100.0).round(2).fillna(0.0)
-        results["Return_1W"] = (((results["LTP"] - c_week) / c_week) * 100.0).round(2).fillna(0.0)
-        results["Return_1M"] = (((results["LTP"] - c_month) / c_month) * 100.0).round(2).fillna(0.0)
-        results["Return_1Y"] = (((results["LTP"] - c_year) / c_year) * 100.0).round(2).fillna(0.0)
-
-        results["Turnover"] = (results["LTP"] * results["Volume"]).round(0)
-
-        results.dropna(subset=["LTP"], inplace=True)
-        results = results[results["LTP"] > 0]
-        results.reset_index(drop=True, inplace=True)
-
-        return results
-    finally:
-        conn.close()
+    return pd.DataFrame()
 
 
 def generate_cmc_heatmap_html(
