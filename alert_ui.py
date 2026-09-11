@@ -310,7 +310,7 @@ def render_alert_page(theme: str = "dark"):
                     gen_path = quadrant_image_generator.generate_stock_quadrant(test_sym)
                     if gen_path and os.path.exists(gen_path):
                         st.success(f"✅ Generated high-resolution Quad-Chart ({os.path.getsize(gen_path)//1024} KB)")
-                        st.image(gen_path, caption=f"{test_sym} - Institutional 4-Quadrant Analysis (Monthly, Weekly, Daily, 75m)", use_column_width=True)
+                        st.image(gen_path, caption=f"{test_sym} - Institutional 4-Quadrant Analysis (Monthly, Weekly, Daily, 75m)", use_container_width=True)
 
                         with open(gen_path, "rb") as f:
                             st.download_button(
@@ -356,7 +356,7 @@ def render_alert_page(theme: str = "dark"):
                     with st.container():
                         st.markdown(f"**{item1['symbol']}** • `{item1['modified_at']}` • `{item1['size_kb']} KB`")
                         if os.path.exists(item1["path"]):
-                            st.image(item1["path"], use_column_width=True)
+                            st.image(item1["path"], use_container_width=True)
                             with open(item1["path"], "rb") as f:
                                 st.download_button(
                                     label=f"📥 Download {item1['symbol']}",
@@ -373,7 +373,7 @@ def render_alert_page(theme: str = "dark"):
                         with st.container():
                             st.markdown(f"**{item2['symbol']}** • `{item2['modified_at']}` • `{item2['size_kb']} KB`")
                             if os.path.exists(item2["path"]):
-                                st.image(item2["path"], use_column_width=True)
+                                st.image(item2["path"], use_container_width=True)
                                 with open(item2["path"], "rb") as f:
                                     st.download_button(
                                         label=f"📥 Download {item2['symbol']}",
