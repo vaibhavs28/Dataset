@@ -77,6 +77,24 @@ class TestScanner(unittest.TestCase):
         if res:
             self.assertIn("Symbol", res)
 
+    def test_anchored_vwap(self):
+        dates = pd.date_range("2019-01-01", "2024-01-01", freq="ME")
+        df = pd.DataFrame({
+            "high": [110.0] * len(dates),
+            "low": [90.0] * len(dates),
+            "close": [100.0] * len(dates),
+            "volume": [1000] * len(dates)
+        }, index=dates)
+
+        avwap_mar20 = scanner.calculate_anchored_vwap(df, "2020-03-01")
+        avwap_jun22 = scanner.calculate_anchored_vwap(df, "2022-06-01")
+
+        self.assertTrue(pd.isna(avwap_mar20.loc["2020-02-29"]))
+        self.assertAlmostEqual(avwap_mar20.loc["2020-03-31"], 100.0)
+        self.assertTrue(pd.isna(avwap_jun22.loc["2022-05-31"]))
+        self.assertAlmostEqual(avwap_jun22.loc["2022-06-30"], 100.0)
+
 
 if __name__ == "__main__":
     unittest.main()
+

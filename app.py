@@ -182,7 +182,7 @@ def create_candlestick_chart(
         row=1, col=1
     )
 
-    # Overlay EMAs
+    # Overlay EMAs & Anchored VWAPs
     color_palette = {
         "EMA_5": "#4CAF50",    # Green
         "EMA_9": "#4CAF50",    # Green (Fast trigger)
@@ -191,18 +191,31 @@ def create_candlestick_chart(
         "Daily_EMA_20": "#2962FF",  # Blue (Higher-timeframe Daily 20 EMA)
         "EMA_26": "#9C27B0",   # Purple
         "EMA_50": "#FF5252",   # Red
-        "EMA_200": "#131722" if is_light else "#FFFFFF"  # Black in light theme, White in dark theme
+        "EMA_200": "#131722" if is_light else "#FFFFFF",  # Black in light theme, White in dark theme
+        "AVWAP_MAR2020": "#38BDF8",  # Sky Blue Solid
+        "AVWAP_JUN2022": "#38BDF8"   # Sky Blue Dotted
     }
 
-    for col_name in ema_dict:
+    for col_name, cfg_or_color in ema_dict.items():
         if col_name in df.columns:
+            if isinstance(cfg_or_color, dict):
+                c_clr = cfg_or_color.get("color", color_palette.get(col_name, "#38BDF8"))
+                c_name = cfg_or_color.get("name", col_name)
+                c_dash = cfg_or_color.get("dash", "dot" if col_name == "AVWAP_JUN2022" else "solid")
+                c_width = cfg_or_color.get("width", 1.8)
+            else:
+                c_clr = cfg_or_color if cfg_or_color else color_palette.get(col_name, "#FFFFFF")
+                c_name = "AVWAP Mar 2020" if col_name == "AVWAP_MAR2020" else ("AVWAP Jun 2022" if col_name == "AVWAP_JUN2022" else col_name)
+                c_dash = "dot" if col_name == "AVWAP_JUN2022" else "solid"
+                c_width = 1.8
+
             fig.add_trace(
                 go.Scatter(
                     x=x_labels,
                     y=df[col_name],
                     mode="lines",
-                    name=col_name,
-                    line=dict(color=color_palette.get(col_name, "#FFFFFF"), width=1.8)
+                    name=c_name,
+                    line=dict(color=c_clr, width=c_width, dash=c_dash)
                 ),
                 row=1, col=1
             )
@@ -996,6 +1009,8 @@ def main():
                 m_df = scanner.resample_ohlcv(daily_candles, "monthly")
                 m_df["EMA_5"] = m_df["close"].ewm(span=5, adjust=False).mean()
                 m_df["EMA_20"] = m_df["close"].ewm(span=20, adjust=False).mean()
+                m_df["AVWAP_MAR2020"] = scanner.calculate_anchored_vwap(m_df, "2020-03-01")
+                m_df["AVWAP_JUN2022"] = scanner.calculate_anchored_vwap(m_df, "2022-06-01")
                 m_df["RSI"] = scanner.calculate_rsi(m_df["close"], span=rsi_span)
                 m_df["RSI_EMA3"] = scanner.calculate_ema(m_df["RSI"], span=3)
                 m_df["RSI_WMA21"] = scanner.calculate_wma(m_df["RSI"], period=21)
@@ -1097,15 +1112,20 @@ def main():
                     grid_col1, grid_col2 = st.columns(2)
 
                     with grid_col1:
-                        st.subheader("1️⃣ Monthly Chart (EMAs + RSI 50, EMA 3, WMA 21)")
+                        st.subheader("1️⃣ Monthly Chart (EMAs + AVWAP Mar'20 / Jun'22)")
                         m_rsi = m_df["RSI"].iloc[-1]
                         m_ema3 = m_df["RSI_EMA3"].iloc[-1]
                         m_wma21 = m_df["RSI_WMA21"].iloc[-1]
                         rsi_50_badge = "🟢 RSI ≥ 50" if m_rsi >= 50 else "🔴 RSI < 50"
                         cross_badge = "🟢 EMA 3 ≥ WMA 21" if m_ema3 >= m_wma21 else "🔴 EMA 3 < WMA 21"
-                        st.caption(f"Rule: Close > 5 EMA (Green) & 5>20 EMA (Blue) | **RSI ({rsi_span}):** {m_rsi:.1f} ({rsi_50_badge}) | **EMA 3 (RSI):** {m_ema3:.1f} | **WMA 21 (RSI):** {m_wma21:.1f} ({cross_badge})")
+                        st.caption(f"Rule: Close > 5 EMA (Green) & 5>20 EMA (Blue) | AVWAP Mar'20 (Sky Blue) | AVWAP Jun'22 (Sky Blue Dotted) | **RSI ({rsi_span}):** {m_rsi:.1f} ({rsi_50_badge})")
                         fig_m = create_candlestick_chart(
-                            m_df.tail(36), sel_stock, "Monthly", {"EMA_5": "#4CAF50", "EMA_20": "#2962FF"},
+                            m_df.tail(48), sel_stock, "Monthly", {
+                                "EMA_5": "#4CAF50",
+                                "EMA_20": "#2962FF",
+                                "AVWAP_MAR2020": {"color": "#38BDF8", "name": "AVWAP Mar 2020", "dash": "solid"},
+                                "AVWAP_JUN2022": {"color": "#38BDF8", "name": "AVWAP Jun 2022", "dash": "dot"}
+                            },
                             height=chart_h, is_intraday=False, show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
                             highlight_rsi_50=True, theme=theme
                         )
@@ -1369,6 +1389,8 @@ def main():
 
             if term_tf == "Monthly":
                 term_df = scanner.resample_ohlcv(term_candles, "monthly")
+                term_df["AVWAP_MAR2020"] = scanner.calculate_anchored_vwap(term_df, "2020-03-01")
+                term_df["AVWAP_JUN2022"] = scanner.calculate_anchored_vwap(term_df, "2022-06-01")
                 is_intra = False
 
             elif term_tf == "Weekly":

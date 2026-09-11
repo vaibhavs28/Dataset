@@ -15,6 +15,7 @@ import json
 import re
 import pandas as pd
 import numpy as np
+import scanner
 
 
 def prepare_chart_data(df: pd.DataFrame, is_intraday: bool = False) -> tuple:
@@ -112,12 +113,26 @@ def generate_lightweight_chart_html(
                     t_val = int(dt.timestamp()) if is_intraday else dt.strftime("%Y-%m-%d")
                     series_pts.append({"time": t_val, "value": round(float(val), 2)})
             if series_pts:
-                c = ema_dict[col_name]
+                c_val = ema_dict[col_name]
+                if isinstance(c_val, dict):
+                    c = c_val.get("color", "#38BDF8")
+                    l_style = c_val.get("lineStyle", 0)
+                    l_width = c_val.get("lineWidth", 1.8)
+                    l_title = c_val.get("name", col_name)
+                else:
+                    c = str(c_val)
+                    l_style = 1 if col_name == "AVWAP_JUN2022" else 0
+                    l_width = 1.8 if "AVWAP" in col_name else (2.2 if col_name == "Daily_EMA_20" else 1.5)
+                    l_title = "AVWAP Mar 2020" if col_name == "AVWAP_MAR2020" else ("AVWAP Jun 2022" if col_name == "AVWAP_JUN2022" else col_name)
+
                 # If light theme and color is white, use dark slate
                 if is_light and (c.upper() in ["#FFFFFF", "WHITE"]):
                     c = "#1E293B"
                 emas_data[col_name] = {
                     "color": c,
+                    "lineStyle": l_style,
+                    "lineWidth": l_width,
+                    "title": l_title,
                     "data": series_pts
                 }
 
@@ -732,18 +747,25 @@ def generate_lightweight_chart_html(
                 }});
             }}
 
-            // Overlay EMAs: NO labels on right y-axis
+            // Overlay EMAs & Indicators: NO labels on right y-axis
             const emaSeriesMap = {{}};
             for (const [colName, colCfg] of Object.entries(emasData)) {{
+                let lStyle = LightweightCharts.LineStyle.Solid;
+                if (colCfg.lineStyle === 1 || colCfg.lineStyle === 'dotted') {{
+                    lStyle = LightweightCharts.LineStyle.Dotted;
+                }} else if (colCfg.lineStyle === 2 || colCfg.lineStyle === 'dashed') {{
+                    lStyle = LightweightCharts.LineStyle.Dashed;
+                }}
                 const emaLine = chart.addLineSeries({{
                     color: colCfg.color,
-                    lineWidth: 1.8,
+                    lineWidth: colCfg.lineWidth || 1.8,
+                    lineStyle: lStyle,
                     priceLineVisible: false,
                     lastValueVisible: false,
                     title: ''
                 }});
                 emaLine.setData(colCfg.data);
-                emaSeriesMap[colName] = {{ series: emaLine, color: colCfg.color }};
+                emaSeriesMap[colName] = {{ series: emaLine, color: colCfg.color, title: colCfg.title || colName }};
             }}
 
             // Overlay Weekly Pivots (R1, P, S1): NO labels on right y-axis
@@ -1040,11 +1062,12 @@ def generate_lightweight_chart_html(
                     ttHtml += `<div class="tt-row"><span class="tt-lbl">Volume:</span><span class="tt-val">${{Number(volData.value).toLocaleString()}}</span></div>`;
                 }}
 
-                // Overlay active EMAs
+                // Overlay active EMAs & Indicators
                 for (const [colName, seriesInfo] of Object.entries(emaSeriesMap)) {{
                     const emaVal = param.seriesData.get(seriesInfo.series);
                     if (emaVal && emaVal.value !== undefined) {{
-                        ttHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{seriesInfo.color}}">${{colName}}:</span><span class="tt-val">₹${{Number(emaVal.value).toFixed(2)}}</span></div>`;
+                        const dispName = seriesInfo.title || colName;
+                        ttHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{seriesInfo.color}}">${{dispName}}:</span><span class="tt-val">₹${{Number(emaVal.value).toFixed(2)}}</span></div>`;
                     }}
                 }}
 
@@ -3104,7 +3127,7 @@ def generate_quad_chart_html(
                 volumes.append({"time": t_val, "value": round(v, 2), "color": "rgba(8, 153, 129, 0.4)" if c >= o else "rgba(242, 54, 69, 0.4)"})
 
         emas_data = {}
-        for col_name, color in ema_dict.items():
+        for col_name, color_or_cfg in ema_dict.items():
             if col_name in df_clean.columns:
                 series_pts = []
                 for dt, row in df_clean.iterrows():
@@ -3113,10 +3136,27 @@ def generate_quad_chart_html(
                         t_val = _get_t(dt)
                         series_pts.append({"time": t_val, "value": round(float(val), 2)})
                 if series_pts:
-                    final_color = color
-                    if is_light and (str(color).upper() in ["#FFFFFF", "WHITE"]):
+                    if isinstance(color_or_cfg, dict):
+                        c_clr = color_or_cfg.get("color", "#38BDF8")
+                        c_style = color_or_cfg.get("lineStyle", 0)
+                        c_width = color_or_cfg.get("lineWidth", 1.8)
+                        c_name = color_or_cfg.get("name", col_name)
+                    else:
+                        c_clr = str(color_or_cfg)
+                        c_style = 1 if col_name == "AVWAP_JUN2022" else 0
+                        c_width = 1.8 if "AVWAP" in col_name else (2.2 if col_name == "Daily_EMA_20" else 1.5)
+                        c_name = "AVWAP Mar 2020" if col_name == "AVWAP_MAR2020" else ("AVWAP Jun 2022" if col_name == "AVWAP_JUN2022" else col_name)
+
+                    final_color = c_clr
+                    if is_light and (str(c_clr).upper() in ["#FFFFFF", "WHITE"]):
                         final_color = "#1E293B"
-                    emas_data[col_name] = {"color": final_color, "data": series_pts}
+                    emas_data[col_name] = {
+                        "color": final_color,
+                        "lineStyle": c_style,
+                        "lineWidth": c_width,
+                        "name": c_name,
+                        "data": series_pts
+                    }
 
         pivots_data = {}
         if pivot_dict:
@@ -3176,8 +3216,24 @@ def generate_quad_chart_html(
             except Exception:
                 pass
 
+    # Ensure AVWAP March 2020 and June 2022 are available on monthly_df
+    if monthly_df is not None and not monthly_df.empty:
+        if "AVWAP_MAR2020" not in monthly_df.columns:
+            monthly_df["AVWAP_MAR2020"] = scanner.calculate_anchored_vwap(monthly_df, "2020-03-01")
+        if "AVWAP_JUN2022" not in monthly_df.columns:
+            monthly_df["AVWAP_JUN2022"] = scanner.calculate_anchored_vwap(monthly_df, "2022-06-01")
+
     # Extract payloads for all 4 quadrants
-    m_payload = _extract_payload(monthly_df, {"EMA_5": "#4CAF50", "EMA_20": "#2962FF"}, is_intraday=False)
+    m_payload = _extract_payload(
+        monthly_df,
+        {
+            "EMA_5": "#4CAF50",
+            "EMA_20": "#2962FF",
+            "AVWAP_MAR2020": {"color": "#38BDF8", "lineStyle": 0, "lineWidth": 1.8, "name": "AVWAP Mar 2020"},
+            "AVWAP_JUN2022": {"color": "#38BDF8", "lineStyle": 1, "lineWidth": 1.8, "name": "AVWAP Jun 2022"}
+        },
+        is_intraday=False
+    )
     w_payload = _extract_payload(weekly_df, {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"}, is_intraday=False)
     d_payload = _extract_payload(daily_df, {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"}, is_intraday=False)
     p75 = pivot_dict_75 or {
@@ -4020,7 +4076,7 @@ def generate_quad_chart_html(
                     <div class="qc-header">
                         <div class="qc-header-left">
                             <span class="qc-tf qc-tf-m">1M</span>
-                            <span class="qc-sub">Macro: 5>20 EMA | RSI 50</span>
+                            <span class="qc-sub">Macro: 5>20 EMA | AVWAP (Mar'20, Jun'22) | RSI 50</span>
                             <div class="qc-legend" id="legend_m"></div>
                         </div>
                         <div class="qc-header-right">
@@ -4299,20 +4355,28 @@ def generate_quad_chart_html(
             }}
 
             // EMAs
+            // EMAs & Indicator Overlays (AVWAP, etc.)
             const emaSeriesMap = {{}};
             if (payload.emas) {{
                 Object.keys(payload.emas).forEach(emaName => {{
                     const cfg = payload.emas[emaName];
+                    let lStyle = LightweightCharts.LineStyle.Solid;
+                    if (cfg.lineStyle === 1 || cfg.lineStyle === 'dotted') {{
+                        lStyle = LightweightCharts.LineStyle.Dotted;
+                    }} else if (cfg.lineStyle === 2 || cfg.lineStyle === 'dashed') {{
+                        lStyle = LightweightCharts.LineStyle.Dashed;
+                    }}
                     const s = mainChart.addLineSeries({{
                         color: cfg.color,
-                        lineWidth: (emaName === 'Daily_EMA_20') ? 2.2 : 1.5,
+                        lineWidth: cfg.lineWidth || ((emaName === 'Daily_EMA_20') ? 2.2 : 1.5),
+                        lineStyle: lStyle,
                         lastValueVisible: false,
                         priceLineVisible: false,
                         axisLabelVisible: false,
                         title: '',
                     }});
                     s.setData(cfg.data);
-                    emaSeriesMap[emaName] = {{ series: s, color: cfg.color }};
+                    emaSeriesMap[emaName] = {{ series: s, color: cfg.color, title: cfg.name || emaName }};
                 }});
             }}
 
@@ -4534,7 +4598,7 @@ def generate_quad_chart_html(
                         const sObj = emaSeriesMap[eName];
                         const eVal = param.seriesData.get(sObj.series);
                         if (eVal && eVal.value !== undefined) {{
-                            const dispName = (eName === 'Daily_EMA_20') ? 'Daily 20 EMA' : eName;
+                            const dispName = (eName === 'Daily_EMA_20') ? 'Daily 20 EMA' : (sObj.title || eName);
                             emasHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{sObj.color}}">${{dispName}}</span><span class="tt-val">₹${{eVal.value.toFixed(2)}}</span></div>`;
                         }}
                     }});

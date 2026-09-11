@@ -951,6 +951,38 @@ def calculate_vwap(df: pd.DataFrame) -> pd.Series:
         return (cum_vp / cum_vol.replace(0, np.nan)).ffill().bfill()
 
 
+def calculate_anchored_vwap(df: pd.DataFrame, anchor_date: str) -> pd.Series:
+    """
+    Computes Anchored Volume Weighted Average Price (AVWAP) starting from anchor_date.
+    Prior to anchor_date, returns NaN so charts render the line strictly from the anchor.
+    """
+    if df.empty or "volume" not in df.columns or "close" not in df.columns:
+        return pd.Series(index=df.index, dtype=float)
+
+    typical_price = (df["high"] + df["low"] + df["close"]) / 3.0 if ("high" in df.columns and "low" in df.columns) else df["close"]
+    volume = df["volume"].fillna(0)
+
+    try:
+        anchor_ts = pd.to_datetime(anchor_date)
+        dt_idx = pd.to_datetime(df.index)
+        if hasattr(dt_idx, "tz_localize") and dt_idx.tz is not None:
+            dt_idx = dt_idx.tz_localize(None)
+        if hasattr(anchor_ts, "tz_localize") and anchor_ts.tz is not None:
+            anchor_ts = anchor_ts.tz_localize(None)
+
+        mask = dt_idx >= anchor_ts
+        if not mask.any():
+            return pd.Series(np.nan, index=df.index, dtype=float)
+
+        vp = typical_price * volume
+        cum_vp = vp.where(mask).cumsum()
+        cum_vol = volume.where(mask).cumsum()
+        avwap = cum_vp / cum_vol.replace(0, np.nan)
+        return avwap
+    except Exception:
+        return pd.Series(np.nan, index=df.index, dtype=float)
+
+
 def calculate_stochastic(df: pd.DataFrame, period: int = 14, smooth_k: int = 3, smooth_d: int = 3) -> pd.DataFrame:
     """
     Computes Stochastic Oscillator (%K, %D).
