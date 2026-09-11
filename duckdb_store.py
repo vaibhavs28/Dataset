@@ -18,9 +18,9 @@ _conn: Optional[duckdb.DuckDBPyConnection] = None
 
 def get_connection() -> duckdb.DuckDBPyConnection:
     """
-    Returns a shared, thread-safe DuckDB connection.
-    DuckDB connections are thread-safe when queries are dispatched through cursor().
-    If a write lock is held by another process, falls back to read-only mode gracefully.
+    Returns a shared, thread-safe, read-only DuckDB connection.
+    Always opens in read_only=True so multiple processes (Streamlit, UI, Scanners)
+    can query concurrently without OS file lock contention.
     """
     global _conn
     if _conn is None:
@@ -35,14 +35,26 @@ def get_connection() -> duckdb.DuckDBPyConnection:
                     except Exception as dl_err:
                         logger.error(f"Could not auto-download database: {dl_err}. You can manually run: python3 download_dataset.py")
                 try:
-                    _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
+                    _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=True)
                     _conn.execute("PRAGMA threads=4;")
                     _conn.execute("PRAGMA memory_limit='4GB';")
-                    _init_schema(_conn)
                 except Exception as e:
-                    logger.warning(f"Opening DuckDB in read-only mode due to lock: {e}")
+                    logger.warning(f"Error opening DuckDB in read-only mode: {e}")
                     _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=True)
     return _conn
+
+
+def get_write_connection() -> duckdb.DuckDBPyConnection:
+    """
+    Returns a short-lived write connection. Caller must close it immediately after writing.
+    """
+    conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
+    conn.execute("PRAGMA threads=4;")
+    try:
+        _init_schema(conn)
+    except Exception:
+        pass
+    return conn
 
 
 def _init_schema(conn: duckdb.DuckDBPyConnection):
@@ -362,31 +374,34 @@ def save_daily_candles(candles: List[dict]):
         if col not in df.columns:
             df[col] = default
 
-    conn = get_connection()
     with _lock:
-        conn.register("_temp_candles_in", df)
-        conn.execute("""
-            INSERT INTO daily_candles
-            SELECT
-                instrument_key,
-                trading_symbol,
-                date,
-                open,
-                high,
-                low,
-                close,
-                volume,
-                open_interest
-            FROM _temp_candles_in
-            ON CONFLICT (instrument_key, date) DO UPDATE SET
-                open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume,
-                open_interest = EXCLUDED.open_interest;
-        """)
-        conn.unregister("_temp_candles_in")
+        conn = get_write_connection()
+        try:
+            conn.register("_temp_candles_in", df)
+            conn.execute("""
+                INSERT INTO daily_candles
+                SELECT
+                    instrument_key,
+                    trading_symbol,
+                    date,
+                    open,
+                    high,
+                    low,
+                    close,
+                    volume,
+                    open_interest
+                FROM _temp_candles_in
+                ON CONFLICT (instrument_key, date) DO UPDATE SET
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    open_interest = EXCLUDED.open_interest;
+            """)
+            conn.unregister("_temp_candles_in")
+        finally:
+            conn.close()
 
 
 def get_resampled_candles(
@@ -525,24 +540,27 @@ def upsert_instruments(instruments: List[Dict[str, Any]]):
         if col not in df.columns:
             df[col] = default
 
-    conn = get_connection()
     with _lock:
-        conn.register("_temp_inst_in", df)
-        conn.execute("""
-            INSERT INTO instruments (
-                instrument_key, trading_symbol, name, exchange, instrument_type, tick_size, lot_size, last_updated
-            )
-            SELECT
-                instrument_key, trading_symbol, name, exchange, instrument_type, tick_size, lot_size, CURRENT_TIMESTAMP
-            FROM _temp_inst_in
-            ON CONFLICT (instrument_key) DO UPDATE SET
-                trading_symbol = EXCLUDED.trading_symbol,
-                name = EXCLUDED.name,
-                exchange = EXCLUDED.exchange,
-                instrument_type = EXCLUDED.instrument_type,
-                tick_size = EXCLUDED.tick_size,
-                lot_size = EXCLUDED.lot_size,
-                last_updated = CURRENT_TIMESTAMP;
-        """)
-        conn.unregister("_temp_inst_in")
+        conn = get_write_connection()
+        try:
+            conn.register("_temp_inst_in", df)
+            conn.execute("""
+                INSERT INTO instruments (
+                    instrument_key, trading_symbol, name, exchange, instrument_type, tick_size, lot_size, last_updated
+                )
+                SELECT
+                    instrument_key, trading_symbol, name, exchange, instrument_type, tick_size, lot_size, CURRENT_TIMESTAMP
+                FROM _temp_inst_in
+                ON CONFLICT (instrument_key) DO UPDATE SET
+                    trading_symbol = EXCLUDED.trading_symbol,
+                    name = EXCLUDED.name,
+                    exchange = EXCLUDED.exchange,
+                    instrument_type = EXCLUDED.instrument_type,
+                    tick_size = EXCLUDED.tick_size,
+                    lot_size = EXCLUDED.lot_size,
+                    last_updated = CURRENT_TIMESTAMP;
+            """)
+            conn.unregister("_temp_inst_in")
+        finally:
+            conn.close()
 

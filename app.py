@@ -990,8 +990,8 @@ def main():
             stage_filter = st.selectbox(
                 "Filter Alignment Stage",
                 options=[
-                    "Stage 3 (Full Alignment Only)",
                     "All",
+                    "Stage 3 (Full Alignment Only)",
                     "Stage 2+ (M+W Aligned)",
                     "Stage 1+ (Monthly Pass)",
                     "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)",
