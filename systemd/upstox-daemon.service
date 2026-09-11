@@ -6,10 +6,11 @@ After=network.target
 Type=simple
 User=trader
 WorkingDirectory=/home/trader/Dataset
-ExecStart=/usr/bin/python3 daemon_runner.py 15
+ExecStart=/home/trader/Dataset/venv/bin/python3 daemon_runner.py 15
 Restart=always
 RestartSec=10
 Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/trader/Dataset/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 [Install]
 WantedBy=multi-user.target
