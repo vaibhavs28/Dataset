@@ -364,6 +364,264 @@ def run_screen(
     return df_res
 
 
+def evaluate_stock_waterfall(
+    symbol: str,
+    daily_df: pd.DataFrame,
+    intra_75_df: Optional[pd.DataFrame] = None
+) -> Optional[Dict[str, Any]]:
+    """
+    Evaluates exact Chartink 'positional-scan-364' rules via a strict Waterfall Model:
+    Monthly Pass ➔ Weekly Pass ➔ Daily Pass ➔ 75-Min Pass.
+    If any stage fails, the stock cannot progress to subsequent stages.
+    If Monthly fails, the stock is completely excluded (returns None).
+    """
+    if daily_df is None or daily_df.empty or len(daily_df) < 15:
+        return None
+
+    close = daily_df["close"].values
+    ltp = float(close[-1])
+    if ltp < 100.0 or ltp > 10000.0:
+        return None
+
+    prev_close = float(close[-2]) if len(close) >= 2 else ltp
+    change_pct = ((ltp - prev_close) / prev_close * 100.0) if prev_close > 0 else 0.0
+    vol = int(daily_df["volume"].iloc[-1]) if "volume" in daily_df.columns else 0
+
+    # ==========================================
+    # 1. MONTHLY STAGE (Macro Trend & Hilega Milega)
+    # ==========================================
+    m_raw = scanner.resample_ohlcv(daily_df, "monthly")
+    if m_raw.empty or len(m_raw) < 3:
+        return None
+
+    m_close = m_raw["close"]
+    m_ema5 = scanner.calculate_ema(m_close, span=5).values
+    m_ema20 = scanner.calculate_ema(m_close, span=20).values
+    m_ema50 = scanner.calculate_ema(m_close, span=50).values
+    m_rsi = scanner.calculate_rsi(m_close, span=9).values
+    m_rsi_ema3 = scanner.calculate_ema(pd.Series(m_rsi), span=3).values
+    m_rsi_wma21 = scanner.calculate_wma(pd.Series(m_rsi), period=21).values
+
+    m_c = float(m_close.iloc[-1])
+    m_e5 = float(m_ema5[-1])
+    m_e20 = float(m_ema20[-1])
+    m_e50 = float(m_ema50[-1])
+    m_r = float(m_rsi[-1])
+    m_re3 = float(m_rsi_ema3[-1])
+    m_rw21 = float(m_rsi_wma21[-1])
+
+    # Rules: Close > 5 EMA, Close > 20 EMA, 5 EMA > 20 EMA, RSI(9) > 50, RSI < 88, RSI > EMA3, RSI > WMA21
+    m_pass = (
+        (m_c > m_e5) and
+        (m_c > m_e20) and
+        (m_e5 > m_e20) and
+        (50.0 < m_r < 88.0) and
+        (m_r >= m_re3) and
+        (m_r >= m_rw21)
+    )
+
+    # In strict waterfall: If Monthly fails, stock is hidden!
+    if not m_pass:
+        return None
+
+    stage = 1
+    w_pass = False
+    d_pass = False
+    q4_pass = False
+
+    # ==========================================
+    # 2. WEEKLY STAGE (Intermediate Trend)
+    # ==========================================
+    w_raw = scanner.resample_ohlcv(daily_df, "weekly")
+    if not w_raw.empty and len(w_raw) >= 5:
+        w_close = w_raw["close"]
+        w_ema20 = scanner.calculate_ema(w_close, span=20).values
+        w_ema50 = scanner.calculate_ema(w_close, span=50).values
+        w_rsi = scanner.calculate_rsi(w_close, span=9).values
+        w_rsi_ema3 = scanner.calculate_ema(pd.Series(w_rsi), span=3).values
+        w_rsi_wma21 = scanner.calculate_wma(pd.Series(w_rsi), period=21).values
+
+        w_c = float(w_close.iloc[-1])
+        w_e20 = float(w_ema20[-1])
+        w_e50 = float(w_ema50[-1])
+        w_r = float(w_rsi[-1])
+        w_re3 = float(w_rsi_ema3[-1])
+        w_rw21 = float(w_rsi_wma21[-1])
+
+        # Rules: Close > 20 EMA, 20 EMA > 50 EMA, RSI > 50, RSI > EMA3, RSI > WMA21
+        w_pass = (
+            (w_c > w_e20) and
+            (w_e20 > w_e50) and
+            (w_r > 50.0) and
+            (w_r >= w_re3) and
+            (w_r >= w_rw21)
+        )
+        if w_pass:
+            stage = 2
+    else:
+        w_c, w_e20, w_e50, w_r = np.nan, np.nan, np.nan, np.nan
+
+    # ==========================================
+    # 3. DAILY STAGE (Setup & 20 EMA Bounce)
+    # ==========================================
+    d_c, d_o, d_e20, d_e50, d_r = np.nan, np.nan, np.nan, np.nan, np.nan
+    if w_pass:
+        d_close = daily_df["close"]
+        d_open = daily_df["open"]
+        d_ema20 = scanner.calculate_ema(d_close, span=20).values
+        d_ema50 = scanner.calculate_ema(d_close, span=50).values
+        d_rsi = scanner.calculate_rsi(d_close, span=9).values
+        d_rsi_ema3 = scanner.calculate_ema(pd.Series(d_rsi), span=3).values
+        d_rsi_wma21 = scanner.calculate_wma(pd.Series(d_rsi), period=21).values
+
+        d_c = float(d_close.iloc[-1])
+        d_o = float(d_open.iloc[-1])
+        d_e20 = float(d_ema20[-1])
+        d_e50 = float(d_ema50[-1])
+        d_r = float(d_rsi[-1])
+        d_re3 = float(d_rsi_ema3[-1])
+        d_rw21 = float(d_rsi_wma21[-1])
+
+        # Rules: Open <= 20 EMA and Close >= 20 EMA (bounce / crossover), 20 EMA > 50 EMA, RSI > 50, RSI > EMA3, RSI > WMA21
+        # Allow 1% proximity tolerance for real-market bounce
+        d_bounce = (d_o <= d_e20 * 1.015) and (d_c >= d_e20 * 0.985)
+        d_trend = (d_e20 > d_e50)
+        d_hilega = (d_r > 50.0) and (d_r >= d_re3) and (d_r >= d_rw21)
+
+        d_pass = (d_bounce and d_trend and d_hilega)
+        if d_pass:
+            stage = 3
+
+    # ==========================================
+    # 4. 75-MIN STAGE (Q4 Intraday Trigger)
+    # ==========================================
+    q4_c, q4_e20, q4_r = np.nan, np.nan, np.nan
+    if d_pass and intra_75_df is not None and not intra_75_df.empty and len(intra_75_df) >= 10:
+        q_close = intra_75_df["close"]
+        q_ema5 = scanner.calculate_ema(q_close, span=5).values
+        q_ema20 = scanner.calculate_ema(q_close, span=20).values
+        q_rsi = scanner.calculate_rsi(q_close, span=9).values
+        q_rsi_ema3 = scanner.calculate_ema(pd.Series(q_rsi), span=3).values
+        q_rsi_wma21 = scanner.calculate_wma(pd.Series(q_rsi), period=21).values
+
+        q4_c = float(q_close.iloc[-1])
+        q4_e5 = float(q_ema5[-1])
+        q4_e20 = float(q_ema20[-1])
+        q4_r = float(q_rsi[-1])
+        q4_re3 = float(q_rsi_ema3[-1])
+        q4_rw21 = float(q_rsi_wma21[-1])
+
+        # Rules: 75m Close > 20 EMA, 5 EMA > 20 EMA, RSI(9) > 50, RSI > EMA3, RSI > WMA21
+        q4_pass = (
+            (q4_c > q4_e20) and
+            (q4_e5 >= q4_e20) and
+            (q4_r > 50.0) and
+            (q4_r >= q4_re3) and
+            (q4_r >= q4_rw21)
+        )
+        if q4_pass:
+            stage = 4
+
+    stage_labels = {
+        4: "🏆 Stage 4 (M+W+D+75m Aligned)",
+        3: "🚀 Stage 3 (M+W+D Aligned)",
+        2: "🟢 Stage 2 (M+W Aligned)",
+        1: "🟡 Stage 1 (Monthly Macro Pass)"
+    }
+
+    return {
+        "Symbol": symbol,
+        "LTP": round(ltp, 2),
+        "1D Return (%)": round(change_pct, 2),
+        "Volume": vol,
+        "Stage": stage,
+        "Waterfall Stage": stage_labels[stage],
+        "Monthly": "✅ PASS",
+        "Weekly": "✅ PASS" if w_pass else "❌ FAIL",
+        "Daily": "✅ PASS" if d_pass else "❌ FAIL",
+        "75-Min": "✅ PASS" if q4_pass else "❌ FAIL",
+        "M_RSI": round(m_r, 1),
+        "M_EMA5": round(m_e5, 2),
+        "M_EMA20": round(m_e20, 2),
+        "W_RSI": round(w_r, 1) if not np.isnan(w_r) else np.nan,
+        "W_EMA20": round(w_e20, 2) if not np.isnan(w_e20) else np.nan,
+        "D_RSI": round(d_r, 1) if not np.isnan(d_r) else np.nan,
+        "D_EMA20": round(d_e20, 2) if not np.isnan(d_e20) else np.nan,
+        "75m_RSI": round(q4_r, 1) if not np.isnan(q4_r) else np.nan,
+        "75m_EMA20": round(q4_e20, 2) if not np.isnan(q4_e20) else np.nan,
+    }
+
+
+def run_waterfall_scan(
+    symbols: List[str],
+    data_provider_fn=None,
+    progress_callback=None
+) -> Dict[str, Any]:
+    """
+    Executes the complete Chartink 'positional-scan-364' waterfall screening across symbols.
+    Returns filtered dataframes for each stage.
+    """
+    results = []
+    total_scanned = len(symbols)
+
+    for i, sym in enumerate(symbols):
+        if progress_callback:
+            progress_callback(i + 1, total_scanned, sym)
+
+        daily_df = None
+        if data_provider_fn:
+            daily_df = data_provider_fn(sym, "Daily")
+        else:
+            daily_df = database.get_candles_df(sym)
+
+        if daily_df is None or daily_df.empty or len(daily_df) < 15:
+            continue
+
+        intra_75_df = None
+        if data_provider_fn:
+            intra_75_df = data_provider_fn(sym, "75-Min")
+        else:
+            intra_75_df = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
+
+        eval_res = evaluate_stock_waterfall(sym, daily_df, intra_75_df)
+        if eval_res is not None:
+            results.append(eval_res)
+
+    if not results:
+        empty_df = pd.DataFrame()
+        return {
+            "all_waterfall": empty_df,
+            "stage_4_full": empty_df,
+            "stage_3_daily": empty_df,
+            "stage_2_weekly": empty_df,
+            "stage_1_monthly": empty_df,
+            "counts": {"total": total_scanned, "m_pass": 0, "w_pass": 0, "d_pass": 0, "q4_pass": 0}
+        }
+
+    df_all = pd.DataFrame(results).sort_values(by=["Stage", "1D Return (%)"], ascending=[False, False])
+    df_s4 = df_all[df_all["Stage"] == 4].copy()
+    df_s3 = df_all[df_all["Stage"] >= 3].copy()
+    df_s2 = df_all[df_all["Stage"] >= 2].copy()
+    df_s1 = df_all[df_all["Stage"] >= 1].copy()
+
+    counts = {
+        "total": total_scanned,
+        "m_pass": len(df_s1),
+        "w_pass": len(df_s2),
+        "d_pass": len(df_s3),
+        "q4_pass": len(df_s4)
+    }
+
+    return {
+        "all_waterfall": df_all,
+        "stage_4_full": df_s4,
+        "stage_3_daily": df_s3,
+        "stage_2_weekly": df_s2,
+        "stage_1_monthly": df_s1,
+        "counts": counts
+    }
+
+
 # ==========================================
 # PRE-BUILT POPULAR CHARTINK SCREENER PRESETS
 # ==========================================

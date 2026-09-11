@@ -119,6 +119,21 @@ class TestScreenerEngine(unittest.TestCase):
         self.assertIn("Symbol", res.columns)
         self.assertIn("LTP", res.columns)
 
+    def test_run_waterfall_scan(self):
+        from screener_engine import run_waterfall_scan
+        stocks_data = {
+            "STOCK_A": create_test_ohlcv(120, 200.0),
+            "STOCK_B": create_test_ohlcv(120, 500.0),
+        }
+        res_dict = run_waterfall_scan(
+            list(stocks_data.keys()),
+            data_provider_fn=lambda s, tf: stocks_data.get(s)
+        )
+        self.assertIn("all_waterfall", res_dict)
+        self.assertIn("stage_4_full", res_dict)
+        self.assertIn("counts", res_dict)
+        self.assertEqual(res_dict["counts"]["total"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()
