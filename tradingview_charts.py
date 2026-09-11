@@ -4235,6 +4235,7 @@ def generate_quad_chart_html(
                     <button id="btn_q_candles" class="qm-btn {'active' if show_candles else ''}" onclick="toggleMasterCandles()" title="Toggle Candlesticks on all 4 quadrants">🕯️</button>
                     <button id="btn_q_line" class="qm-btn {'active' if show_line else ''}" onclick="toggleMasterLine()" title="Toggle Line Chart on all 4 quadrants">📈</button>
                 </div>
+                <button id="btn_q_tooltip" class="qm-btn-vol active" onclick="toggleQuadTooltip()" title="Toggle Floating Tooltip (ON/OFF)">💬 Tooltip</button>
                 <button id="btn_q_theme" class="qm-btn-vol" onclick="toggleQuadTheme()" title="Toggle Dark / Light Theme">{'☀️ Light' if is_light else '🌙 Dark'}</button>
                 <button id="btn_q_vol" class="qm-btn-vol {'active' if show_volume else ''}" onclick="toggleQuadVolume()" title="Hide / Show Volume on all 4 quadrants">📊 Vol</button>
             </div>
@@ -4853,41 +4854,45 @@ def generate_quad_chart_html(
                     }}
 
                     if (tooltipEl && bodyEl) {{
-                        let emasHtml = '';
-                        Object.keys(emaSeriesMap).forEach(eName => {{
-                            const sObj = emaSeriesMap[eName];
-                            const eVal = param.seriesData.get(sObj.series);
-                            if (eVal && eVal.value !== undefined) {{
-                                const dispName = (eName === 'Daily_EMA_20') ? 'Daily 20 EMA' : (sObj.title || eName);
-                                emasHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{sObj.color}}">${{dispName}}</span><span class="tt-val">₹${{eVal.value.toFixed(2)}}</span></div>`;
-                            }}
-                        }});
+                        if (!globalTooltipEnabled) {{
+                            tooltipEl.style.display = 'none';
+                        }} else {{
+                            let emasHtml = '';
+                            Object.keys(emaSeriesMap).forEach(eName => {{
+                                const sObj = emaSeriesMap[eName];
+                                const eVal = param.seriesData.get(sObj.series);
+                                if (eVal && eVal.value !== undefined) {{
+                                    const dispName = (eName === 'Daily_EMA_20') ? 'Daily 20 EMA' : (sObj.title || eName);
+                                    emasHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{sObj.color}}">${{dispName}}</span><span class="tt-val">₹${{eVal.value.toFixed(2)}}</span></div>`;
+                                }}
+                            }});
 
-                        tooltipEl.innerHTML = `
-                            <div class="tt-date">${{tStr}}</div>
-                            <div class="tt-row"><span class="tt-lbl">Open</span><span class="tt-val">₹${{o.toFixed(2)}}</span></div>
-                            <div class="tt-row"><span class="tt-lbl">High</span><span class="tt-val">₹${{h.toFixed(2)}}</span></div>
-                            <div class="tt-row"><span class="tt-lbl">Low</span><span class="tt-val">₹${{l.toFixed(2)}}</span></div>
-                            <div class="tt-row"><span class="tt-lbl">Close</span><span class="tt-val">₹${{c.toFixed(2)}}</span></div>
-                            <div class="tt-row"><span class="tt-lbl">Change</span><span class="tt-val ${{diffCls}}">${{sign}}${{diff.toFixed(2)}} (${{sign}}${{pct.toFixed(2)}}%)</span></div>
-                            ${{emasHtml}}
-                        `;
-                        tooltipEl.style.display = 'block';
+                            tooltipEl.innerHTML = `
+                                <div class="tt-date">${{tStr}}</div>
+                                <div class="tt-row"><span class="tt-lbl">Open</span><span class="tt-val">₹${{o.toFixed(2)}}</span></div>
+                                <div class="tt-row"><span class="tt-lbl">High</span><span class="tt-val">₹${{h.toFixed(2)}}</span></div>
+                                <div class="tt-row"><span class="tt-lbl">Low</span><span class="tt-val">₹${{l.toFixed(2)}}</span></div>
+                                <div class="tt-row"><span class="tt-lbl">Close</span><span class="tt-val">₹${{c.toFixed(2)}}</span></div>
+                                <div class="tt-row"><span class="tt-lbl">Change</span><span class="tt-val ${{diffCls}}">${{sign}}${{diff.toFixed(2)}} (${{sign}}${{pct.toFixed(2)}}%)</span></div>
+                                ${{emasHtml}}
+                            `;
+                            tooltipEl.style.display = 'block';
 
-                        const boxW = 195;
-                        const boxH = 160;
-                        let left = param.point.x + 15;
-                        let top = param.point.y + 10;
-                        const maxW = bodyEl.clientWidth;
-                        const maxH = bodyEl.clientHeight;
+                            const boxW = 195;
+                            const boxH = 160;
+                            let left = param.point.x + 15;
+                            let top = param.point.y + 10;
+                            const maxW = bodyEl.clientWidth;
+                            const maxH = bodyEl.clientHeight;
 
-                        if (left + boxW > maxW) left = param.point.x - boxW - 15;
-                        if (left < 5) left = 5;
-                        if (top + boxH > maxH) top = param.point.y - boxH - 10;
-                        if (top < 5) top = 5;
+                            if (left + boxW > maxW) left = param.point.x - boxW - 15;
+                            if (left < 5) left = 5;
+                            if (top + boxH > maxH) top = param.point.y - boxH - 10;
+                            if (top < 5) top = 5;
 
-                        tooltipEl.style.left = left + 'px';
-                        tooltipEl.style.top = top + 'px';
+                            tooltipEl.style.left = left + 'px';
+                            tooltipEl.style.top = top + 'px';
+                        }}
                     }}
                 }}
             }}
@@ -5878,6 +5883,21 @@ def generate_quad_chart_html(
             q.lineSeries.applyOptions({{ visible: q.isLineVisible }});
             const lBtn = document.getElementById('btn_line_' + key);
             if (lBtn) lBtn.classList.toggle('active', q.isLineVisible);
+        }}
+
+        let globalTooltipEnabled = true;
+        function toggleQuadTooltip() {{
+            globalTooltipEnabled = !globalTooltipEnabled;
+            const btn = document.getElementById('btn_q_tooltip');
+            if (btn) {{
+                btn.classList.toggle('active', globalTooltipEnabled);
+                btn.innerHTML = globalTooltipEnabled ? "💬 Tooltip" : "💬 Tooltip (Off)";
+            }}
+            if (!globalTooltipEnabled) {{
+                document.querySelectorAll('.tv-floating-tooltip').forEach(el => {{
+                    el.style.display = 'none';
+                }});
+            }}
         }}
 
         function toggleQuadTheme() {{
