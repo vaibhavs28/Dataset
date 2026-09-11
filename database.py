@@ -102,9 +102,15 @@ def purge_all_demo_data():
 
 
 def upsert_instruments(instruments: List[Dict[str, Any]]):
-    """Inserts or updates instruments master list."""
+    """Inserts or updates instruments master list in DuckDB and SQLite."""
     if not instruments:
         return
+    try:
+        import duckdb_store
+        duckdb_store.upsert_instruments(instruments)
+    except Exception:
+        pass
+
     with get_connection() as conn:
         cursor = conn.cursor()
         cursor.executemany("""
@@ -169,26 +175,44 @@ def get_all_symbols(include_indices: bool = True) -> List[str]:
     except Exception:
         pass
 
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        if include_indices:
-            cursor.execute("""
-                SELECT DISTINCT trading_symbol 
-                FROM instruments 
-                WHERE exchange IN ('NSE_EQ', 'NSE_INDEX')
-                  AND trading_symbol NOT LIKE '0%'
-                ORDER BY trading_symbol ASC;
-            """)
-        else:
-            cursor.execute("""
-                SELECT DISTINCT trading_symbol 
-                FROM instruments 
-                WHERE exchange = 'NSE_EQ'
-                  AND instrument_type IN ('EQUITY', 'EQ', 'BE', 'SM', 'BZ')
-                  AND trading_symbol NOT LIKE '0%'
-                ORDER BY trading_symbol ASC;
-            """)
-        return [row[0] for row in cursor.fetchall()]
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            if include_indices:
+                cursor.execute("""
+                    SELECT DISTINCT trading_symbol 
+                    FROM instruments 
+                    WHERE exchange IN ('NSE_EQ', 'NSE_INDEX')
+                      AND trading_symbol NOT LIKE '0%'
+                    ORDER BY trading_symbol ASC;
+                """)
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT trading_symbol 
+                    FROM instruments 
+                    WHERE exchange = 'NSE_EQ'
+                      AND instrument_type IN ('EQUITY', 'EQ', 'BE', 'SM', 'BZ')
+                      AND trading_symbol NOT LIKE '0%'
+                    ORDER BY trading_symbol ASC;
+                """)
+            res = [row[0] for row in cursor.fetchall()]
+            if res:
+                return res
+    except Exception:
+        pass
+
+    # Auto-initialize instruments if database is fresh
+    try:
+        import instruments
+        instruments.sync_all_instruments()
+        import duckdb_store
+        syms = duckdb_store.get_all_symbols(include_indices=include_indices)
+        if syms:
+            return syms
+    except Exception:
+        pass
+
+    return []
 
 
 def get_alignment_scanner_symbols() -> List[str]:

@@ -64,7 +64,7 @@ def sync_all_instruments(force: bool = False) -> int:
 
     # Check if already populated unless force=True
     stats = database.get_db_stats()
-    if stats["total_instruments"] > 5000 and not force:
+    if stats.get("total_instruments", 0) >= 2000 and not force:
         logger.info(f"Instruments already present in DB: {stats['total_instruments']}. Skipping sync.")
         return stats["total_instruments"]
 

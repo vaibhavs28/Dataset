@@ -641,7 +641,7 @@ def main():
     if selected_page == "📊 Quad-Chart View":
         db_symbols = database.get_all_symbols()
         parquet_symbols = parquet_loader.get_parquet_symbols()
-        popular_indices = ["NIFTY", "BANKNIFTY", "SENSEX", "BANKEX", "FINNIFTY", "MIDCPNIFTY", "BSE500"]
+        popular_indices = ["RELIANCE", "NIFTY", "BANKNIFTY", "TCS", "HDFCBANK", "INFY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
         all_options = sorted(list(set(popular_indices + db_symbols + parquet_symbols)))
         # Strictly keep only pure Equities and Indices (filter out all debt/bonds starting with '0')
         all_options = [s for s in all_options if not s.startswith("0")]
@@ -770,23 +770,28 @@ def main():
             today_str = datetime.today().strftime("%Y-%m-%d")
             latest_d = database.get_latest_candle_date(sel_stock)
 
-            # Check if stock is missing today's candle or missing recent days
-            if force_sync or not latest_d or latest_d < today_str:
+            # Check if stock is missing today's candle or missing historical data
+            if force_sync or not latest_d:
+                with st.spinner(f"⚡ Syncing complete market history for {sel_stock} from Upstox (2022 to today)..."):
+                    downloader.sync_symbol_history(sel_stock, from_date="2022-01-01", to_date=today_str)
+            elif latest_d < today_str:
                 with st.spinner(f"⚡ Syncing latest market data for {sel_stock}..."):
                     try:
                         import batch_downloader
-                        batch_downloader.sync_live_market_batch(symbols=[sel_stock])
+                        res = batch_downloader.sync_live_market_batch(symbols=[sel_stock])
+                        if not res.get("synced"):
+                            downloader.sync_symbol_history(sel_stock, from_date=latest_d, to_date=today_str)
                     except Exception:
-                        downloader.sync_symbol_history(sel_stock, from_date=latest_d or "2022-01-01", to_date=today_str)
-            else:
-                try:
-                    import batch_downloader
-                    batch_downloader.sync_live_market_batch(symbols=[sel_stock])
-                except Exception:
-                    downloader.sync_live_market_candles(sel_stock)
+                        downloader.sync_symbol_history(sel_stock, from_date=latest_d, to_date=today_str)
 
             # Fetch multi-timeframe candle data for selected stock
             daily_candles = database.get_candles_df(sel_stock)
+
+            # Extra fallback: if daily_candles is still empty, attempt direct historical fetch
+            if daily_candles.empty:
+                with st.spinner(f"📥 Fetching authentic candles for {sel_stock} from Upstox..."):
+                    downloader.sync_symbol_history(sel_stock, from_date="2022-01-01", to_date=today_str)
+                    daily_candles = database.get_candles_df(sel_stock)
 
             if daily_candles.empty:
                 st.warning(f"No candle data available for {sel_stock} on Upstox.")
@@ -1034,7 +1039,7 @@ def main():
     elif selected_page == "📈 Trading Terminal":
         db_symbols = database.get_all_symbols()
         parquet_symbols = parquet_loader.get_parquet_symbols()
-        popular_indices = ["NIFTY", "BANKNIFTY", "SENSEX", "BANKEX", "FINNIFTY", "MIDCPNIFTY", "BSE500"]
+        popular_indices = ["RELIANCE", "NIFTY", "BANKNIFTY", "TCS", "HDFCBANK", "INFY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
         all_options = sorted(list(set(popular_indices + db_symbols + parquet_symbols)))
         all_options = [s for s in all_options if not s.startswith("0")]
 
