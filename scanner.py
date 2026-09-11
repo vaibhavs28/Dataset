@@ -484,11 +484,23 @@ def run_multiframe_alignment_scan(symbols: Optional[List[str]] = None, stage_fil
     valid_nse_equities = set(database.get_alignment_scanner_symbols())
 
     if not symbols:
-        # Check which pure NSE equity symbols have daily candle data in SQLite
-        with database.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT DISTINCT trading_symbol FROM daily_candles;")
-            db_symbols = [row[0] for row in cursor.fetchall()]
+        # Check which pure NSE equity symbols have daily candle data in DuckDB (fallback to SQLite)
+        db_symbols = []
+        try:
+            import duckdb_store
+            conn = duckdb_store.get_connection()
+            with duckdb_store._lock:
+                rows = conn.execute("SELECT DISTINCT trading_symbol FROM daily_candles WHERE trading_symbol NOT LIKE '0%';").fetchall()
+                db_symbols = [r[0].replace("-EQ", "").replace(".NS", "") for r in rows if r[0]]
+        except Exception as e:
+            logger.warning(f"Error querying DuckDB symbols for scanner: {e}")
+
+        if not db_symbols:
+            with database.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT DISTINCT trading_symbol FROM daily_candles WHERE trading_symbol NOT LIKE '0%';")
+                db_symbols = [row[0] for row in cursor.fetchall()]
+
         symbols = [s for s in db_symbols if s in valid_nse_equities]
     else:
         symbols = [s for s in symbols if s in valid_nse_equities]
@@ -497,20 +509,31 @@ def run_multiframe_alignment_scan(symbols: Optional[List[str]] = None, stage_fil
         return pd.DataFrame()
 
     results = []
-    for sym in symbols:
-        res = evaluate_multiframe_alignment(sym)
-        if res:
-            if stage_filter == "Stage 3 (Full Alignment Only)" and res["Score"] < 3:
-                continue
-            elif stage_filter == "Stage 2+ (M+W Aligned)" and res["Score"] < 2:
-                continue
-            elif stage_filter == "Stage 1+ (Monthly Pass)" and res["Score"] < 1:
-                continue
-            elif stage_filter == "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)" and (res["Score"] < 3 or res["Monthly_RSI_Match"] != "✅ PASS"):
-                continue
-            elif stage_filter == "Monthly RSI Scan Only (RSI>=50 & EMA3>=WMA21)" and res["Monthly_RSI_Match"] != "✅ PASS":
-                continue
-            results.append(res)
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    def _eval(sym):
+        try:
+            return evaluate_multiframe_alignment(sym)
+        except Exception:
+            return None
+
+    # Bounded thread pool for fast concurrent in-database evaluation
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        futures = {executor.submit(_eval, sym): sym for sym in symbols}
+        for fut in as_completed(futures):
+            res = fut.result()
+            if res:
+                if stage_filter == "Stage 3 (Full Alignment Only)" and res["Score"] < 3:
+                    continue
+                elif stage_filter == "Stage 2+ (M+W Aligned)" and res["Score"] < 2:
+                    continue
+                elif stage_filter == "Stage 1+ (Monthly Pass)" and res["Score"] < 1:
+                    continue
+                elif stage_filter == "Stage 3 + Monthly RSI (RSI>=50 & EMA3>=WMA21)" and (res["Score"] < 3 or res["Monthly_RSI_Match"] != "✅ PASS"):
+                    continue
+                elif stage_filter == "Monthly RSI Scan Only (RSI>=50 & EMA3>=WMA21)" and res["Monthly_RSI_Match"] != "✅ PASS":
+                    continue
+                results.append(res)
 
     if not results:
         return pd.DataFrame()
