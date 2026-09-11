@@ -4027,9 +4027,9 @@ def generate_quad_chart_html(
             margin: 1px 0;
         }}
         .tt-lbl {{ color: #94A3B8; }}
-        .tt-val {{ font-weight: 600; }}
-        .tt-up {{ color: #089981; }}
-        .tt-dn {{ color: #F23645; }}
+        .tt-val {{ font-weight: 600; color: #FFFFFF; }}
+        .tt-up {{ color: #089981 !important; }}
+        .tt-dn {{ color: #F23645 !important; }}
 
         /* Light Theme Overrides */
         .quad-root.light-theme {{
@@ -4184,6 +4184,9 @@ def generate_quad_chart_html(
         }}
         .light-theme .tt-lbl {{
             color: #64748b !important;
+        }}
+        .light-theme .tt-val {{
+            color: #0F172A !important;
         }}
     </style>
 </head>
@@ -4402,6 +4405,7 @@ def generate_quad_chart_html(
     <script>
         const QUAD_DATA = {quad_data_json};
         const quadsRegistry = {{}};
+        var globalTooltipEnabled = true;
 
         function initQuadrant(id, payload, isIntraday) {{
             const mainContainer = document.getElementById("canvas_main_" + id);
@@ -4409,6 +4413,7 @@ def generate_quad_chart_html(
             const legendEl = document.getElementById("legend_" + id);
             const tooltipEl = document.getElementById("tt_" + id);
             const bodyEl = document.getElementById("body_" + id);
+            const hasRsi = !!(payload && payload.hasRsi);
 
             if (!mainContainer) return null;
 
@@ -4593,6 +4598,8 @@ def generate_quad_chart_html(
             let rsiChart = null;
             let hmCloud = null;
             let rsiSeries = null;
+            let e3Series = null;
+            let w21Series = null;
             if (payload.hasRsi && rsiContainer) {{
                 const rw = rsiContainer.clientWidth || 300;
                 const rh = rsiContainer.clientHeight || 100;
@@ -4659,7 +4666,7 @@ def generate_quad_chart_html(
                 }}
 
                 if (payload.rsi_ema3 && payload.rsi_ema3.length) {{
-                    const e3Series = rsiChart.addLineSeries({{
+                    e3Series = rsiChart.addLineSeries({{
                         color: '#4CAF50',
                         lineWidth: 1.8,
                         lastValueVisible: true,
@@ -4670,7 +4677,7 @@ def generate_quad_chart_html(
                 }}
 
                 if (payload.rsi_wma21 && payload.rsi_wma21.length) {{
-                    const w21Series = rsiChart.addLineSeries({{
+                    w21Series = rsiChart.addLineSeries({{
                         color: '#FF5252',
                         lineWidth: 1.8,
                         lastValueVisible: true,
@@ -4729,6 +4736,16 @@ def generate_quad_chart_html(
             (payload.rsi_ema3 || []).forEach(p => {{ eMap.set(p.time, p); }});
             const wMap = new Map();
             (payload.rsi_wma21 || []).forEach(p => {{ wMap.set(p.time, p); }});
+            const emaDataMaps = {{}};
+            if (payload.emas) {{
+                Object.keys(payload.emas).forEach(eName => {{
+                    const dMap = new Map();
+                    (payload.emas[eName].data || []).forEach(pt => {{
+                        dMap.set(pt.time, pt.value);
+                    }});
+                    emaDataMaps[eName] = dMap;
+                }});
+            }}
 
             // Initial view range
             if (payload.candles && payload.candles.length) {{
@@ -4776,7 +4793,7 @@ def generate_quad_chart_html(
             const chVEl = document.getElementById("ch_v_" + id);
             const hmValsEl = document.getElementById("hm_vals_" + id);
 
-            function handleUnifiedCrosshair(param) {{
+            function handleUnifiedCrosshair(param, source) {{
                 if (!param || !param.time || !param.point || param.point.x < 0) {{
                     if (tooltipEl) tooltipEl.style.display = 'none';
                     if (chVEl) chVEl.style.display = 'none';
@@ -4789,44 +4806,59 @@ def generate_quad_chart_html(
                     chVEl.style.display = 'block';
                 }}
 
-                // 2. Update Hilega Milega indicator readings (RSI, EMA 3, WMA 21) in real time
-                if (hmValsEl && hasRsi) {{
-                    let rVal = null, eVal = null, wVal = null;
-                    if (rsiSeries) rVal = param.seriesData.get(rsiSeries);
-                    if (typeof ema3Series !== 'undefined' && ema3Series) eVal = param.seriesData.get(ema3Series);
-                    if (typeof w21Series !== 'undefined' && w21Series) wVal = param.seriesData.get(w21Series);
+                const tMatch = (typeof param.time === 'number') ? param.time : (param.time.year ? `${{param.time.year}}-${{String(param.time.month).padStart(2,'0')}}-${{String(param.time.day).padStart(2,'0')}}` : String(param.time));
 
-                    // If hover event originated on mainChart, instant O(1) Map lookup
-                    if (!rVal) {{
-                        const tMatch = (typeof param.time === 'number') ? param.time : (param.time.year ? `${{param.time.year}}-${{String(param.time.month).padStart(2,'0')}}-${{String(param.time.day).padStart(2,'0')}}` : String(param.time));
-                        const rPt = rMap.get(tMatch) || rMap.get(param.time);
+                // 2. Update Hilega Milega indicator readings (RSI, EMA 3, WMA 21) in real time
+                let rNum = null, eNum = null, wNum = null, rColor = '#089981';
+                if (hasRsi) {{
+                    let rVal = null, eVal = null, wVal = null;
+                    if (param.seriesData && param.seriesData.get) {{
+                        if (rsiSeries) rVal = param.seriesData.get(rsiSeries);
+                        if (e3Series) eVal = param.seriesData.get(e3Series);
+                        if (w21Series) wVal = param.seriesData.get(w21Series);
+                    }}
+
+                    // Fallback to O(1) Map lookup
+                    if (!rVal || rVal.value === undefined) {{
+                        const rPt = rMap.get(tMatch) ?? rMap.get(param.time);
                         if (rPt) rVal = {{ value: rPt.value }};
-                        const ePt = eMap.get(tMatch) || eMap.get(param.time);
+                    }}
+                    if (!eVal || eVal.value === undefined) {{
+                        const ePt = eMap.get(tMatch) ?? eMap.get(param.time);
                         if (ePt) eVal = {{ value: ePt.value }};
-                        const wPt = wMap.get(tMatch) || wMap.get(param.time);
+                    }}
+                    if (!wVal || wVal.value === undefined) {{
+                        const wPt = wMap.get(tMatch) ?? wMap.get(param.time);
                         if (wPt) wVal = {{ value: wPt.value }};
                     }}
 
                     if (rVal && rVal.value !== undefined) {{
-                        const rNum = Number(rVal.value).toFixed(1);
-                        const eNum = (eVal && eVal.value !== undefined) ? Number(eVal.value).toFixed(1) : '--';
-                        const wNum = (wVal && wVal.value !== undefined) ? Number(wVal.value).toFixed(1) : '--';
-                        const rColor = rVal.value >= 50 ? '#089981' : '#F23645';
-                        hmValsEl.innerHTML = `<span style="color:${{rColor}};font-weight:700;">RSI: ${{rNum}}</span> | <span style="color:#4CAF50;">EMA(3): ${{eNum}}</span> | <span style="color:#FF5252;">WMA(21): ${{wNum}}</span>`;
+                        rNum = Number(rVal.value).toFixed(1);
+                        eNum = (eVal && eVal.value !== undefined) ? Number(eVal.value).toFixed(1) : '--';
+                        wNum = (wVal && wVal.value !== undefined) ? Number(wVal.value).toFixed(1) : '--';
+                        rColor = rVal.value >= 50 ? '#089981' : '#F23645';
+                        if (hmValsEl) {{
+                            hmValsEl.innerHTML = `<span style="color:${{rColor}};font-weight:700;">RSI: ${{rNum}}</span> | <span style="color:#4CAF50;">EMA(3): ${{eNum}}</span> | <span style="color:#FF5252;">WMA(21): ${{wNum}}</span>`;
+                        }}
                     }}
                 }}
 
                 // 3. Update OHLC & Indicator Tooltip + Card Legend
-                let bar = param.seriesData.get(candleSeries);
+                let bar = null;
+                if (param.seriesData && param.seriesData.get) {{
+                    bar = param.seriesData.get(candleSeries);
+                }}
                 let o = 0, h = 0, l = 0, c = 0;
-                if (bar) {{
+                if (bar && typeof bar.open === 'number' && typeof bar.close === 'number') {{
                     o = bar.open; h = bar.high; l = bar.low; c = bar.close;
                 }} else {{
-                    const lVal = param.seriesData.get(lineSeries);
+                    let lVal = null;
+                    if (param.seriesData && param.seriesData.get && lineSeries) {{
+                        lVal = param.seriesData.get(lineSeries);
+                    }}
                     if (lVal && lVal.value !== undefined) {{
                         o = h = l = c = lVal.value;
                     }} else {{
-                        const tMatch = (typeof param.time === 'number') ? param.time : (param.time.year ? `${{param.time.year}}-${{String(param.time.month).padStart(2,'0')}}-${{String(param.time.day).padStart(2,'0')}}` : String(param.time));
                         const cPt = cMap.get(tMatch) || cMap.get(param.time);
                         if (cPt) {{
                             o = cPt.open; h = cPt.high; l = cPt.low; c = cPt.close;
@@ -4860,12 +4892,30 @@ def generate_quad_chart_html(
                             let emasHtml = '';
                             Object.keys(emaSeriesMap).forEach(eName => {{
                                 const sObj = emaSeriesMap[eName];
-                                const eVal = param.seriesData.get(sObj.series);
-                                if (eVal && eVal.value !== undefined) {{
+                                let eValNum = null;
+                                if (param.seriesData && param.seriesData.get) {{
+                                    const eVal = param.seriesData.get(sObj.series);
+                                    if (eVal && eVal.value !== undefined) eValNum = eVal.value;
+                                }}
+                                if (eValNum === null && emaDataMaps[eName]) {{
+                                    const fallbackVal = emaDataMaps[eName].get(tMatch) ?? emaDataMaps[eName].get(param.time);
+                                    if (fallbackVal !== undefined && fallbackVal !== null) eValNum = fallbackVal;
+                                }}
+                                if (eValNum !== null) {{
                                     const dispName = (eName === 'Daily_EMA_20') ? 'Daily 20 EMA' : (sObj.title || eName);
-                                    emasHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{sObj.color}}">${{dispName}}</span><span class="tt-val">₹${{eVal.value.toFixed(2)}}</span></div>`;
+                                    emasHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{sObj.color}}">${{dispName}}</span><span class="tt-val">₹${{Number(eValNum).toFixed(2)}}</span></div>`;
                                 }}
                             }});
+
+                            let hmHtml = '';
+                            if (hasRsi && rNum !== null) {{
+                                hmHtml = `
+                                    <div style="border-top: 1px solid rgba(255,255,255,0.12); margin: 3px 0; padding-top: 2px;"></div>
+                                    <div class="tt-row"><span class="tt-lbl">RSI (9)</span><span class="tt-val" style="color:${{rColor}}; font-weight:700;">${{rNum}}</span></div>
+                                    <div class="tt-row"><span class="tt-lbl" style="color:#4CAF50;">EMA (3)</span><span class="tt-val">${{eNum}}</span></div>
+                                    <div class="tt-row"><span class="tt-lbl" style="color:#FF5252;">WMA (21)</span><span class="tt-val">${{wNum}}</span></div>
+                                `;
+                            }}
 
                             tooltipEl.innerHTML = `
                                 <div class="tt-date">${{tStr}}</div>
@@ -4875,19 +4925,24 @@ def generate_quad_chart_html(
                                 <div class="tt-row"><span class="tt-lbl">Close</span><span class="tt-val">₹${{c.toFixed(2)}}</span></div>
                                 <div class="tt-row"><span class="tt-lbl">Change</span><span class="tt-val ${{diffCls}}">${{sign}}${{diff.toFixed(2)}} (${{sign}}${{pct.toFixed(2)}}%)</span></div>
                                 ${{emasHtml}}
+                                ${{hmHtml}}
                             `;
                             tooltipEl.style.display = 'block';
 
-                            const boxW = 195;
-                            const boxH = 160;
+                            const boxW = 200;
+                            const boxH = hasRsi ? 210 : 160;
                             let left = param.point.x + 15;
-                            let top = param.point.y + 10;
+                            let mouseY = param.point.y;
+                            if (source === 'rsi' && rsiContainer) {{
+                                mouseY += rsiContainer.offsetTop;
+                            }}
+                            let top = mouseY + 10;
                             const maxW = bodyEl.clientWidth;
                             const maxH = bodyEl.clientHeight;
 
                             if (left + boxW > maxW) left = param.point.x - boxW - 15;
                             if (left < 5) left = 5;
-                            if (top + boxH > maxH) top = param.point.y - boxH - 10;
+                            if (top + boxH > maxH) top = mouseY - boxH - 10;
                             if (top < 5) top = 5;
 
                             tooltipEl.style.left = left + 'px';
@@ -4897,9 +4952,9 @@ def generate_quad_chart_html(
                 }}
             }}
 
-            mainChart.subscribeCrosshairMove(handleUnifiedCrosshair);
+            mainChart.subscribeCrosshairMove(p => handleUnifiedCrosshair(p, 'main'));
             if (rsiChart) {{
-                rsiChart.subscribeCrosshairMove(handleUnifiedCrosshair);
+                rsiChart.subscribeCrosshairMove(p => handleUnifiedCrosshair(p, 'rsi'));
             }}
             if (bodyEl) {{
                 bodyEl.addEventListener('mouseleave', () => {{
@@ -5885,7 +5940,6 @@ def generate_quad_chart_html(
             if (lBtn) lBtn.classList.toggle('active', q.isLineVisible);
         }}
 
-        let globalTooltipEnabled = true;
         function toggleQuadTooltip() {{
             globalTooltipEnabled = !globalTooltipEnabled;
             const btn = document.getElementById('btn_q_tooltip');
