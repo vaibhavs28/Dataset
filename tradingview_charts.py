@@ -2568,7 +2568,7 @@ def generate_advanced_terminal_html(
             }}
 
             // EMAs Overlay
-            const emaColors = {{ "EMA_5": "#4CAF50", "EMA_9": "#00E5FF", "EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": isLight ? "#131722" : "#FFFFFF" }};
+            const emaColors = {{ "EMA_5": "#4CAF50", "EMA_9": "#4CAF50", "EMA_13": "#38BDF8", "EMA_20": "#2962FF", "Daily_EMA_20": "#2962FF", "EMA_26": "#9C27B0", "EMA_50": "#FF5252", "EMA_200": isLight ? "#131722" : "#FFFFFF" }};
             for (const [col, pts] of Object.entries(emas)) {{
                 if (pts && pts.length > 0) {{
                     const s = mainChart.addLineSeries({{
@@ -3158,6 +3158,22 @@ def generate_quad_chart_html(
             "hasRsi": has_rsi_panel
         }
 
+    # Ensure Daily EMA 20 is available on intra_df
+    if intra_df is not None and not intra_df.empty and daily_df is not None and not daily_df.empty:
+        if "Daily_EMA_20" not in intra_df.columns:
+            try:
+                d_ema20 = daily_df["EMA_20"] if "EMA_20" in daily_df.columns else daily_df["close"].ewm(span=20, adjust=False).mean()
+                d_dt_idx = pd.to_datetime(daily_df.index)
+                d_dates = d_dt_idx.tz_localize(None).date if hasattr(d_dt_idx, 'tz_localize') and d_dt_idx.tz is not None else d_dt_idx.date
+                d_map = pd.Series(d_ema20.values, index=d_dates)
+                d_map = d_map[~d_map.index.duplicated(keep="last")]
+
+                i_dt_idx = pd.to_datetime(intra_df.index)
+                i_dates = i_dt_idx.tz_localize(None).date if hasattr(i_dt_idx, 'tz_localize') and i_dt_idx.tz is not None else i_dt_idx.date
+                intra_df["Daily_EMA_20"] = pd.Series([d_map.get(d, np.nan) for d in i_dates], index=intra_df.index).ffill().bfill()
+            except Exception:
+                pass
+
     # Extract payloads for all 4 quadrants
     m_payload = _extract_payload(monthly_df, {"EMA_5": "#4CAF50", "EMA_20": "#2962FF"}, is_intraday=False)
     w_payload = _extract_payload(weekly_df, {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"}, is_intraday=False)
@@ -3169,7 +3185,14 @@ def generate_quad_chart_html(
     }
     intra_payload = _extract_payload(
         intra_df,
-        {"EMA_9": "#00E5FF", "EMA_13": "#76FF03", "EMA_26": "#FF9100", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"},
+        {
+            "EMA_9": "#4CAF50",
+            "EMA_13": "#38BDF8",
+            "Daily_EMA_20": "#2962FF",
+            "EMA_26": "#9C27B0",
+            "EMA_50": "#FF5252",
+            "EMA_200": "#131722" if is_light else "#FFFFFF"
+        },
         pivot_dict=p75,
         is_intraday=True
     )
@@ -4090,7 +4113,7 @@ def generate_quad_chart_html(
                     <div class="qc-header">
                         <div class="qc-header-left">
                             <span class="qc-tf qc-tf-75">{intra_tf_label}</span>
-                            <span class="qc-sub">Trigger: 9>13>26 EMA | Pivots</span>
+                            <span class="qc-sub">Trigger: 9>13>26 EMA | Daily 20 EMA | Pivots</span>
                             <div class="qc-legend" id="legend_75"></div>
                         </div>
                         <div class="qc-header-right">
@@ -4279,7 +4302,7 @@ def generate_quad_chart_html(
                     const cfg = payload.emas[emaName];
                     const s = mainChart.addLineSeries({{
                         color: cfg.color,
-                        lineWidth: 1.5,
+                        lineWidth: (emaName === 'Daily_EMA_20') ? 2.2 : 1.5,
                         lastValueVisible: false,
                         priceLineVisible: false,
                         axisLabelVisible: false,
@@ -4508,7 +4531,8 @@ def generate_quad_chart_html(
                         const sObj = emaSeriesMap[eName];
                         const eVal = param.seriesData.get(sObj.series);
                         if (eVal && eVal.value !== undefined) {{
-                            emasHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{sObj.color}}">${{eName}}</span><span class="tt-val">₹${{eVal.value.toFixed(2)}}</span></div>`;
+                            const dispName = (eName === 'Daily_EMA_20') ? 'Daily 20 EMA' : eName;
+                            emasHtml += `<div class="tt-row"><span class="tt-lbl" style="color:${{sObj.color}}">${{dispName}}</span><span class="tt-val">₹${{eVal.value.toFixed(2)}}</span></div>`;
                         }}
                     }});
 

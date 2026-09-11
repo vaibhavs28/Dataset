@@ -185,10 +185,11 @@ def create_candlestick_chart(
     # Overlay EMAs
     color_palette = {
         "EMA_5": "#4CAF50",    # Green
-        "EMA_9": "#00E5FF",    # Cyan
-        "EMA_13": "#76FF03",   # Bright Lime Green
+        "EMA_9": "#4CAF50",    # Green (Fast trigger)
+        "EMA_13": "#38BDF8",   # Sky Blue
         "EMA_20": "#2962FF",   # Blue
-        "EMA_26": "#FF9100",   # Orange
+        "Daily_EMA_20": "#2962FF",  # Blue (Higher-timeframe Daily 20 EMA)
+        "EMA_26": "#9C27B0",   # Purple
         "EMA_50": "#FF5252",   # Red
         "EMA_200": "#131722" if is_light else "#FFFFFF"  # Black in light theme, White in dark theme
     }
@@ -1030,6 +1031,19 @@ def main():
                     intra_df["EMA_26"] = intra_df["close"].ewm(span=26, adjust=False).mean()
                     intra_df["EMA_50"] = intra_df["close"].ewm(span=50, adjust=False).mean()
                     intra_df["EMA_200"] = intra_df["close"].ewm(span=200, adjust=False).mean()
+
+                    # Attach Daily EMA 20 mapped onto 75-min intraday candles
+                    if d_df is not None and not d_df.empty:
+                        d_ema20 = d_df["EMA_20"] if "EMA_20" in d_df.columns else d_df["close"].ewm(span=20, adjust=False).mean()
+                        d_dt_idx = pd.to_datetime(d_df.index)
+                        d_dates = d_dt_idx.tz_localize(None).date if hasattr(d_dt_idx, 'tz_localize') and d_dt_idx.tz is not None else d_dt_idx.date
+                        d_map = pd.Series(d_ema20.values, index=d_dates)
+                        d_map = d_map[~d_map.index.duplicated(keep="last")]
+
+                        i_dt_idx = pd.to_datetime(intra_df.index)
+                        i_dates = i_dt_idx.tz_localize(None).date if hasattr(i_dt_idx, 'tz_localize') and i_dt_idx.tz is not None else i_dt_idx.date
+                        intra_df["Daily_EMA_20"] = pd.Series([d_map.get(d, np.nan) for d in i_dates], index=intra_df.index).ffill().bfill()
+
                     intra_df["RSI"] = scanner.calculate_rsi(intra_df["close"], span=rsi_span)
                     intra_df["RSI_EMA3"] = scanner.calculate_ema(intra_df["RSI"], span=3)
                     intra_df["RSI_WMA21"] = scanner.calculate_wma(intra_df["RSI"], period=21)
@@ -1121,15 +1135,18 @@ def main():
                         st.plotly_chart(fig_d, use_container_width=True)
 
                     with grid_col4:
-                        st.subheader("4️⃣ 75-Min Chart (EMAs + Weekly Pivot & R1/S1)")
+                        st.subheader("4️⃣ 75-Min Chart (EMAs + Daily 20 EMA + Weekly Pivot)")
                         i_last = intra_df.iloc[-1]
                         i_rsi = intra_df["RSI"].iloc[-1]
-                        st.caption(f"**Close:** ₹{i_last['close']:.2f} | **RSI ({rsi_span}):** {i_rsi:.1f} | 9 EMA: ₹{i_last['EMA_9']:.2f} | 13 EMA: ₹{i_last['EMA_13']:.2f} | 26 EMA: ₹{i_last['EMA_26']:.2f} | 50 EMA: ₹{i_last['EMA_50']:.2f} | 200 EMA: ₹{i_last['EMA_200']:.2f}")
+                        d_ema20_val = i_last.get("Daily_EMA_20", 0)
+                        d_ema20_str = f" | Daily 20 EMA: ₹{d_ema20_val:.2f}" if d_ema20_val else ""
+                        st.caption(f"**Close:** ₹{i_last['close']:.2f} | **RSI ({rsi_span}):** {i_rsi:.1f} | 9 EMA (Green): ₹{i_last['EMA_9']:.2f} | 13 EMA (Sky Blue): ₹{i_last['EMA_13']:.2f}{d_ema20_str} | 26 EMA (Purple): ₹{i_last['EMA_26']:.2f} | 50 EMA (Red): ₹{i_last['EMA_50']:.2f} | 200 EMA (Black): ₹{i_last['EMA_200']:.2f}")
                         fig_75 = create_candlestick_chart(
-                            intra_df.tail(80), sel_stock, "75-Minute (EMAs + Weekly Pivot)", {
-                                "EMA_9": "#00E5FF",
-                                "EMA_13": "#76FF03",
-                                "EMA_26": "#FF9100",
+                            intra_df.tail(80), sel_stock, "75-Minute (EMAs + Daily 20 EMA + Weekly Pivot)", {
+                                "EMA_9": "#4CAF50",
+                                "EMA_13": "#38BDF8",
+                                "Daily_EMA_20": "#2962FF",
+                                "EMA_26": "#9C27B0",
                                 "EMA_50": "#FF5252",
                                 "EMA_200": "#131722" if theme == "light" else "#FFFFFF"
                             }, height=chart_h, is_intraday=True, pivot_dict=pivot_dict_75,
