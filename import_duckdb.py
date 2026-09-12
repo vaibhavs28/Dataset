@@ -145,6 +145,9 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
 
                 t0 = time.time()
                 # A. Copy / Merge 1-minute data table with bonus/split adjustment
+                if replace_existing:
+                    dest_conn.execute("DROP TABLE IF EXISTS stocks;")
+
                 dest_conn.execute(f"""
                     CREATE TABLE IF NOT EXISTS stocks (
                         ticker VARCHAR,
@@ -404,6 +407,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Merge external DuckDB file into market_data.duckdb")
     parser.add_argument("--file", "-f", type=str, required=True, help="Path to external .duckdb file")
     parser.add_argument("--inspect-only", action="store_true", help="Inspect tables and schema without merging")
+    parser.add_argument("--delete-source", action="store_true", help="Delete external source .duckdb file after successful merge")
 
     args = parser.parse_args()
 
@@ -421,3 +425,9 @@ if __name__ == "__main__":
         print(f"Time: {res['elapsed_seconds']}s")
         for tbl, d in res["tables"].items():
             print(f"• {tbl} -> {d['target']} ({d.get('rows', 0):,} rows) [{d['status']}]")
+
+        if args.delete_source:
+            source_p = Path(args.file).expanduser().resolve()
+            if source_p.exists():
+                source_p.unlink()
+                print(f"\n🗑️ Successfully deleted source file: {source_p} (freed disk space)")
