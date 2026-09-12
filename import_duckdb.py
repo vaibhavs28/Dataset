@@ -417,7 +417,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Merge external DuckDB file into market_data.duckdb")
     parser.add_argument("--file", "-f", type=str, required=True, help="Path to external .duckdb file")
     parser.add_argument("--inspect-only", action="store_true", help="Inspect tables and schema without merging")
-    parser.add_argument("--resample-only", action="store_true", help="Only import pre-calculated Daily and 75m candles, skipping raw 1-min table (saves 97% disk space)")
+    parser.add_argument("--resample-only", action="store_true", help="Only import pre-calculated Daily and 75m candles, skipping raw 1-min table (saves 97 percent disk space)")
     parser.add_argument("--delete-source", action="store_true", help="Delete external source .duckdb file after successful merge")
 
     args = parser.parse_args()
