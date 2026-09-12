@@ -121,11 +121,12 @@ def calculate_rsi(series: pd.Series, span: int = 9) -> pd.Series:
 def calculate_ema(series: pd.Series, span: int = 3) -> pd.Series:
     """
     Computes Exponential Moving Average (EMA) of a series with specified span.
-    Preserves leading NaNs and starts calculating once valid values appear.
+    Requires at least `span` non-NaN observations (min_periods=span) so that
+    the indicator only begins plotting after completing its period.
     """
-    if series.empty or series.dropna().empty:
+    if series.empty or len(series.dropna()) < span:
         return pd.Series(np.nan, index=series.index, dtype=float)
-    return series.ewm(span=span, adjust=False).mean()
+    return series.ewm(span=span, min_periods=span, adjust=False).mean()
 
 
 def calculate_wma(series: pd.Series, period: int = 21) -> pd.Series:

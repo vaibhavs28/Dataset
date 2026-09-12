@@ -912,7 +912,13 @@ def generate_lightweight_chart_html(
                     lineWidth: 1.8,
                     priceLineVisible: false,
                     lastValueVisible: true,
-                    title: 'RSI(9)'
+                    title: 'RSI(9)',
+                    autoscaleInfoProvider: () => ({{
+                        priceRange: {{
+                            minValue: 0,
+                            maxValue: 100,
+                        }},
+                    }}),
                 }});
                 rsiSeries.setData(rsiData);
 
@@ -1939,7 +1945,7 @@ def generate_advanced_terminal_html(
 
     if show_rsi:
         if "RSI" not in df_calc.columns:
-            df_calc["RSI"] = scanner.calculate_rsi(df_calc["close"], span=14)
+            df_calc["RSI"] = scanner.calculate_rsi(df_calc["close"], span=9)
             df_calc["RSI_EMA3"] = scanner.calculate_ema(df_calc["RSI"], span=3)
             df_calc["RSI_WMA21"] = scanner.calculate_wma(df_calc["RSI"], period=21)
 
@@ -2787,8 +2793,20 @@ def generate_advanced_terminal_html(
                 }} catch(e) {{}}
 
                 const rsiColor = isLight ? '#131722' : '#F8FAFC';
-                rsiSeries = rsiChart.addLineSeries({{ color: rsiColor, lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'RSI(9)' }});
-                rsiSeries.setData(rsi);
+                rsiSeries = rsiChart.addLineSeries({{
+                    color: rsiColor,
+                    lineWidth: 1.8,
+                    lastValueVisible: true,
+                    priceLineVisible: false,
+                    title: 'RSI(9)',
+                    autoscaleInfoProvider: () => ({{
+                        priceRange: {{
+                            minValue: 0,
+                            maxValue: 100,
+                        }},
+                    }}),
+                }});
+                if (rsi && rsi.length > 0) rsiSeries.setData(rsi);
                 if (rsiEma3 && rsiEma3.length > 0) {{
                     const e3 = rsiChart.addLineSeries({{ color: '#4CAF50', lineWidth: 1.8, lastValueVisible: true, priceLineVisible: false, title: 'EMA(3)' }});
                     e3.setData(rsiEma3);
@@ -4789,6 +4807,12 @@ def generate_quad_chart_html(
                     lastValueVisible: true,
                     priceLineVisible: false,
                     title: 'RSI(9)',
+                    autoscaleInfoProvider: () => ({{
+                        priceRange: {{
+                            minValue: 0,
+                            maxValue: 100,
+                        }},
+                    }}),
                 }});
                 if (payload.rsi && payload.rsi.length) {{
                     rsiSeries.setData(payload.rsi);
@@ -4816,7 +4840,6 @@ def generate_quad_chart_html(
                     w21Series.setData(payload.rsi_wma21);
                 }}
 
-                // Solid 50 Blue Line (#7695F9) with Price Badge
                 // Solid 50 Blue Line (#7695F9) with Price Badge
                 rsiSeries.createPriceLine({{ price: 50, color: '#7695F9', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '50' }});
                 rsiSeries.createPriceLine({{ price: 70, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
