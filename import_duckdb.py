@@ -223,8 +223,8 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True, resampl
                 """)
                 logger.info(f"✅ Pre-2020 daily candles resampled and merged in {time.time()-t_daily:.2f}s")
 
-                # D. Resample pre-2020 75-minute candles into intraday_candles
-                logger.info("Resampling pre-2020 authentic 75-minute candles into intraday_candles...")
+                # D. Resample pre-2022 75-minute candles into intraday_candles
+                logger.info("Resampling pre-2022 authentic 75-minute candles into intraday_candles...")
                 t_75 = time.time()
                 dest_conn.execute(f"""
                     INSERT INTO intraday_candles (
@@ -274,7 +274,7 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True, resampl
                         close = EXCLUDED.close,
                         volume = EXCLUDED.volume;
                 """)
-                logger.info(f"✅ Pre-2020 75-minute candles resampled and merged in {time.time()-t_75:.2f}s")
+                logger.info(f"✅ Pre-2022 75-minute candles resampled and merged in {time.time()-t_75:.2f}s")
 
                 results[tbl_name] = {
                     "target": "stocks, daily_candles, intraday_candles",
