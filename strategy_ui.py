@@ -686,14 +686,13 @@ def render_strategy_lab_page(theme: str = "dark"):
                     st.warning(f"Insufficient candle data for {sel_sym} on {effective_tf}. Try syncing data or another timeframe.")
                 else:
                     # Filter lookback if requested
-                    if lookback_choice == "Past 6 Months":
-                        cutoff = datetime.today() - pd.Timedelta(days=180)
-                        df_raw = df_raw[df_raw.index >= cutoff]
-                    elif lookback_choice == "Past 1 Year":
-                        cutoff = datetime.today() - pd.Timedelta(days=365)
-                        df_raw = df_raw[df_raw.index >= cutoff]
-                    elif lookback_choice == "Past 2 Years":
-                        cutoff = datetime.today() - pd.Timedelta(days=730)
+                    days_map = {
+                        "Past 6 Months": 180,
+                        "Past 1 Year": 365,
+                        "Past 2 Years": 730
+                    }
+                    if lookback_choice in days_map:
+                        cutoff = pd.Timestamp.now(tz=df_raw.index.tz) - pd.Timedelta(days=days_map[lookback_choice])
                         df_raw = df_raw[df_raw.index >= cutoff]
 
                     # Prepare indicators & backtest

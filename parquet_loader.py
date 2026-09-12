@@ -536,9 +536,14 @@ def load_symbol_1min(
     df.set_index("timestamp", inplace=True)
 
     if start_date:
-        df = df[df.index >= pd.to_datetime(start_date).tz_localize("Asia/Kolkata")]
+        start_ts = pd.to_datetime(start_date)
+        if df.index.tz is not None and start_ts.tz is None:
+            start_ts = start_ts.tz_localize(df.index.tz)
+        df = df[df.index >= start_ts]
     if end_date:
-        end_dt = pd.to_datetime(f"{end_date} 23:59:59").tz_localize("Asia/Kolkata")
+        end_dt = pd.to_datetime(f"{end_date} 23:59:59")
+        if df.index.tz is not None and end_dt.tz is None:
+            end_dt = end_dt.tz_localize(df.index.tz)
         df = df[df.index <= end_dt]
 
     if limit and limit > 0 and len(df) > limit:
