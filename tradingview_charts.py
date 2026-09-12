@@ -3278,7 +3278,8 @@ def generate_quad_chart_html(
                             p_color = "#1E293B"
                         pivots_data[p_col] = {"color": p_color, "name": p_cfg.get("name", p_col), "data": series_pts}
 
-        has_rsi_panel = show_rsi and ("RSI" in df_clean.columns) and not df_clean["RSI"].dropna().empty
+        # Strictly require at least 9 completed candles for RSI(9) & Hilega Milega
+        has_rsi_panel = show_rsi and ("RSI" in df_clean.columns) and not df_clean["RSI"].dropna().empty and (len(df_clean) >= 9)
         rsi_pts, rsi_ema3_pts, rsi_wma21_pts = [], [], []
         if has_rsi_panel:
             for dt, row in df_clean.iterrows():
@@ -3299,7 +3300,9 @@ def generate_quad_chart_html(
             "rsi": rsi_pts,
             "rsi_ema3": rsi_ema3_pts,
             "rsi_wma21": rsi_wma21_pts,
-            "hasRsi": has_rsi_panel
+            "hasRsi": has_rsi_panel,
+            "insufficientCandles": (len(df_clean) < 9),
+            "candleCount": len(df_clean)
         }
 
     # Ensure EMA 20 and Daily EMA 20 are available on intra_df
@@ -3344,6 +3347,12 @@ def generate_quad_chart_html(
     )
     w_payload = _extract_payload(weekly_df, {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"}, is_intraday=False)
     d_payload = _extract_payload(daily_df, {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if is_light else "#FFFFFF"}, is_intraday=False)
+    cur_tf_raw = str(intra_tf_label).strip()
+    cur_tf_low = cur_tf_raw.lower()
+    is_q4_intraday = True
+    if any(x in cur_tf_low for x in ["day", "week", "month", "quarter", "daily", "weekly", "monthly"]) or cur_tf_low.endswith(("d", "w", "mo")):
+        is_q4_intraday = False
+
     p75 = pivot_dict_75 or {
         "Weekly_R1": {"color": "#EF4444", "name": "Weekly R1"},
         "Weekly_P":  {"color": "#38BDF8", "name": "Weekly Pivot"},
@@ -3360,8 +3369,8 @@ def generate_quad_chart_html(
             "EMA_50": "#FF5252",
             "EMA_200": "#131722" if is_light else "#FFFFFF"
         },
-        pivot_dict=p75,
-        is_intraday=True
+        pivot_dict=p75 if is_q4_intraday else None,
+        is_intraday=is_q4_intraday
     )
 
     quad_data_json = json.dumps({
@@ -3370,12 +3379,14 @@ def generate_quad_chart_html(
         "w": w_payload,
         "d": d_payload,
         "intra": intra_payload,
+        "intra_is_intraday": is_q4_intraday,
         "showRsi": show_rsi,
         "showVolume": show_volume,
         "showCandles": show_candles,
         "showLine": show_line,
         "rsiSpan": rsi_span,
-        "theme": "light" if is_light else "dark"
+        "theme": "light" if is_light else "dark",
+        "intraTfLabel": intra_tf_label
     })
 
     clean_sym = symbol.upper().replace("-EQ", "").replace(".NS", "")
@@ -3391,34 +3402,88 @@ def generate_quad_chart_html(
         stock_opt_list.append(f'<option value="{s_clean}"{sel_attr}>{s_clean}</option>')
     stock_options_html = "".join(stock_opt_list)
 
-    # 2. Prepare Intraday Timeframe dropdown options for Quadrant 4
-    standard_tfs = [
+    # 2. Prepare Timeframe dropdown options for Quadrant 4 (Minutes, Days, Weeks, Months)
+    intraday_tfs = [
         ("1m", "1m (1-Min)"),
         ("3m", "3m (3-Min)"),
         ("5m", "5m (5-Min)"),
+        ("10m", "10m (10-Min)"),
         ("15m", "15m (15-Min)"),
         ("30m", "30m (30-Min)"),
         ("60m", "60m (1-Hour)"),
         ("75m", "75m (75-Min)"),
         ("125m", "125m (125-Min)"),
     ]
-    cur_tf = str(intra_tf_label).strip().lower()
-    if not cur_tf.endswith("m") and cur_tf.isdigit():
-        cur_tf = f"{cur_tf}m"
+    daily_tfs = [
+        ("1D", "1D (Daily)"),
+        ("2D", "2D (2-Day)"),
+        ("3D", "3D (3-Day)"),
+        ("5D", "5D (5-Day)"),
+    ]
+    weekly_tfs = [
+        ("1W", "1W (Weekly)"),
+        ("2W", "2W (2-Week)"),
+    ]
+    monthly_tfs = [
+        ("1MO", "1M (Monthly)"),
+        ("3MO", "3M (Quarterly)"),
+    ]
+
+    cur_tf = str(intra_tf_label).strip()
+    cur_tf_lower = cur_tf.lower()
 
     tf_opt_list = []
     matched = False
-    for tf_val, tf_title in standard_tfs:
+
+    # Group 1: Minutes
+    tf_opt_list.append('<optgroup label="⏱️ Intraday Minutes">')
+    for tf_val, tf_title in intraday_tfs:
         sel_attr = ""
-        if tf_val.lower() == cur_tf.lower():
+        if tf_val.lower() == cur_tf_lower or (cur_tf_lower == tf_val.lower().replace("m", "")):
             sel_attr = " selected"
             matched = True
         tf_opt_list.append(f'<option value="{tf_val}"{sel_attr}>{tf_title}</option>')
+    tf_opt_list.append('<option value="custom_m">⚙️ Custom Minutes...</option>')
+    tf_opt_list.append('</optgroup>')
+
+    # Group 2: Days
+    tf_opt_list.append('<optgroup label="📅 Daily & Multi-Day">')
+    for tf_val, tf_title in daily_tfs:
+        sel_attr = ""
+        if tf_val.lower() == cur_tf_lower or (cur_tf_lower in ("1d", "daily", "d") and tf_val == "1D"):
+            sel_attr = " selected"
+            matched = True
+        tf_opt_list.append(f'<option value="{tf_val}"{sel_attr}>{tf_title}</option>')
+    tf_opt_list.append('<option value="custom_d">⚙️ Custom Days...</option>')
+    tf_opt_list.append('</optgroup>')
+
+    # Group 3: Weeks
+    tf_opt_list.append('<optgroup label="📆 Weekly & Multi-Week">')
+    for tf_val, tf_title in weekly_tfs:
+        sel_attr = ""
+        if tf_val.lower() == cur_tf_lower or (cur_tf_lower in ("1w", "weekly", "w") and tf_val == "1W"):
+            sel_attr = " selected"
+            matched = True
+        tf_opt_list.append(f'<option value="{tf_val}"{sel_attr}>{tf_title}</option>')
+    tf_opt_list.append('<option value="custom_w">⚙️ Custom Weeks...</option>')
+    tf_opt_list.append('</optgroup>')
+
+    # Group 4: Months
+    tf_opt_list.append('<optgroup label="🌙 Monthly & Multi-Month">')
+    for tf_val, tf_title in monthly_tfs:
+        sel_attr = ""
+        if tf_val.lower() == cur_tf_lower or (cur_tf_lower in ("1m", "1mo", "monthly", "mo") and tf_val == "1MO"):
+            sel_attr = " selected"
+            matched = True
+        tf_opt_list.append(f'<option value="{tf_val}"{sel_attr}>{tf_title}</option>')
+    tf_opt_list.append('<option value="custom_mo">⚙️ Custom Months...</option>')
+    tf_opt_list.append('</optgroup>')
 
     if not matched and cur_tf:
         tf_opt_list.append(f'<option value="{cur_tf}" selected>Custom ({cur_tf})</option>')
-    tf_opt_list.append('<option value="custom">⚙️ Custom Minutes...</option>')
     tf_options_html = "".join(tf_opt_list)
+
+    q4_sub_label = "Trigger: 9>13>20>26 EMA | Daily 20 EMA | Pivots" if is_q4_intraday else f"Analysis ({intra_tf_label}): 20>50>200 EMA"
 
     html_code = f"""<!DOCTYPE html>
 <html lang="en">
@@ -4435,7 +4500,7 @@ def generate_quad_chart_html(
                     <div class="qc-header">
                         <div class="qc-header-left">
                             <span class="qc-tf qc-tf-75">{intra_tf_label}</span>
-                            <span class="qc-sub">Trigger: 9>13>20>26 EMA | Daily 20 EMA | Pivots</span>
+                            <span class="qc-sub">{q4_sub_label}</span>
                             <div class="qc-legend" id="legend_75"></div>
                         </div>
                         <div class="qc-header-right">
@@ -4789,6 +4854,13 @@ def generate_quad_chart_html(
                         isSyncing = false;
                     }});
                 }});
+            }} else if (!payload.hasRsi && rsiContainer && payload.insufficientCandles) {{
+                const cCount = payload.candleCount || 0;
+                rsiContainer.innerHTML = `
+                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; width: 100%; padding: 8px; text-align: center; color: #f59e0b; font-size: 11px; font-weight: 600; background: rgba(245, 158, 11, 0.05); border-top: 1px dashed rgba(245, 158, 11, 0.3);">
+                        ⚠️ Insufficient Data: Requires ≥ 9 completed candles for RSI(9) & Hilega Milega (Currently: ${{cCount}} candle${{cCount === 1 ? '' : 's'}})
+                    </div>
+                `;
             }}
 
             // Pre-index candle & indicator data for instant O(1) crosshair performance
@@ -5078,7 +5150,7 @@ def generate_quad_chart_html(
         quadsRegistry['m'] = initQuadrant('m', QUAD_DATA.m, false);
         quadsRegistry['w'] = initQuadrant('w', QUAD_DATA.w, false);
         quadsRegistry['d'] = initQuadrant('d', QUAD_DATA.d, false);
-        quadsRegistry['75'] = initQuadrant('75', QUAD_DATA.intra, true);
+        quadsRegistry['75'] = initQuadrant('75', QUAD_DATA.intra, !!QUAD_DATA.intra_is_intraday);
 
         // --- QUADRANT ZOOM & TIME-RANGE JUMP ENGINE ---
         let currentQuadMode = 'all';
@@ -6903,7 +6975,7 @@ def generate_quad_chart_html(
         function onQuadTfChange(tf) {{
             if (!tf) return;
             let targetTf = tf;
-            if (tf === 'custom') {{
+            if (tf === 'custom' || tf === 'custom_m') {{
                 const customVal = prompt('Enter custom timeframe in minutes (e.g. 10, 45, 90, 120):', '45');
                 if (!customVal || isNaN(parseInt(customVal))) {{
                     const sel = document.getElementById('qm_tf_select');
@@ -6911,6 +6983,30 @@ def generate_quad_chart_html(
                     return;
                 }}
                 targetTf = parseInt(customVal) + 'm';
+            }} else if (tf === 'custom_d') {{
+                const customVal = prompt('Enter custom timeframe in days (e.g. 2, 3, 5):', '2');
+                if (!customVal || isNaN(parseInt(customVal))) {{
+                    const sel = document.getElementById('qm_tf_select');
+                    if (sel) sel.value = '{cur_tf}';
+                    return;
+                }}
+                targetTf = parseInt(customVal) + 'D';
+            }} else if (tf === 'custom_w') {{
+                const customVal = prompt('Enter custom timeframe in weeks (e.g. 2, 3):', '2');
+                if (!customVal || isNaN(parseInt(customVal))) {{
+                    const sel = document.getElementById('qm_tf_select');
+                    if (sel) sel.value = '{cur_tf}';
+                    return;
+                }}
+                targetTf = parseInt(customVal) + 'W';
+            }} else if (tf === 'custom_mo') {{
+                const customVal = prompt('Enter custom timeframe in months (e.g. 2, 3, 6):', '3');
+                if (!customVal || isNaN(parseInt(customVal))) {{
+                    const sel = document.getElementById('qm_tf_select');
+                    if (sel) sel.value = '{cur_tf}';
+                    return;
+                }}
+                targetTf = parseInt(customVal) + 'M';
             }}
             triggerQuadUpdate(null, targetTf);
         }}

@@ -196,16 +196,21 @@ def _draw_single_panel(
     draw.text((x2 - 35, y_50 - 5), "50", fill="#64748B", font=font_sm)
     draw.text((x2 - 35, y_70 - 5), "70", fill="#EF4444", font=font_sm)
 
-    if len(rsi_pts) > 1:
-        draw.line(rsi_pts, fill="#10B981", width=2)  # RSI(9)
-    if len(re3_pts) > 1:
-        draw.line(re3_pts, fill="#EF4444", width=1)  # EMA 3
-    if len(rw21_pts) > 1:
-        draw.line(rw21_pts, fill="#3B82F6", width=1)  # WMA 21
+    if len(sub_df) < 9 or rsi.dropna().empty:
+        draw.text((x1 + 20, r_top + r_h // 2 - 6), f"⚠️ Insufficient Candles for RSI(9) & Hilega Milega ({len(sub_df)}/9 bars completed)", fill="#64748B", font=font_sm)
+    else:
+        if len(rsi_pts) > 1:
+            draw.line(rsi_pts, fill="#10B981", width=2)  # RSI(9)
+        if len(re3_pts) > 1:
+            draw.line(re3_pts, fill="#EF4444", width=1)  # EMA 3
+        if len(rw21_pts) > 1:
+            draw.line(rw21_pts, fill="#3B82F6", width=1)  # WMA 21
 
-    # RSI value text
-    curr_rsi = rsi.iloc[-1] if not rsi.empty else 50.0
-    draw.text((x1 + 10, r_top - 4), f"RSI(9): {curr_rsi:.1f} | EMA(3): {rsi_ema3.iloc[-1]:.1f} | WMA(21): {rsi_wma21.iloc[-1]:.1f}", fill="#94A3B8", font=font_sm)
+        # RSI value text
+        curr_rsi = rsi.dropna().iloc[-1] if not rsi.dropna().empty else 50.0
+        curr_e3 = rsi_ema3.dropna().iloc[-1] if not rsi_ema3.dropna().empty else 50.0
+        curr_w21 = rsi_wma21.dropna().iloc[-1] if not rsi_wma21.dropna().empty else 50.0
+        draw.text((x1 + 10, r_top - 4), f"RSI(9): {curr_rsi:.1f} | EMA(3): {curr_e3:.1f} | WMA(21): {curr_w21:.1f}", fill="#94A3B8", font=font_sm)
 
 
 def generate_quadrant_image(
@@ -217,7 +222,8 @@ def generate_quadrant_image(
     ltp: Optional[float] = None,
     change_pct: Optional[float] = None,
     stage_label: str = "🏆 STAGE 4 FULL ALIGNMENT QUALIFIED",
-    out_path: Optional[str] = None
+    out_path: Optional[str] = None,
+    q4_title: Optional[str] = None
 ) -> str:
     """
     Renders a 1600x1200 composite Quad-Chart screenshot image for a stock.
@@ -289,9 +295,11 @@ def generate_quadrant_image(
     )
 
     # Q4: 75-Min (Bottom-Right)
+    # Q4: Bottom-Right
+    q4_name = q4_title or "4. 75-MIN INTRADAY TRIGGER (Close > 20 EMA & 5 EMA >= 20 EMA)"
     bbox_q4 = (pad * 2 + col_w, grid_top + row_h + pad, img_w - pad, img_h - pad)
     _draw_single_panel(
-        draw, intra_75_df, f"4. 75-MIN INTRADAY TRIGGER (Close > 20 EMA & 5 EMA >= 20 EMA)",
+        draw, intra_75_df, q4_name,
         bbox_q4, ema_pairs=("EMA_5", "EMA_20"), ema_colors=("#38BDF8", "#F59E0B"), max_bars=40
     )
 
@@ -308,20 +316,58 @@ def generate_quadrant_image(
 def generate_stock_quadrant(
     symbol: str,
     stage_label: str = "🏆 STAGE 4 FULL ALIGNMENT QUALIFIED",
-    out_path: Optional[str] = None
+    out_path: Optional[str] = None,
+    q4_timeframe: str = "75m"
 ) -> Optional[str]:
     """
-    Convenience function: Automatically loads Daily, Monthly, Weekly, and 75-Min data
-    for `symbol`, generates the composite 1600x1200 image, and returns the path.
+    Convenience function: Automatically loads Daily, Monthly, Weekly, and Q4 data
+    (75m, custom minutes, Daily, Weekly, Monthly) for `symbol`, generates the composite
+    1600x1200 image, and returns the path.
     """
     try:
+        import re
         daily_df = database.get_candles_df(symbol)
         if daily_df is None or daily_df.empty or len(daily_df) < 15:
             return None
 
         monthly_df = scanner.resample_ohlcv(daily_df, "monthly")
         weekly_df = scanner.resample_ohlcv(daily_df, "weekly")
-        intra_75_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
+
+        tf_clean = str(q4_timeframe).strip().lower()
+        q4_df = None
+        q4_title = f"4. {q4_timeframe.upper()} TRIGGER (Close > 20 EMA & 5 EMA >= 20 EMA)"
+
+        if tf_clean in ("1d", "daily", "d"):
+            q4_df = daily_df.copy()
+            q4_title = "4. DAILY TIMEFRAME (Setup & 20 EMA)"
+        elif tf_clean in ("1w", "weekly", "w"):
+            q4_df = weekly_df.copy()
+            q4_title = "4. WEEKLY TIMEFRAME (Trend & 20/50 EMA)"
+        elif tf_clean in ("1m", "monthly", "mo", "month"):
+            q4_df = monthly_df.copy()
+            q4_title = "4. MONTHLY TIMEFRAME (Macro Trend & 5/20 EMA)"
+        elif re.match(r"^(\d+)d$", tf_clean):
+            q4_df = scanner.resample_ohlcv(daily_df, tf_clean)
+            q4_title = f"4. {q4_timeframe.upper()} MULTI-DAY TIMEFRAME"
+        elif re.match(r"^(\d+)w$", tf_clean):
+            q4_df = scanner.resample_ohlcv(daily_df, tf_clean)
+            q4_title = f"4. {q4_timeframe.upper()} MULTI-WEEK TIMEFRAME"
+        elif re.match(r"^(\d+)m(o|onth)?$", tf_clean) and not tf_clean.endswith("min"):
+            q4_df = scanner.resample_ohlcv(daily_df, tf_clean)
+            q4_title = f"4. {q4_timeframe.upper()} MULTI-MONTH TIMEFRAME"
+        else:
+            # Intraday minutes
+            m_num = re.search(r"(\d+)", tf_clean)
+            mins = int(m_num.group(1)) if m_num else 75
+            if mins == 75:
+                q4_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
+                q4_title = "4. 75-MIN INTRADAY TRIGGER (Close > 20 EMA & 5 EMA >= 20 EMA)"
+            else:
+                q4_df = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=mins, min_bars=20)
+                q4_title = f"4. {mins}-MIN INTRADAY TRIGGER"
+
+        if q4_df is None or q4_df.empty:
+            q4_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
 
         ltp = float(daily_df["close"].iloc[-1])
         change_pct = 0.0
@@ -334,11 +380,12 @@ def generate_stock_quadrant(
             monthly_df=monthly_df,
             weekly_df=weekly_df,
             daily_df=daily_df,
-            intra_75_df=intra_75_df,
+            intra_75_df=q4_df,
             ltp=ltp,
             change_pct=change_pct,
             stage_label=stage_label,
-            out_path=out_path
+            out_path=out_path,
+            q4_title=q4_title
         )
     except Exception as err:
         return None

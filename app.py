@@ -880,6 +880,7 @@ def main():
                 st.session_state["quad_sym_select"] = "RELIANCE" if "RELIANCE" in all_options else (all_options[0] if all_options else "RELIANCE")
 
             tf_opts = [
+                # Minutes
                 "75m (75-Min)",
                 "1m (1-Min)",
                 "3m (3-Min)",
@@ -888,14 +889,28 @@ def main():
                 "30m (30-Min)",
                 "60m (1-Hour)",
                 "125m (125-Min)",
-                "⚙️ Custom Minutes"
+                "⚙️ Custom Minutes",
+                # Days
+                "1D (Daily)",
+                "2D (2-Day)",
+                "3D (3-Day)",
+                "5D (5-Day)",
+                "⚙️ Custom Days",
+                # Weeks
+                "1W (Weekly)",
+                "2W (2-Week)",
+                "⚙️ Custom Weeks",
+                # Months
+                "1M (Monthly)",
+                "3M (3-Month)",
+                "⚙️ Custom Months"
             ]
 
             qp_tf = st.query_params.get("quad_tf")
             if qp_tf:
-                qp_tf_clean = str(qp_tf).strip().lower()
+                qp_tf_raw = str(qp_tf).strip()
                 for opt in tf_opts:
-                    if opt.lower().startswith(qp_tf_clean):
+                    if opt.startswith(qp_tf_raw) or opt.lower().startswith(qp_tf_raw.lower()):
                         st.session_state["quad_tf_dropdown"] = opt
                         break
                 del st.query_params["quad_tf"]
@@ -926,17 +941,42 @@ def main():
                         if "stock" in b_data and b_data["stock"] and b_data["stock"].upper() in all_options:
                             st.session_state["quad_sym_select"] = b_data["stock"].upper()
                         if "tf" in b_data and b_data["tf"]:
-                            b_tf_clean = str(b_data["tf"]).strip().lower()
+                            b_tf_raw = str(b_data["tf"]).strip()
                             matched = False
                             for opt in tf_opts:
-                                if opt.lower().startswith(b_tf_clean):
+                                opt_token = opt.split()[0]
+                                if opt_token.lower() == b_tf_raw.lower():
                                     st.session_state["quad_tf_dropdown"] = opt
                                     matched = True
                                     break
                             if not matched:
-                                m_num = re.search(r"(\d+)", b_tf_clean)
-                                if m_num:
-                                    mins_val = int(m_num.group(1))
+                                m_d = re.match(r"^(\d+)\s*[dD]", b_tf_raw)
+                                m_w = re.match(r"^(\d+)\s*[wW]", b_tf_raw)
+                                m_mo = re.match(r"^(\d+)\s*(M|mo|month)", b_tf_raw, re.IGNORECASE) if (b_tf_raw.endswith("M") or "mo" in b_tf_raw.lower() or "month" in b_tf_raw.lower()) else None
+                                m_m = re.match(r"^(\d+)\s*m", b_tf_raw)
+                                if m_d:
+                                    d_val = int(m_d.group(1))
+                                    cust_label = f"{d_val}D ({d_val}-Day)"
+                                    if cust_label not in tf_opts:
+                                        tf_opts.insert(-1, cust_label)
+                                    st.session_state["quad_tf_dropdown"] = cust_label
+                                    st.session_state["quad_custom_days"] = d_val
+                                elif m_w:
+                                    w_val = int(m_w.group(1))
+                                    cust_label = f"{w_val}W ({w_val}-Week)"
+                                    if cust_label not in tf_opts:
+                                        tf_opts.insert(-1, cust_label)
+                                    st.session_state["quad_tf_dropdown"] = cust_label
+                                    st.session_state["quad_custom_weeks"] = w_val
+                                elif m_mo:
+                                    mo_val = int(m_mo.group(1))
+                                    cust_label = f"{mo_val}M ({mo_val}-Month)"
+                                    if cust_label not in tf_opts:
+                                        tf_opts.insert(-1, cust_label)
+                                    st.session_state["quad_tf_dropdown"] = cust_label
+                                    st.session_state["quad_custom_months"] = mo_val
+                                elif m_m:
+                                    mins_val = int(m_m.group(1))
                                     cust_label = f"{mins_val}m ({mins_val}-Min)"
                                     if cust_label not in tf_opts:
                                         tf_opts.insert(-1, cust_label)
@@ -968,12 +1008,47 @@ def main():
                     options=tf_opts,
                     key="quad_tf_dropdown"
                 )
-                if "Custom" in selected_tf_opt:
-                    target_mins = int(st.number_input("Minutes:", min_value=1, max_value=400, value=45, step=5, key="quad_custom_mins"))
+                if "Custom Minutes" in selected_tf_opt:
+                    target_mins = int(st.number_input("Minutes:", min_value=1, max_value=400, value=st.session_state.get("quad_custom_mins", 45), step=5, key="quad_custom_mins"))
+                    tf_type = "minute"
+                    intra_tf_label = f"{target_mins}m"
+                elif "Custom Days" in selected_tf_opt:
+                    target_days = int(st.number_input("Days:", min_value=1, max_value=30, value=st.session_state.get("quad_custom_days", 2), step=1, key="quad_custom_days"))
+                    tf_type = "day"
+                    intra_tf_label = f"{target_days}D"
+                elif "Custom Weeks" in selected_tf_opt:
+                    target_weeks = int(st.number_input("Weeks:", min_value=1, max_value=12, value=st.session_state.get("quad_custom_weeks", 2), step=1, key="quad_custom_weeks"))
+                    tf_type = "week"
+                    intra_tf_label = f"{target_weeks}W"
+                elif "Custom Months" in selected_tf_opt:
+                    target_months = int(st.number_input("Months:", min_value=1, max_value=12, value=st.session_state.get("quad_custom_months", 3), step=1, key="quad_custom_months"))
+                    tf_type = "month"
+                    intra_tf_label = f"{target_months}M"
                 else:
-                    m = re.search(r"(\d+)m", selected_tf_opt)
-                    target_mins = int(m.group(1)) if m else 75
-                intra_tf_label = f"{target_mins}m"
+                    m_d = re.match(r"^(\d+)D", selected_tf_opt)
+                    m_w = re.match(r"^(\d+)W", selected_tf_opt)
+                    m_mo = re.match(r"^(\d+)M", selected_tf_opt)
+                    m_m = re.match(r"^(\d+)m", selected_tf_opt)
+                    if m_d:
+                        tf_type = "day"
+                        target_days = int(m_d.group(1))
+                        intra_tf_label = f"{target_days}D"
+                    elif m_w:
+                        tf_type = "week"
+                        target_weeks = int(m_w.group(1))
+                        intra_tf_label = f"{target_weeks}W"
+                    elif m_mo:
+                        tf_type = "month"
+                        target_months = int(m_mo.group(1))
+                        intra_tf_label = f"{target_months}M"
+                    elif m_m:
+                        tf_type = "minute"
+                        target_mins = int(m_m.group(1))
+                        intra_tf_label = f"{target_mins}m"
+                    else:
+                        tf_type = "minute"
+                        target_mins = 75
+                        intra_tf_label = "75m"
             with col_sync_btn:
                 st.write("")
                 st.write("")
@@ -1048,12 +1123,30 @@ def main():
                 d_df["RSI_EMA3"] = scanner.calculate_ema(d_df["RSI"], span=3)
                 d_df["RSI_WMA21"] = scanner.calculate_wma(d_df["RSI"], period=21)
 
-                # 4. Intraday DataFrame (strictly resampled from 1-minute data)
-                if target_mins == 75:
-                    intra_df = parquet_loader.ensure_symbol_75m_candles(sel_stock, min_bars=100)
+                # 4. Q4 DataFrame (Minutes, Days, Weeks, or Months)
+                if tf_type == "minute":
+                    if target_mins == 75:
+                        intra_df = parquet_loader.ensure_symbol_75m_candles(sel_stock, min_bars=100)
+                    else:
+                        intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=100)
+                elif tf_type == "day":
+                    if target_days == 1:
+                        intra_df = daily_candles.copy()
+                    else:
+                        intra_df = scanner.resample_ohlcv(daily_candles, f"{target_days}D")
+                elif tf_type == "week":
+                    if target_weeks == 1:
+                        intra_df = w_df.copy() if (w_df is not None and not w_df.empty) else scanner.resample_ohlcv(daily_candles, "weekly")
+                    else:
+                        intra_df = scanner.resample_ohlcv(daily_candles, f"{target_weeks}W")
+                elif tf_type == "month":
+                    if target_months == 1:
+                        intra_df = m_df.copy() if (m_df is not None and not m_df.empty) else scanner.resample_ohlcv(daily_candles, "monthly")
+                    else:
+                        intra_df = scanner.resample_ohlcv(daily_candles, f"{target_months}M")
                 else:
-                    intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=100)
-                
+                    intra_df = pd.DataFrame()
+
                 if intra_df is not None and not intra_df.empty:
                     # Requested EMAs: 9, 13, 20, 26, 50, 200
                     intra_df["EMA_9"] = intra_df["close"].ewm(span=9, adjust=False).mean()
@@ -1063,24 +1156,24 @@ def main():
                     intra_df["EMA_50"] = intra_df["close"].ewm(span=50, adjust=False).mean()
                     intra_df["EMA_200"] = intra_df["close"].ewm(span=200, adjust=False).mean()
 
-                    # Attach Daily EMA 20 mapped onto 75-min intraday candles
-                    if d_df is not None and not d_df.empty:
-                        d_ema20 = d_df["EMA_20"] if "EMA_20" in d_df.columns else d_df["close"].ewm(span=20, adjust=False).mean()
-                        d_dt_idx = pd.to_datetime(d_df.index)
-                        d_dates = d_dt_idx.tz_localize(None).date if hasattr(d_dt_idx, 'tz_localize') and d_dt_idx.tz is not None else d_dt_idx.date
-                        d_map = pd.Series(d_ema20.values, index=d_dates)
-                        d_map = d_map[~d_map.index.duplicated(keep="last")]
+                    # Attach Daily EMA 20 and Weekly CPR only for intraday minutes
+                    if tf_type == "minute":
+                        if d_df is not None and not d_df.empty:
+                            d_ema20 = d_df["EMA_20"] if "EMA_20" in d_df.columns else d_df["close"].ewm(span=20, adjust=False).mean()
+                            d_dt_idx = pd.to_datetime(d_df.index)
+                            d_dates = d_dt_idx.tz_localize(None).date if hasattr(d_dt_idx, 'tz_localize') and d_dt_idx.tz is not None else d_dt_idx.date
+                            d_map = pd.Series(d_ema20.values, index=d_dates)
+                            d_map = d_map[~d_map.index.duplicated(keep="last")]
 
-                        i_dt_idx = pd.to_datetime(intra_df.index)
-                        i_dates = i_dt_idx.tz_localize(None).date if hasattr(i_dt_idx, 'tz_localize') and i_dt_idx.tz is not None else i_dt_idx.date
-                        intra_df["Daily_EMA_20"] = pd.Series([d_map.get(d, np.nan) for d in i_dates], index=intra_df.index).ffill().bfill()
+                            i_dt_idx = pd.to_datetime(intra_df.index)
+                            i_dates = i_dt_idx.tz_localize(None).date if hasattr(i_dt_idx, 'tz_localize') and i_dt_idx.tz is not None else i_dt_idx.date
+                            intra_df["Daily_EMA_20"] = pd.Series([d_map.get(d, np.nan) for d in i_dates], index=intra_df.index).ffill().bfill()
+
+                        intra_df = scanner.attach_weekly_cpr_to_intraday(intra_df, daily_candles)
 
                     intra_df["RSI"] = scanner.calculate_rsi(intra_df["close"], span=rsi_span)
                     intra_df["RSI_EMA3"] = scanner.calculate_ema(intra_df["RSI"], span=3)
                     intra_df["RSI_WMA21"] = scanner.calculate_wma(intra_df["RSI"], period=21)
-
-                    # Attach Weekly CPR levels (TC, P, BC) + R1 and S1
-                    intra_df = scanner.attach_weekly_cpr_to_intraday(intra_df, daily_candles)
                 else:
                     intra_df = pd.DataFrame()
 
@@ -1093,7 +1186,7 @@ def main():
                     "Weekly_R1": {"color": "#EF4444", "dash": "dash", "width": 1.8, "name": "Weekly R1"},
                     "Weekly_P":  {"color": "#38BDF8", "dash": "dash", "width": 2.0, "name": "Weekly Pivot (P)"},
                     "Weekly_S1": {"color": "#10B981", "dash": "dash", "width": 1.8, "name": "Weekly S1"}
-                }
+                } if tf_type == "minute" else None
 
                 if chart_engine == "TradingView":
                     c_lead, c_fs = st.columns([3, 1])
@@ -1128,12 +1221,16 @@ def main():
 
                     with grid_col1:
                         st.subheader("1️⃣ Monthly Chart (EMAs + AVWAP Mar'20 / Jun'22)")
-                        m_rsi = m_df["RSI"].iloc[-1]
-                        m_ema3 = m_df["RSI_EMA3"].iloc[-1]
-                        m_wma21 = m_df["RSI_WMA21"].iloc[-1]
-                        rsi_50_badge = "🟢 RSI ≥ 50" if m_rsi >= 50 else "🔴 RSI < 50"
-                        cross_badge = "🟢 EMA 3 ≥ WMA 21" if m_ema3 >= m_wma21 else "🔴 EMA 3 < WMA 21"
-                        st.caption(f"Rule: Close > 5 EMA (Green) & 5>20 EMA (Blue) | AVWAP Mar'20 (Sky Blue) | AVWAP Jun'22 (Sky Blue Dotted) | **RSI ({rsi_span}):** {m_rsi:.1f} ({rsi_50_badge})")
+                        m_rsi = m_df["RSI"].iloc[-1] if not m_df.empty and "RSI" in m_df.columns else np.nan
+                        m_ema3 = m_df["RSI_EMA3"].iloc[-1] if not m_df.empty and "RSI_EMA3" in m_df.columns else np.nan
+                        m_wma21 = m_df["RSI_WMA21"].iloc[-1] if not m_df.empty and "RSI_WMA21" in m_df.columns else np.nan
+                        if pd.isna(m_rsi):
+                            rsi_50_badge = "⚠️ <9 bars"
+                            m_rsi_str = "N/A (<9 candles)"
+                        else:
+                            rsi_50_badge = "🟢 RSI ≥ 50" if m_rsi >= 50 else "🔴 RSI < 50"
+                            m_rsi_str = f"{m_rsi:.1f}"
+                        st.caption(f"Rule: Close > 5 EMA (Green) & 5>20 EMA (Blue) | AVWAP Mar'20 (Sky Blue) | AVWAP Jun'22 (Sky Blue Dotted) | **RSI ({rsi_span}):** {m_rsi_str} ({rsi_50_badge})")
                         fig_m = create_candlestick_chart(
                             m_df.tail(48), sel_stock, "Monthly", {
                                 "EMA_5": "#4CAF50",
@@ -1148,8 +1245,9 @@ def main():
 
                     with grid_col2:
                         st.subheader("2️⃣ Weekly Chart (20 + 50 + 200 EMA)")
-                        w_rsi = w_df["RSI"].iloc[-1]
-                        st.caption(f"Rule: Close > 20 EMA (Blue) > 50 EMA (Red) > 200 EMA (Black) | **RSI ({rsi_span}):** {w_rsi:.1f}")
+                        w_rsi = w_df["RSI"].iloc[-1] if not w_df.empty and "RSI" in w_df.columns else np.nan
+                        w_rsi_str = f"{w_rsi:.1f}" if not pd.isna(w_rsi) else "N/A (<9 candles)"
+                        st.caption(f"Rule: Close > 20 EMA (Blue) > 50 EMA (Red) > 200 EMA (Black) | **RSI ({rsi_span}):** {w_rsi_str}")
                         fig_w = create_candlestick_chart(
                             w_df.tail(100), sel_stock, "Weekly", {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if theme == "light" else "#FFFFFF"},
                             height=chart_h, is_intraday=False, show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
@@ -1161,8 +1259,9 @@ def main():
 
                     with grid_col3:
                         st.subheader("3️⃣ Daily Chart (20 + 50 + 200 EMA)")
-                        d_rsi = d_df["RSI"].iloc[-1]
-                        st.caption(f"Rule: Close > 20 EMA (Blue) > 50 EMA (Red) > 200 EMA (Black) | **RSI ({rsi_span}):** {d_rsi:.1f}")
+                        d_rsi = d_df["RSI"].iloc[-1] if not d_df.empty and "RSI" in d_df.columns else np.nan
+                        d_rsi_str = f"{d_rsi:.1f}" if not pd.isna(d_rsi) else "N/A (<9 candles)"
+                        st.caption(f"Rule: Close > 20 EMA (Blue) > 50 EMA (Red) > 200 EMA (Black) | **RSI ({rsi_span}):** {d_rsi_str}")
                         fig_d = create_candlestick_chart(
                             d_df.tail(120), sel_stock, "Daily", {"EMA_20": "#2962FF", "EMA_50": "#FF5252", "EMA_200": "#131722" if theme == "light" else "#FFFFFF"},
                             height=chart_h, is_intraday=False, show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
@@ -1171,28 +1270,32 @@ def main():
                         st.plotly_chart(fig_d, use_container_width=True)
 
                     with grid_col4:
-                        st.subheader("4️⃣ 75-Min Chart (EMAs + Daily 20 EMA + Weekly Pivot)")
-                        i_last = intra_df.iloc[-1]
-                        i_rsi = intra_df["RSI"].iloc[-1]
-                        d_ema20_val = i_last.get("Daily_EMA_20", 0)
-                        d_ema20_str = f" | Daily 20 EMA: ₹{d_ema20_val:.2f}" if d_ema20_val else ""
-                        ema20_val = i_last.get("EMA_20", 0)
-                        ema20_str = f" | 20 EMA (Blue): ₹{ema20_val:.2f}" if ema20_val else ""
-                        st.caption(f"**Close:** ₹{i_last['close']:.2f} | **RSI ({rsi_span}):** {i_rsi:.1f} | 9 EMA (Green): ₹{i_last['EMA_9']:.2f} | 13 EMA (Sky Blue): ₹{i_last['EMA_13']:.2f}{ema20_str}{d_ema20_str} | 26 EMA (Purple): ₹{i_last['EMA_26']:.2f} | 50 EMA (Red): ₹{i_last['EMA_50']:.2f} | 200 EMA (Black): ₹{i_last['EMA_200']:.2f}")
-                        fig_75 = create_candlestick_chart(
-                            intra_df.tail(80), sel_stock, "75-Minute (EMAs + Daily 20 EMA + Weekly Pivot)", {
-                                "EMA_9": "#4CAF50",
-                                "EMA_13": "#38BDF8",
-                                "EMA_20": "#2962FF",
-                                "Daily_EMA_20": "#2962FF",
-                                "EMA_26": "#9C27B0",
-                                "EMA_50": "#FF5252",
-                                "EMA_200": "#131722" if theme == "light" else "#FFFFFF"
-                            }, height=chart_h, is_intraday=True, pivot_dict=pivot_dict_75,
-                            show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
-                            theme=theme
-                        )
-                        st.plotly_chart(fig_75, use_container_width=True)
+                        st.subheader(f"4️⃣ {intra_tf_label} Chart")
+                        if intra_df is not None and not intra_df.empty:
+                            i_last = intra_df.iloc[-1]
+                            i_rsi = intra_df["RSI"].iloc[-1] if "RSI" in intra_df.columns else np.nan
+                            rsi_str = f"{i_rsi:.1f}" if not pd.isna(i_rsi) else "N/A (<9 candles)"
+                            d_ema20_val = i_last.get("Daily_EMA_20", 0) if tf_type == "minute" else 0
+                            d_ema20_str = f" | Daily 20 EMA: ₹{d_ema20_val:.2f}" if d_ema20_val else ""
+                            ema20_val = i_last.get("EMA_20", 0)
+                            ema20_str = f" | 20 EMA (Blue): ₹{ema20_val:.2f}" if ema20_val else ""
+                            st.caption(f"**Close:** ₹{i_last['close']:.2f} | **RSI ({rsi_span}):** {rsi_str} | 9 EMA (Green): ₹{i_last.get('EMA_9', 0):.2f} | 13 EMA (Sky Blue): ₹{i_last.get('EMA_13', 0):.2f}{ema20_str}{d_ema20_str} | 26 EMA (Purple): ₹{i_last.get('EMA_26', 0):.2f} | 50 EMA (Red): ₹{i_last.get('EMA_50', 0):.2f} | 200 EMA (Black): ₹{i_last.get('EMA_200', 0):.2f}")
+                            fig_75 = create_candlestick_chart(
+                                intra_df.tail(80), sel_stock, f"{intra_tf_label} Chart", {
+                                    "EMA_9": "#4CAF50",
+                                    "EMA_13": "#38BDF8",
+                                    "EMA_20": "#2962FF",
+                                    "Daily_EMA_20": "#2962FF",
+                                    "EMA_26": "#9C27B0",
+                                    "EMA_50": "#FF5252",
+                                    "EMA_200": "#131722" if theme == "light" else "#FFFFFF"
+                                }, height=chart_h, is_intraday=(tf_type == "minute"), pivot_dict=pivot_dict_75,
+                                show_volume=show_volume, show_rsi=show_rsi_panel, rsi_span=rsi_span,
+                                theme=theme
+                            )
+                            st.plotly_chart(fig_75, use_container_width=True)
+                        else:
+                            st.info(f"No data available for timeframe {intra_tf_label}.")
 
 
     elif selected_page == "🚀 Alignment Scanner":

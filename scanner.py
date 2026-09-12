@@ -11,17 +11,41 @@ logger = logging.getLogger("scanner")
 
 def resample_ohlcv(df: pd.DataFrame, timeframe: str = "monthly") -> pd.DataFrame:
     """
-    Resamples daily OHLCV dataframe into 'monthly', 'weekly', or 'daily'.
+    Resamples daily/intraday OHLCV dataframe into various timeframes:
+      - Days: 'daily', '1d', '2d', '3d', '5d', etc.
+      - Weeks: 'weekly', '1w', '2w', '3w', etc.
+      - Months: 'monthly', '1m', '2m', '3m', etc.
+      - Minutes: '1min', '5min', '15min', '75min', etc. (if intraday datetime)
     Expects DatetimeIndex.
     """
     if df.empty:
         return df
 
-    tf = timeframe.lower()
+    tf = str(timeframe).strip().lower()
     if tf in ("daily", "1d", "d"):
         return df.copy()
 
-    rule = "ME" if tf in ("monthly", "1m", "m") else "W"
+    import re
+    # Match multi-period rules
+    m_day = re.match(r"^(\d+)\s*d(ays?)?$", tf)
+    m_week = re.match(r"^(\d+)\s*w(eeks?)?$", tf)
+    m_month = re.match(r"^(\d+)\s*m(onths?|o)?$", tf)
+    m_min = re.match(r"^(\d+)\s*(m|min|mins|minutes?)$", tf)
+
+    if m_day:
+        n_days = int(m_day.group(1))
+        rule = f"{n_days}D" if n_days > 1 else "D"
+    elif m_week or tf in ("weekly", "1w", "w"):
+        n_w = int(m_week.group(1)) if m_week else 1
+        rule = f"{n_w}W" if n_w > 1 else "W"
+    elif m_month or tf in ("monthly", "1mo", "mo", "month"):
+        n_m = int(m_month.group(1)) if m_month else 1
+        rule = f"{n_m}ME" if n_m > 1 else "ME"
+    elif m_min and any(x in tf for x in ["min", "minute"]):
+        n_mins = int(m_min.group(1))
+        rule = f"{n_mins}min"
+    else:
+        rule = "ME" if "m" in tf else "W"
 
     try:
         resampled = df.resample(rule).agg({
@@ -33,14 +57,17 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str = "monthly") -> pd.DataFrame
         }).dropna()
     except Exception:
         # Fallback for older pandas versions
-        legacy_rule = "M" if rule == "ME" else "W"
-        resampled = df.resample(legacy_rule).agg({
-            "open": "first",
-            "high": "max",
-            "low": "min",
-            "close": "last",
-            "volume": "sum"
-        }).dropna()
+        legacy_rule = rule.replace("ME", "M")
+        try:
+            resampled = df.resample(legacy_rule).agg({
+                "open": "first",
+                "high": "max",
+                "low": "min",
+                "close": "last",
+                "volume": "sum"
+            }).dropna()
+        except Exception:
+            return df.copy()
 
     return resampled
 
@@ -48,9 +75,15 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str = "monthly") -> pd.DataFrame
 def calculate_rsi(series: pd.Series, span: int = 9) -> pd.Series:
     """
     Computes Relative Strength Index (RSI) using exponential moving average with specified span (default: 9).
+    If series has fewer candles than `span` (e.g. only 5 monthly candles), returns NaN
+    because the candle period never completed the required span.
     """
     if series.empty or len(series) < 2:
         return pd.Series(index=series.index, dtype=float)
+
+    # Strictly require at least `span` candles to form a valid RSI calculation
+    if len(series) < span:
+        return pd.Series(np.nan, index=series.index, dtype=float)
 
     delta = series.diff()
     gain = delta.clip(lower=0.0)
@@ -74,10 +107,10 @@ def calculate_ema(series: pd.Series, span: int = 3) -> pd.Series:
 def calculate_wma(series: pd.Series, period: int = 21) -> pd.Series:
     """
     Computes Weighted Moving Average (WMA) with linear weights [1, 2, ..., period].
-    Handles series with fewer observations gracefully using expanding linear weights.
+    If series has fewer observations than `period`, returns NaN (requires complete period).
     """
-    if series.empty:
-        return series
+    if series.empty or len(series.dropna()) < period:
+        return pd.Series(np.nan, index=series.index, dtype=float)
 
     res = pd.Series(index=series.index, dtype=float)
     n = len(series)
