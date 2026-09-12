@@ -351,32 +351,44 @@ def upsert_intraday_candles(candles: List[Dict[str, Any]]):
 
 
 
-def get_intraday_candles_df(symbol: str, timeframe: str = "75m", limit: int = 5000) -> pd.DataFrame:
+def get_intraday_candles_df(
+    symbol: str, 
+    timeframe: str = "75m", 
+    limit: int = 5000, 
+    start_date: Optional[str] = None, 
+    end_date: Optional[str] = None
+) -> pd.DataFrame:
     """
-    Fetches the latest intraday (e.g. 75m) candles for a symbol, sorted chronologically and deduplicated.
+    Fetches intraday (e.g. 75m) candles for a symbol, sorted chronologically and deduplicated.
+    Supports start_date and end_date filtering.
     Reads from DuckDB native table first (sub-10ms), falling back to SQLite.
     """
     try:
         import duckdb_store
-        df = duckdb_store.get_intraday_candles(symbol, timeframe=timeframe, limit=limit)
+        df = duckdb_store.get_intraday_candles(
+            symbol, timeframe=timeframe, limit=limit, start_date=start_date, end_date=end_date
+        )
         if not df.empty:
             return df
     except Exception:
         pass
 
     with get_connection() as conn:
-        query = """
-            SELECT timestamp, open, high, low, close, volume 
-            FROM (
-                SELECT timestamp, open, high, low, close, volume 
-                FROM intraday_candles 
-                WHERE trading_symbol = ? AND timeframe = ?
-                ORDER BY timestamp DESC
-                LIMIT ?
-            )
-            ORDER BY timestamp ASC;
-        """
-        df = pd.read_sql_query(query, conn, params=[symbol.upper(), timeframe, limit])
+        query = "SELECT timestamp, open, high, low, close, volume FROM intraday_candles WHERE trading_symbol = ? AND timeframe = ?"
+        params = [symbol.upper(), timeframe]
+        if start_date:
+            query += " AND timestamp >= ?"
+            params.append(str(start_date))
+        if end_date:
+            query += " AND timestamp <= ?"
+            end_ts = f"{end_date} 23:59:59" if len(str(end_date)) == 10 else str(end_date)
+            params.append(end_ts)
+        query += " ORDER BY timestamp ASC"
+        if not (start_date or end_date):
+            query += f" LIMIT {limit}"
+        query += ";"
+
+        df = pd.read_sql_query(query, conn, params=params)
         if df.empty:
             return df
 

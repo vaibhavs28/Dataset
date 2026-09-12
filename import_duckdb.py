@@ -110,8 +110,41 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
                 date_sel = "date" if "date" in cols else "CAST(strftime(datetime, '%Y-%m-%d') AS DATE)"
                 time_sel = "time" if "time" in cols else "strftime(datetime, '%H:%M:%S')"
 
+                # Compute corporate action (split / bonus) adjustment factor against authentic daily_candles
+                logger.info("Detecting and computing bonus / split adjustment factors against daily_candles...")
+                dest_conn.execute(f"""
+                    CREATE TEMP TABLE IF NOT EXISTS _corp_factors AS
+                    WITH ext_summary AS (
+                        SELECT 
+                            ticker,
+                            CAST(MAX(datetime) AS DATE) AS max_dt,
+                            arg_max(close, datetime) AS ext_close
+                        FROM ext_db."{tbl_name}"
+                        GROUP BY ticker
+                    ),
+                    matched AS (
+                        SELECT 
+                            e.ticker,
+                            e.ext_close,
+                            d.close AS mkt_close,
+                            ROUND(d.close / e.ext_close, 6) AS factor
+                        FROM ext_summary e
+                        JOIN daily_candles d ON (d.trading_symbol = e.ticker AND CAST(d.date AS DATE) = e.max_dt)
+                        WHERE e.ext_close > 0 AND d.close > 0
+                    )
+                    SELECT 
+                        ticker,
+                        CASE 
+                            WHEN ABS(factor - 1.0) >= 0.02 THEN factor 
+                            ELSE 1.0 
+                        END AS factor
+                    FROM matched;
+                """)
+                adj_count = dest_conn.execute("SELECT count(*) FROM _corp_factors WHERE factor != 1.0;").fetchone()[0]
+                logger.info(f"✅ Found {adj_count} stocks requiring bonus/split ratio adjustments. Applying adjustment factors...")
+
                 t0 = time.time()
-                # A. Copy / Merge 1-minute data table
+                # A. Copy / Merge 1-minute data table with bonus/split adjustment
                 dest_conn.execute(f"""
                     CREATE TABLE IF NOT EXISTS stocks (
                         ticker VARCHAR,
@@ -128,14 +161,19 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
                 dest_conn.execute(f"""
                     INSERT INTO stocks (ticker, date, time, datetime, open, high, low, close, volume)
                     SELECT 
-                        ticker,
+                        s.ticker,
                         {date_sel} AS date,
                         {time_sel} AS time,
-                        CAST(datetime AS TIMESTAMP) AS datetime,
-                        open, high, low, close, volume
-                    FROM ext_db."{tbl_name}";
+                        CAST(s.datetime AS TIMESTAMP) AS datetime,
+                        ROUND(s.open * COALESCE(f.factor, 1.0), 2) AS open,
+                        ROUND(s.high * COALESCE(f.factor, 1.0), 2) AS high,
+                        ROUND(s.low * COALESCE(f.factor, 1.0), 2) AS low,
+                        ROUND(s.close * COALESCE(f.factor, 1.0), 2) AS close,
+                        CAST(ROUND(s.volume / COALESCE(f.factor, 1.0)) AS BIGINT) AS volume
+                    FROM ext_db."{tbl_name}" s
+                    LEFT JOIN _corp_factors f ON (f.ticker = s.ticker);
                 """)
-                logger.info(f"✅ Copied {row_count:,} 1-min bars into 'stocks' in {time.time()-t0:.2f}s")
+                logger.info(f"✅ Copied {row_count:,} adjusted 1-min bars into 'stocks' in {time.time()-t0:.2f}s")
 
                 # B. Create index on stocks (ticker, datetime) for sub-5ms queries
                 logger.info("Creating index on stocks(ticker, datetime)...")
@@ -154,18 +192,19 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
                         instrument_key, trading_symbol, date, open, high, low, close, volume, open_interest
                     )
                     SELECT
-                        'NSE_EQ|' || ticker AS instrument_key,
-                        ticker AS trading_symbol,
+                        'NSE_EQ|' || s.ticker AS instrument_key,
+                        s.ticker AS trading_symbol,
                         CAST({date_sel} AS VARCHAR) AS date,
-                        arg_min(open, datetime) AS open,
-                        MAX(high) AS high,
-                        MIN(low) AS low,
-                        arg_max(close, datetime) AS close,
-                        CAST(SUM(volume) AS BIGINT) AS volume,
+                        ROUND(arg_min(s.open, s.datetime) * COALESCE(f.factor, 1.0), 2) AS open,
+                        ROUND(MAX(s.high) * COALESCE(f.factor, 1.0), 2) AS high,
+                        ROUND(MIN(s.low) * COALESCE(f.factor, 1.0), 2) AS low,
+                        ROUND(arg_max(s.close, s.datetime) * COALESCE(f.factor, 1.0), 2) AS close,
+                        CAST(ROUND(SUM(s.volume) / COALESCE(f.factor, 1.0)) AS BIGINT) AS volume,
                         0 AS open_interest
-                    FROM ext_db."{tbl_name}"
+                    FROM ext_db."{tbl_name}" s
+                    LEFT JOIN _corp_factors f ON (f.ticker = s.ticker)
                     WHERE {date_sel} < '2020-01-01'
-                    GROUP BY ticker, {date_sel}
+                    GROUP BY s.ticker, {date_sel}, f.factor
                     ON CONFLICT (instrument_key, date) DO UPDATE SET
                         trading_symbol = EXCLUDED.trading_symbol,
                         open = EXCLUDED.open,
@@ -186,36 +225,37 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
                     )
                     WITH session_bars AS (
                         SELECT 
-                            ticker,
-                            CAST(datetime AS TIMESTAMP) AS dt,
-                            open,
-                            high,
-                            low,
-                            close,
-                            volume,
+                            s.ticker,
+                            CAST(s.datetime AS TIMESTAMP) AS dt,
+                            s.open * COALESCE(f.factor, 1.0) AS open,
+                            s.high * COALESCE(f.factor, 1.0) AS high,
+                            s.low * COALESCE(f.factor, 1.0) AS low,
+                            s.close * COALESCE(f.factor, 1.0) AS close,
+                            CAST(ROUND(s.volume / COALESCE(f.factor, 1.0)) AS BIGINT) AS volume,
                             CAST({date_sel} AS TIMESTAMP) + INTERVAL (
                                 CASE 
-                                    WHEN CAST(datetime::TIMESTAMP AS TIME) < TIME '10:30:00' THEN 555
-                                    WHEN CAST(datetime::TIMESTAMP AS TIME) < TIME '11:45:00' THEN 630
-                                    WHEN CAST(datetime::TIMESTAMP AS TIME) < TIME '13:00:00' THEN 705
-                                    WHEN CAST(datetime::TIMESTAMP AS TIME) < TIME '14:15:00' THEN 780
+                                    WHEN CAST(s.datetime::TIMESTAMP AS TIME) < TIME '10:30:00' THEN 555
+                                    WHEN CAST(s.datetime::TIMESTAMP AS TIME) < TIME '11:45:00' THEN 630
+                                    WHEN CAST(s.datetime::TIMESTAMP AS TIME) < TIME '13:00:00' THEN 705
+                                    WHEN CAST(s.datetime::TIMESTAMP AS TIME) < TIME '14:15:00' THEN 780
                                     ELSE 855
                                 END
                             ) MINUTE AS slot_ts
-                        FROM ext_db."{tbl_name}"
-                        WHERE {date_sel} < '2020-01-01'
-                          AND CAST(datetime::TIMESTAMP AS TIME) >= TIME '09:15:00' 
-                          AND CAST(datetime::TIMESTAMP AS TIME) <= TIME '15:30:00'
+                        FROM ext_db."{tbl_name}" s
+                        LEFT JOIN _corp_factors f ON (f.ticker = s.ticker)
+                        WHERE {date_sel} < '2022-01-01'
+                          AND CAST(s.datetime::TIMESTAMP AS TIME) >= TIME '09:15:00' 
+                          AND CAST(s.datetime::TIMESTAMP AS TIME) <= TIME '15:30:00'
                     )
                     SELECT
                         'NSE_EQ|' || ticker AS instrument_key,
                         ticker AS trading_symbol,
                         '75m' AS timeframe,
                         slot_ts AS timestamp,
-                        arg_min(open, dt) AS open,
-                        MAX(high) AS high,
-                        MIN(low) AS low,
-                        arg_max(close, dt) AS close,
+                        ROUND(arg_min(open, dt), 2) AS open,
+                        ROUND(MAX(high), 2) AS high,
+                        ROUND(MIN(low), 2) AS low,
+                        ROUND(arg_max(close, dt), 2) AS close,
                         CAST(SUM(volume) AS BIGINT) AS volume
                     FROM session_bars
                     GROUP BY ticker, slot_ts
@@ -236,6 +276,7 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
                     "time": round(time.time() - t0, 2)
                 }
                 continue
+
 
 
             # 1. Check if table is daily candles

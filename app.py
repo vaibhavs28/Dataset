@@ -1427,6 +1427,77 @@ def main():
             st.write("")
             st.link_button(f"🚀 Open {clean_sym} in TradingView Web", f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}", use_container_width=True)
 
+        # Date Range Controls Row
+        from datetime import date, timedelta
+        today_date = date.today()
+
+        dr_c1, dr_c2, dr_c3 = st.columns([1.6, 1.2, 1.2])
+        with dr_c1:
+            date_range_preset = st.selectbox(
+                "📅 Date Range Selection",
+                [
+                    "All Available History",
+                    "2022 to 2023",
+                    "2023 to 2024",
+                    "2024 to 2025",
+                    "Last 1 Year",
+                    "Last 6 Months",
+                    "Custom Date Range"
+                ],
+                index=0,
+                key="term_date_preset"
+            )
+
+        if date_range_preset == "2022 to 2023":
+            def_start = date(2022, 1, 1)
+            def_end = date(2023, 12, 31)
+        elif date_range_preset == "2023 to 2024":
+            def_start = date(2023, 1, 1)
+            def_end = date(2024, 12, 31)
+        elif date_range_preset == "2024 to 2025":
+            def_start = date(2024, 1, 1)
+            def_end = date(2025, 12, 31)
+        elif date_range_preset == "Last 1 Year":
+            def_start = today_date - timedelta(days=365)
+            def_end = today_date
+        elif date_range_preset == "Last 6 Months":
+            def_start = today_date - timedelta(days=180)
+            def_end = today_date
+        elif date_range_preset == "Custom Date Range":
+            def_start = date(2022, 1, 1)
+            def_end = today_date
+        else:
+            def_start = None
+            def_end = None
+
+        if "term_prev_preset" not in st.session_state:
+            st.session_state["term_prev_preset"] = date_range_preset
+
+        if date_range_preset != st.session_state["term_prev_preset"]:
+            st.session_state["term_prev_preset"] = date_range_preset
+            if def_start:
+                st.session_state["term_from_date"] = def_start
+            if def_end:
+                st.session_state["term_to_date"] = def_end
+
+        with dr_c2:
+            from_date_input = st.date_input(
+                "From Date",
+                value=st.session_state.get("term_from_date", def_start if def_start else date(2015, 1, 1)),
+                disabled=(date_range_preset == "All Available History"),
+                key="term_from_date"
+            )
+        with dr_c3:
+            to_date_input = st.date_input(
+                "To Date",
+                value=st.session_state.get("term_to_date", def_end if def_end else today_date),
+                disabled=(date_range_preset == "All Available History"),
+                key="term_to_date"
+            )
+
+        filter_start = str(from_date_input) if (date_range_preset != "All Available History") else None
+        filter_end = str(to_date_input) if (date_range_preset != "All Available History") else None
+
         # Indicator Toggles Row (Organized Expander)
         with st.expander("🛠️ Indicator Settings & Overlay Toggles", expanded=True):
             ind_c1, ind_c2, ind_c3, ind_c4, ind_c5 = st.columns(5)
@@ -1522,7 +1593,7 @@ def main():
                 is_intra = False
 
             elif term_tf == "Daily":
-                term_df = term_candles.tail(1500).copy() if len(term_candles) > 1500 else term_candles.copy()
+                term_df = term_candles.copy()
                 is_intra = False
 
             elif term_tf == "⚙️ Custom Timeframe" and custom_unit == "Days":
@@ -1557,7 +1628,12 @@ def main():
                     target_mins = custom_val
 
                 with st.spinner(f"Resampling authentic {target_mins}-minute candles for {term_stock}..."):
-                    term_df = parquet_loader.ensure_symbol_custom_minute_candles(term_stock, interval_minutes=target_mins)
+                    term_df = parquet_loader.ensure_symbol_custom_minute_candles(
+                        term_stock, 
+                        interval_minutes=target_mins,
+                        start_date=filter_start,
+                        end_date=filter_end
+                    )
 
                 if term_df.empty:
                     st.info(f"1-minute Parquet history not yet cached for {term_stock}. Displaying daily candles.")
@@ -1565,6 +1641,21 @@ def main():
                     is_intra = False
                 else:
                     is_intra = True
+
+            # Filter term_df by selected date range (if specified)
+            if not term_df.empty:
+                if filter_start:
+                    start_dt = pd.to_datetime(filter_start)
+                    if term_df.index.tz is not None:
+                        start_dt = start_dt.tz_localize(term_df.index.tz)
+                    term_df = term_df[term_df.index >= start_dt]
+                if filter_end:
+                    end_dt = pd.to_datetime(f"{filter_end} 23:59:59")
+                    if term_df.index.tz is not None:
+                        end_dt = end_dt.tz_localize(term_df.index.tz)
+                    term_df = term_df[term_df.index <= end_dt]
+                elif len(term_df) > 2500 and not is_intra:
+                    term_df = term_df.tail(2500)
 
             clean_chart_id = re.sub(r'[^a-zA-Z0-9_]', '_', f"adv_term_{term_stock}_{display_tf}")
             term_chart_html = tradingview_charts.generate_advanced_terminal_html(

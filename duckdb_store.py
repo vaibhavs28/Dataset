@@ -171,22 +171,43 @@ def get_candles_df(symbol: str, start_date: Optional[str] = None, end_date: Opti
     return df
 
 
-def get_intraday_candles(symbol: str, timeframe: str = "75m", limit: int = 2500) -> pd.DataFrame:
+def get_intraday_candles(
+    symbol: str,
+    timeframe: str = "75m",
+    limit: int = 5000,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> pd.DataFrame:
     """
     Returns authentic pre-calculated intraday candles directly from DuckDB's intraday_candles table.
+    Supports filtering by start_date and end_date (e.g. '2022-01-01' to '2023-12-31').
     Sub-10ms query execution.
     """
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
     conn = get_connection()
     with _lock:
         try:
-            df = conn.execute("""
+            query = """
                 SELECT timestamp, open, high, low, close, volume
                 FROM intraday_candles
                 WHERE (trading_symbol = ? OR trading_symbol = ? || '-EQ')
                   AND timeframe = ?
-                ORDER BY timestamp ASC;
-            """, [clean_sym, clean_sym, timeframe]).df()
+            """
+            params = [clean_sym, clean_sym, timeframe]
+            if start_date:
+                query += " AND timestamp >= ?"
+                params.append(str(start_date))
+            if end_date:
+                query += " AND timestamp <= ?"
+                end_ts = f"{end_date} 23:59:59" if len(str(end_date)) == 10 else str(end_date)
+                params.append(end_ts)
+
+            query += " ORDER BY timestamp ASC"
+            if not (start_date or end_date):
+                query += f" LIMIT {limit}"
+            query += ";"
+
+            df = conn.execute(query, params).df()
         except Exception as e:
             logger.warning(f"Error querying intraday_candles for {clean_sym}: {e}")
             return pd.DataFrame()
@@ -201,7 +222,8 @@ def get_intraday_candles(symbol: str, timeframe: str = "75m", limit: int = 2500)
         df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
 
     df.set_index("timestamp", inplace=True)
-    return df.tail(limit)
+    return df if (start_date or end_date) else df.tail(limit)
+
 
 
 def get_latest_candle_date(symbol: str) -> Optional[str]:
@@ -423,7 +445,8 @@ def get_resampled_candles(
     symbol: str,
     interval_minutes: int = 75,
     limit: int = 2500,
-    min_date: Optional[str] = None
+    min_date: Optional[str] = None,
+    max_date: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Performs high-speed in-database C++ SQL time-bucketing resampling from 1m candles.
@@ -477,14 +500,20 @@ def get_resampled_candles(
 
     if min_date:
         query += f" AND {ts_col} >= ?::TIMESTAMP"
-        params.append(min_date)
+        params.append(str(min_date))
 
+    if max_date:
+        query += f" AND {ts_col} <= ?::TIMESTAMP"
+        end_ts = f"{max_date} 23:59:59" if len(str(max_date)) == 10 else str(max_date)
+        params.append(end_ts)
 
     query += f"""
         GROUP BY 1
         ORDER BY bucket_time DESC
-        LIMIT {limit};
     """
+    if not (min_date or max_date):
+        query += f" LIMIT {limit}"
+    query += ";"
 
     try:
         with _lock:

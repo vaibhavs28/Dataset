@@ -286,21 +286,30 @@ def resample_1min_to_custom_minutes(df_1min: pd.DataFrame, interval_minutes: int
     return res
 
 
-def ensure_symbol_custom_minute_candles(symbol: str, interval_minutes: int, min_bars: int = 200) -> pd.DataFrame:
+def ensure_symbol_custom_minute_candles(
+    symbol: str, 
+    interval_minutes: int, 
+    min_bars: int = 200,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> pd.DataFrame:
     """
     Guarantees custom N-minute candles strictly resampled from 1-minute data.
     Uses DuckDB's vectorized C++ SQL engine for sub-10ms resampling.
+    Supports start_date and end_date filtering.
     """
+    if interval_minutes == 75:
+        return ensure_symbol_75m_candles(symbol, min_bars=min_bars, start_date=start_date, end_date=end_date)
+
     try:
         import duckdb_store
-        df_duck = duckdb_store.get_resampled_candles(symbol, interval_minutes=interval_minutes, limit=2500)
+        df_duck = duckdb_store.get_resampled_candles(
+            symbol, interval_minutes=interval_minutes, limit=2500, min_date=start_date, max_date=end_date
+        )
         if not df_duck.empty and len(df_duck) >= min_bars:
             return df_duck
     except Exception as e:
         logger.warning(f"DuckDB fast resampling note for {symbol} ({interval_minutes}m): {e}")
-
-    if interval_minutes == 75:
-        return ensure_symbol_75m_candles(symbol, min_bars=min_bars)
 
     df_1min = load_symbol_1min(symbol, limit=10000)
     if df_1min.empty or len(df_1min) < 375:
@@ -324,7 +333,16 @@ def ensure_symbol_custom_minute_candles(symbol: str, interval_minutes: int, min_
     if df_1min.empty:
         return pd.DataFrame()
 
-    return resample_1min_to_custom_minutes(df_1min, interval_minutes)
+    res = resample_1min_to_custom_minutes(df_1min, interval_minutes)
+    if not res.empty:
+        if start_date:
+            res = res[res.index >= pd.to_datetime(start_date).tz_localize("Asia/Kolkata" if res.index.tz else None)]
+        if end_date:
+            end_dt = pd.to_datetime(f"{end_date} 23:59:59")
+            if res.index.tz:
+                end_dt = end_dt.tz_localize("Asia/Kolkata")
+            res = res[res.index <= end_dt]
+    return res
 
 
 
@@ -340,17 +358,23 @@ def is_genuine_75m_df(df: pd.DataFrame) -> bool:
     return True
 
 
-def ensure_symbol_75m_candles(symbol: str, min_bars: int = 10) -> pd.DataFrame:
+def ensure_symbol_75m_candles(
+    symbol: str, 
+    min_bars: int = 10,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> pd.DataFrame:
     """
     Guarantees authentic 75-minute candles strictly from our local database (DuckDB / SQLite).
     Zero external API calls. Sub-10ms query execution.
+    Supports start_date and end_date filtering.
     """
     sym = symbol.upper().strip()
 
     # 1. First query our ultra-fast DuckDB intraday_candles table
     try:
         import duckdb_store
-        df_duck = duckdb_store.get_intraday_candles(sym, timeframe="75m", limit=1500)
+        df_duck = duckdb_store.get_intraday_candles(sym, timeframe="75m", limit=5000, start_date=start_date, end_date=end_date)
         if not df_duck.empty:
             return df_duck
     except Exception as e:
@@ -358,7 +382,7 @@ def ensure_symbol_75m_candles(symbol: str, min_bars: int = 10) -> pd.DataFrame:
 
     # 2. Fall back to SQLite intraday_candles (market_data.db)
     try:
-        df_sql = database.get_intraday_candles_df(sym, "75m", limit=1500)
+        df_sql = database.get_intraday_candles_df(sym, "75m", limit=5000, start_date=start_date, end_date=end_date)
         if not df_sql.empty and is_genuine_75m_df(df_sql):
             return df_sql
     except Exception as e:
@@ -367,7 +391,7 @@ def ensure_symbol_75m_candles(symbol: str, min_bars: int = 10) -> pd.DataFrame:
     # 3. If local single-stock parquet exists, resample locally via DuckDB
     try:
         import duckdb_store
-        df_resampled = duckdb_store.get_resampled_candles(sym, interval_minutes=75, limit=1500)
+        df_resampled = duckdb_store.get_resampled_candles(sym, interval_minutes=75, limit=5000, min_date=start_date, max_date=end_date)
         if not df_resampled.empty and is_genuine_75m_df(df_resampled):
             return df_resampled
     except Exception as e:
