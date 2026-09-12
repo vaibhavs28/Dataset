@@ -297,10 +297,11 @@ def plot_equity_and_drawdown(result: BacktestResult, tc: dict, benchmark_df: pd.
     )
 
     # High watermark line
+    hwm_vals = eq_df["high_watermark"] if "high_watermark" in eq_df.columns else (eq_df["equity"].cummax() if "equity" in eq_df.columns else eq_df.index)
     fig.add_trace(
         go.Scatter(
             x=x_vals,
-            y=eq_df["high_watermark"],
+            y=hwm_vals,
             mode="lines",
             name="Peak Equity",
             line=dict(color="rgba(148, 163, 184, 0.6)", width=1.5, dash="dash")
@@ -693,7 +694,11 @@ def render_strategy_lab_page(theme: str = "dark"):
                     }
                     if lookback_choice in days_map:
                         cutoff = pd.Timestamp.now(tz=df_raw.index.tz) - pd.Timedelta(days=days_map[lookback_choice])
-                        df_raw = df_raw[df_raw.index >= cutoff]
+                        df_filtered = df_raw[df_raw.index >= cutoff]
+                        if not df_filtered.empty and len(df_filtered) >= 15:
+                            df_raw = df_filtered
+                        else:
+                            st.info(f"ℹ️ Selected lookback '{lookback_choice}' contains insufficient recent data ({len(df_filtered)} bars). Using all available history ({len(df_raw)} bars).")
 
                     # Prepare indicators & backtest
                     df_ind = prepare_indicators(df_raw, cfg)
@@ -733,7 +738,13 @@ def render_strategy_lab_page(theme: str = "dark"):
             eq_head_col1, eq_head_col2 = st.columns([3.0, 1.5])
             with eq_head_col1:
                 st.markdown("#### 📈 Portfolio Equity Curve & Underwater Drawdown")
-                st.caption(f"Initial Capital: **₹{res.initial_capital:,.0f}** ➔ Peak High-Watermark: **₹{res.equity_curve['high_watermark'].max():,.0f}** ➔ Final Equity: **₹{res.final_equity:,.0f}**")
+                if not res.equity_curve.empty and "high_watermark" in res.equity_curve.columns and pd.notna(res.equity_curve["high_watermark"].max()):
+                    peak_hwm = res.equity_curve["high_watermark"].max()
+                elif not res.equity_curve.empty and "equity" in res.equity_curve.columns and pd.notna(res.equity_curve["equity"].max()):
+                    peak_hwm = res.equity_curve["equity"].max()
+                else:
+                    peak_hwm = res.initial_capital
+                st.caption(f"Initial Capital: **₹{res.initial_capital:,.0f}** ➔ Peak High-Watermark: **₹{peak_hwm:,.0f}** ➔ Final Equity: **₹{res.final_equity:,.0f}**")
             with eq_head_col2:
                 eq_view_mode = st.radio(
                     "Equity View Engine:",

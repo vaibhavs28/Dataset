@@ -514,7 +514,8 @@ def run_backtest(
             avg_win=0.0,
             avg_loss=0.0,
             win_loss_ratio=0.0,
-            expectancy=0.0
+            expectancy=0.0,
+            equity_curve=pd.DataFrame(columns=["time", "equity", "cash", "in_position", "peak", "high_watermark", "drawdown_rupees", "drawdown_pct"])
         )
 
     # 1. Prepare indicators & signals
@@ -729,6 +730,7 @@ def run_backtest(
         max_dd_pct = float(eq_df["drawdown_pct"].max())
         max_dd_rupees = float(eq_df["drawdown_rupees"].max())
     else:
+        eq_df = pd.DataFrame(columns=["time", "equity", "cash", "in_position", "peak", "high_watermark", "drawdown_rupees", "drawdown_pct"])
         max_dd_pct = 0.0
         max_dd_rupees = 0.0
 
