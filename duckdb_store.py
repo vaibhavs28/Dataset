@@ -481,7 +481,6 @@ def get_resampled_candles(
     """
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
     safe_sym = clean_sym.replace("/", "_").replace("\\", "_")
-    conn = get_connection()
 
     symbol_parquet = config.DATA_DIR / "by_symbol" / f"{safe_sym}.parquet"
     has_parquet = symbol_parquet.exists()

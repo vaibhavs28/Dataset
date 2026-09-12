@@ -309,23 +309,24 @@ def ensure_symbol_custom_minute_candles(
     Uses DuckDB's vectorized C++ SQL engine for sub-10ms resampling.
     Supports start_date and end_date filtering.
     """
+    clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
     if interval_minutes == 75:
-        return ensure_symbol_75m_candles(symbol, min_bars=min_bars, start_date=start_date, end_date=end_date)
+        return ensure_symbol_75m_candles(clean_sym, min_bars=min_bars, start_date=start_date, end_date=end_date)
 
     try:
         import duckdb_store
         df_duck = duckdb_store.get_resampled_candles(
-            symbol, interval_minutes=interval_minutes, limit=2500, min_date=start_date, max_date=end_date
+            clean_sym, interval_minutes=interval_minutes, limit=2500, min_date=start_date, max_date=end_date
         )
         if not df_duck.empty and len(df_duck) >= min_bars:
             return df_duck
     except Exception as e:
-        logger.warning(f"DuckDB fast resampling note for {symbol} ({interval_minutes}m): {e}")
+        logger.warning(f"DuckDB fast resampling note for {clean_sym} ({interval_minutes}m): {e}")
 
-    df_1min = load_symbol_1min(symbol, limit=None if (start_date or end_date) else 10000, start_date=start_date, end_date=end_date)
-    if df_1min.empty or len(df_1min) < 375:
+    df_1min = load_symbol_1min(clean_sym, limit=None if (start_date or end_date) else 10000, start_date=start_date, end_date=end_date)
+    if df_1min.empty:
         # Fallback to fetching 1-min from Upstox
-        inst_key = instruments.resolve_instrument_key(symbol) or f"NSE_EQ|{symbol}"
+        inst_key = instruments.resolve_instrument_key(clean_sym) or f"NSE_EQ|{clean_sym}"
         start_1min_dt = datetime.now() - timedelta(days=90)
         end_1min_dt = datetime.now() + timedelta(days=1)
         try:
@@ -337,9 +338,9 @@ def ensure_symbol_custom_minute_candles(
                 if c_list:
                     all_raw.extend(c_list)
             if all_raw:
-                df_1min = upstox_parquet_updater.parse_upstox_candles_to_dataframe(symbol, all_raw)
+                df_1min = upstox_parquet_updater.parse_upstox_candles_to_dataframe(clean_sym, all_raw)
         except Exception as e:
-            logger.warning(f"Failed to fetch on-demand 1min candles for {symbol}: {e}")
+            logger.warning(f"Failed to fetch on-demand 1min candles for {clean_sym}: {e}")
 
     if df_1min.empty:
         return pd.DataFrame()
@@ -511,7 +512,7 @@ def load_symbol_1min(
     end_date: Optional[str] = None
 ) -> pd.DataFrame:
     """Reads 1-minute OHLCV candles for a symbol from local parquet files, supporting date filters."""
-    sym = symbol.upper().strip()
+    sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
     safe_sym = sym.replace("/", "_").replace("\\", "_")
     symbol_file = PARQUET_BY_SYMBOL_DIR / f"{safe_sym}.parquet"
 

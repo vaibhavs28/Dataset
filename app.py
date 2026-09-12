@@ -1627,9 +1627,9 @@ def main():
                 else:  # Custom Minutes
                     target_mins = custom_val
 
-                with st.spinner(f"Resampling authentic {target_mins}-minute candles for {term_stock}..."):
+                with st.spinner(f"Resampling authentic {target_mins}-minute candles for {clean_sym}..."):
                     term_df = parquet_loader.ensure_symbol_custom_minute_candles(
-                        term_stock, 
+                        clean_sym, 
                         interval_minutes=target_mins,
                         start_date=filter_start,
                         end_date=filter_end
