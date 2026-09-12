@@ -75,8 +75,23 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
     dest_path = duckdb_store.DUCKDB_PATH
     dest_path.parent.mkdir(parents=True, exist_ok=True)
 
-    dest_conn = duckdb_store.get_write_connection()
+    try:
+        dest_conn = duckdb_store.get_write_connection()
+    except Exception as e:
+        if "Conflicting lock is held" in str(e) or "Could not set lock" in str(e):
+            logger.error("\n" + "="*70)
+            logger.error("❌ DATABASE FILE LOCKED BY ANOTHER RUNNING PROCESS")
+            logger.error("="*70)
+            logger.error("Your Streamlit app or background Broadcaster is currently using market_data.duckdb.")
+            logger.error("To merge, temporarily stop the running process:")
+            logger.error("  pkill -f streamlit")
+            logger.error("  pkill -f auto_75m_broadcaster")
+            logger.error("Then re-run this merge command. You can restart Streamlit immediately after.")
+            logger.error("="*70 + "\n")
+        raise e
+
     results = {}
+
 
     try:
         # Attach external database as 'ext_db'
