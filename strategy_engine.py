@@ -68,7 +68,7 @@ class BacktestResult:
 
 @dataclass
 class StrategyConfig:
-    strategy_type: str = "Hilega_Milega"  # "Hilega_Milega", "Triple_EMA", "SuperTrend", "CPR_Breakout", "MACD_Cross", "Custom"
+    strategy_type: str = "Hilega_Milega"  # "Hilega_Milega", "Triple_EMA", "SuperTrend", "CPR_Breakout", "MACD_Cross", "Chartink_75_Waterfall", "Custom"
     name: str = "Hilega Milega Momentum"
     # Indicator Parameters
     rsi_span: int = 9
@@ -80,6 +80,10 @@ class StrategyConfig:
     macd_fast: int = 12
     macd_slow: int = 26
     macd_signal: int = 9
+    # CPR / Waterfall Exits
+    use_cpr_exits: bool = False
+    cpr_target_level: str = "R1"  # "R1", "R2", etc.
+    cpr_stop_level: str = "S_05"  # "S_05" (midpoint between Pivot and S1)
     # Custom Rules (if strategy_type == "Custom")
     custom_ind1: str = "RSI"  # e.g., "RSI", "Close", "EMA_Fast", "MACD"
     custom_op: str = "crosses_above"  # "crosses_above", "crosses_below", "greater_than", "less_than"
@@ -102,10 +106,12 @@ class StrategyConfig:
     slippage_brokerage_pct: float = 0.05  # 0.05% per trade (buy + sell = 0.10%)
 
 
-def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
+def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[str] = None) -> pd.DataFrame:
     """
     Computes all standard indicators needed by strategies.
     Ensures clean DatetimeIndex and calculated indicator columns.
+    When cfg.strategy_type == 'Chartink_75_Waterfall' or CPR exits are enabled,
+    attaches Weekly CPR levels (P, BC, TC, R1, S1, S_05) and multi-timeframe stages.
     """
     if df is None or df.empty:
         return pd.DataFrame()
@@ -157,6 +163,151 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
         out["Vol_SMA20"] = out["volume"].rolling(window=20, min_periods=1).mean()
     else:
         out["Vol_SMA20"] = 1.0
+
+    # 7. Weekly CPR and Multi-Timeframe Waterfall Integration
+    try:
+        if len(out) >= 2 and (out.index[1] - out.index[0]).total_seconds() >= 80000:
+            daily_res = out.copy()
+        else:
+            daily_res = out.resample("D").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
+            }).dropna()
+
+        if symbol:
+            try:
+                import database
+                db_daily = database.get_candles_df(symbol)
+                if db_daily is not None and len(db_daily) > len(daily_res):
+                    daily_res = db_daily
+            except Exception:
+                pass
+
+        if len(daily_res) >= 2:
+            weekly = daily_res.resample("W-SUN").agg({
+                "open": "first", "high": "max", "low": "min", "close": "last", "volume": "sum"
+            }).dropna()
+            if len(weekly) >= 2:
+                prev_h = weekly["high"].shift(1)
+                prev_l = weekly["low"].shift(1)
+                prev_c = weekly["close"].shift(1)
+                weekly["P"] = (prev_h + prev_l + prev_c) / 3.0
+                weekly["BC"] = (prev_h + prev_l) / 2.0
+                weekly["TC"] = (2 * weekly["P"]) - weekly["BC"]
+                weekly["R1"] = (2 * weekly["P"]) - prev_l
+                weekly["S1"] = (2 * weekly["P"]) - prev_h
+                # Weekly CPR 0.5 Support = Midpoint between Pivot and S1
+                weekly["S_05"] = (weekly["P"] + weekly["S1"]) / 2.0
+
+                weekly["week_end"] = weekly.index.date
+                pivot_cols = ["P", "BC", "TC", "R1", "S1", "S_05"]
+                pivot_map = weekly.set_index("week_end")[pivot_cols]
+
+                bar_dates = pd.DataFrame({"timestamp": out.index})
+                bar_dates["week_end"] = bar_dates["timestamp"].dt.to_period("W-SUN").dt.end_time.dt.date
+                merged = bar_dates.merge(pivot_map, on="week_end", how="left")
+                merged.set_index(out.index, inplace=True)
+                for col in pivot_cols:
+                    out[f"Weekly_{col}"] = merged[col].ffill()
+
+        # Multi-Timeframe Waterfall Stage alignment
+        if cfg.strategy_type == "Chartink_75_Waterfall":
+            m_pass_series = pd.Series(True, index=out.index)
+            try:
+                m_raw = daily_res.resample("ME").agg({
+                    "open": "first", "high": "max", "low": "min", "close": "last"
+                }).dropna()
+                if len(m_raw) >= 3:
+                    m_c = m_raw["close"]
+                    m_e5 = scanner.calculate_ema(m_c, span=5)
+                    m_e20 = scanner.calculate_ema(m_c, span=20)
+                    m_r = scanner.calculate_rsi(m_c, span=9)
+                    m_re3 = scanner.calculate_ema(m_r, span=3)
+                    m_rw21 = scanner.calculate_wma(m_r, period=21)
+                    m_raw["m_pass"] = (
+                        (m_c > m_e5) & (m_c > m_e20) & (m_e5 > m_e20) &
+                        (m_r > 50.0) & (m_r < 88.0) &
+                        (m_r >= m_re3) & (m_r >= m_rw21)
+                    )
+                    m_map = m_raw[["m_pass"]].copy()
+                    m_map["month_key"] = m_map.index.to_period("M")
+                    b_df = pd.DataFrame({"timestamp": out.index, "month_key": out.index.to_period("M")})
+                    m_merged = b_df.merge(m_map[["month_key", "m_pass"]], on="month_key", how="left")
+                    m_pass_series = m_merged["m_pass"].fillna(False).values
+            except Exception:
+                pass
+
+            w_pass_series = pd.Series(True, index=out.index)
+            try:
+                if len(weekly) >= 5:
+                    w_c = weekly["close"]
+                    w_e20 = scanner.calculate_ema(w_c, span=20)
+                    w_e50 = scanner.calculate_ema(w_c, span=50)
+                    w_r = scanner.calculate_rsi(w_c, span=9)
+                    w_re3 = scanner.calculate_ema(w_r, span=3)
+                    w_rw21 = scanner.calculate_wma(w_r, period=21)
+                    weekly["w_pass"] = (
+                        (w_c > w_e20) & (w_e20 > w_e50) &
+                        (w_r > 50.0) & (w_r >= w_re3) & (w_r >= w_rw21)
+                    )
+                    w_map = weekly[["week_end", "w_pass"]].copy()
+                    b_df = pd.DataFrame({"timestamp": out.index, "week_end": out.index.dt.to_period("W-SUN").dt.end_time.dt.date})
+                    w_merged = b_df.merge(w_map, on="week_end", how="left")
+                    w_pass_series = w_merged["w_pass"].fillna(False).values
+            except Exception:
+                pass
+
+            d_pass_series = pd.Series(True, index=out.index)
+            try:
+                if len(daily_res) >= 15:
+                    d_c = daily_res["close"]
+                    d_o = daily_res["open"]
+                    d_e20 = scanner.calculate_ema(d_c, span=20)
+                    d_e50 = scanner.calculate_ema(d_c, span=50)
+                    d_r = scanner.calculate_rsi(d_c, span=9)
+                    d_re3 = scanner.calculate_ema(d_r, span=3)
+                    d_rw21 = scanner.calculate_wma(d_r, period=21)
+                    d_bounce = (d_o <= d_e20 * 1.015) & (d_c >= d_e20 * 0.985)
+                    d_trend = (d_e20 > d_e50)
+                    d_hilega = (d_r > 50.0) & (d_r >= d_re3) & (d_r >= d_rw21)
+                    daily_res["d_pass"] = d_bounce & d_trend & d_hilega
+                    d_map = pd.DataFrame({"day_date": daily_res.index.date, "d_pass": daily_res["d_pass"].values})
+                    b_df = pd.DataFrame({"timestamp": out.index, "day_date": out.index.date})
+                    d_merged = b_df.merge(d_map, on="day_date", how="left")
+                    d_pass_series = d_merged["d_pass"].fillna(False).values
+            except Exception:
+                pass
+
+            # 75-Min Stage (or Bar Trigger)
+            q_c = out["close"]
+            q_e5 = scanner.calculate_ema(q_c, span=5)
+            q_e20 = scanner.calculate_ema(q_c, span=20)
+            q_r = scanner.calculate_rsi(q_c, span=9)
+            q_re3 = scanner.calculate_ema(q_r, span=3)
+            q_rw21 = scanner.calculate_wma(q_r, period=21)
+            q4_pass = (
+                (q_c > q_e20) &
+                (q_e5 >= q_e20) &
+                (q_r > 50.0) &
+                (q_r >= q_re3) &
+                (q_r >= q_rw21)
+            )
+
+            if "Waterfall_Stage4" in df.columns:
+                out["Waterfall_Stage4"] = df["Waterfall_Stage4"]
+            else:
+                out["Waterfall_Stage4"] = (
+                    pd.Series(m_pass_series, index=out.index).fillna(False) &
+                    pd.Series(w_pass_series, index=out.index).fillna(False) &
+                    pd.Series(d_pass_series, index=out.index).fillna(False) &
+                    q4_pass
+                )
+
+        # Preserve any pre-existing Weekly CPR columns if already provided in df
+        for col in ["P", "BC", "TC", "R1", "S1", "S_05"]:
+            if f"Weekly_{col}" in df.columns:
+                out[f"Weekly_{col}"] = df[f"Weekly_{col}"]
+    except Exception as e:
+        pass
 
     return out
 
@@ -308,6 +459,21 @@ def generate_strategy_signals(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataF
                 elif op in ("crosses_below", "less_than") and s1[i] > s2[i]:
                     exits[i] = True
 
+    elif stype == "Chartink_75_Waterfall":
+        # Authentic Chartink Positional Scan #364 Stage 4 Buy-Only trigger
+        stage4 = df_sig["Waterfall_Stage4"].values if "Waterfall_Stage4" in df_sig.columns else np.zeros(n, dtype=bool)
+        q_ema5 = scanner.calculate_ema(df_sig["close"], span=5).values
+        q_ema20 = scanner.calculate_ema(df_sig["close"], span=20).values
+        for i in range(1, n):
+            fresh_stage4 = bool(stage4[i] and not stage4[i-1])
+            ema_cross = bool(stage4[i] and (q_ema5[i] > q_ema20[i]) and (q_ema5[i-1] <= q_ema20[i-1]))
+            # Only Buy (Long Only)
+            if fresh_stage4 or ema_cross:
+                entries[i] = True
+            if cfg.exit_on_signal_reversal:
+                if (q_ema5[i] < q_ema20[i] and q_ema5[i-1] >= q_ema20[i-1]) or (rsi[i] < 45.0):
+                    exits[i] = True
+
     df_sig["signal_entry"] = entries
     df_sig["signal_exit"] = exits
     df_sig["signal"] = np.where(entries, 1, np.where(exits, -1, 0))
@@ -352,7 +518,7 @@ def run_backtest(
         )
 
     # 1. Prepare indicators & signals
-    df_prep = prepare_indicators(df, cfg)
+    df_prep = prepare_indicators(df, cfg, symbol=symbol)
     df_sig = generate_strategy_signals(df_prep, cfg)
 
     # 2. Simulation state
@@ -399,8 +565,18 @@ def run_backtest(
             open_trade.max_favorable_excursion = max(open_trade.max_favorable_excursion, unrealized_high)
             open_trade.max_adverse_excursion = min(open_trade.max_adverse_excursion, unrealized_low)
 
-            # 1. Stop Loss Trigger
-            if cfg.stop_loss_pct > 0:
+            # Weekly CPR Dynamic Levels
+            use_cpr = cfg.use_cpr_exits or (cfg.strategy_type == "Chartink_75_Waterfall")
+            weekly_r1 = df_sig["Weekly_R1"].iloc[i] if ("Weekly_R1" in df_sig.columns and not pd.isna(df_sig["Weekly_R1"].iloc[i])) else None
+            weekly_s_05 = df_sig["Weekly_S_05"].iloc[i] if ("Weekly_S_05" in df_sig.columns and not pd.isna(df_sig["Weekly_S_05"].iloc[i])) else None
+
+            # 1. Stop Loss Trigger (Weekly CPR 0.5 Support or fixed %)
+            if use_cpr and weekly_s_05 is not None and weekly_s_05 > 0 and weekly_s_05 < entry_p:
+                stop_threshold = float(weekly_s_05)
+                if l_price <= stop_threshold:
+                    exit_price = min(o_price, stop_threshold) * fee_mult
+                    exit_reason = "Stop Loss (Weekly CPR 0.5 Support)"
+            elif cfg.stop_loss_pct > 0:
                 stop_threshold = entry_p * (1.0 - cfg.stop_loss_pct / 100.0)
                 if l_price <= stop_threshold:
                     # Slips to open if open gapped below stop
@@ -414,12 +590,18 @@ def run_backtest(
                     exit_price = min(o_price, trail_threshold) * fee_mult
                     exit_reason = "Trailing Stop"
 
-            # 3. Take Profit Target Trigger
-            if exit_price is None and cfg.target_pct > 0:
-                target_threshold = entry_p * (1.0 + cfg.target_pct / 100.0)
-                if h_price >= target_threshold:
-                    exit_price = max(o_price, target_threshold) * fee_mult
-                    exit_reason = "Target Achieved"
+            # 3. Take Profit Target Trigger (Weekly CPR R1 or fixed %)
+            if exit_price is None:
+                if use_cpr and weekly_r1 is not None and weekly_r1 > entry_p:
+                    target_threshold = float(weekly_r1)
+                    if h_price >= target_threshold:
+                        exit_price = max(o_price, target_threshold) * fee_mult
+                        exit_reason = "Target (Weekly CPR R1)"
+                elif cfg.target_pct > 0:
+                    target_threshold = entry_p * (1.0 + cfg.target_pct / 100.0)
+                    if h_price >= target_threshold:
+                        exit_price = max(o_price, target_threshold) * fee_mult
+                        exit_reason = "Target Achieved"
 
             # 4. Max Holding Bars
             if exit_price is None and cfg.max_holding_bars > 0 and open_trade.duration_bars >= cfg.max_holding_bars:
@@ -441,15 +623,18 @@ def run_backtest(
                 open_trade.pnl_percent = round((open_trade.exit_price / open_trade.entry_price - 1.0) * 100.0, 2)
                 
                 # Risk-to-Reward calculation
-                if cfg.stop_loss_pct > 0:
-                    r_mult = open_trade.pnl_percent / cfg.stop_loss_pct
+                eff_stop_pct = ((open_trade.entry_price - weekly_s_05) / open_trade.entry_price * 100.0) if (use_cpr and weekly_s_05 is not None and weekly_s_05 > 0 and weekly_s_05 < open_trade.entry_price) else cfg.stop_loss_pct
+                eff_target_pct = ((weekly_r1 - open_trade.entry_price) / open_trade.entry_price * 100.0) if (use_cpr and weekly_r1 is not None and weekly_r1 > open_trade.entry_price) else cfg.target_pct
+
+                if eff_stop_pct > 0:
+                    r_mult = open_trade.pnl_percent / eff_stop_pct
                     open_trade.realized_rr = round(r_mult, 2)
                     if r_mult >= 0:
                         open_trade.risk_reward = f"1 : {r_mult:.2f} (+{r_mult:.2f}R)"
                     else:
                         open_trade.risk_reward = f"-1 : {abs(r_mult):.2f} ({r_mult:.2f}R)"
-                if cfg.stop_loss_pct > 0 and cfg.target_pct > 0:
-                    open_trade.planned_rr = round(cfg.target_pct / cfg.stop_loss_pct, 2)
+                if eff_stop_pct > 0 and eff_target_pct > 0:
+                    open_trade.planned_rr = round(eff_target_pct / eff_stop_pct, 2)
 
                 trades.append(open_trade)
                 cash += open_trade.exit_price * qty
@@ -470,13 +655,23 @@ def run_backtest(
             if qty > 0:
                 cost = qty * entry_price
                 cash -= cost
+
+                # Initial planned R:R calculation at entry
+                trade_w_r1 = df_sig["Weekly_R1"].iloc[i] if ("Weekly_R1" in df_sig.columns and not pd.isna(df_sig["Weekly_R1"].iloc[i])) else None
+                trade_w_s05 = df_sig["Weekly_S_05"].iloc[i] if ("Weekly_S_05" in df_sig.columns and not pd.isna(df_sig["Weekly_S_05"].iloc[i])) else None
+                use_cpr_entry = cfg.use_cpr_exits or (cfg.strategy_type == "Chartink_75_Waterfall")
+                init_stop_pct = ((entry_price - trade_w_s05) / entry_price * 100.0) if (use_cpr_entry and trade_w_s05 is not None and trade_w_s05 > 0 and trade_w_s05 < entry_price) else cfg.stop_loss_pct
+                init_tgt_pct = ((trade_w_r1 - entry_price) / entry_price * 100.0) if (use_cpr_entry and trade_w_r1 is not None and trade_w_r1 > entry_price) else cfg.target_pct
+                init_planned_rr = round(init_tgt_pct / init_stop_pct, 2) if (init_stop_pct > 0 and init_tgt_pct > 0) else 0.0
+
                 open_trade = Trade(
                     trade_id=trade_id_counter,
                     symbol=symbol,
                     direction="LONG",
                     entry_time=bar_date,
                     entry_price=round(entry_price, 2),
-                    quantity=qty
+                    quantity=qty,
+                    planned_rr=init_planned_rr
                 )
                 trade_id_counter += 1
                 highest_price_in_trade = h_price
@@ -676,7 +871,19 @@ def get_preset_strategy(preset_name: str) -> StrategyConfig:
     Returns pre-configured StrategyConfig for popular, battle-tested setups.
     """
     p_lower = preset_name.lower().replace(" ", "_").replace("-", "_")
-    if "hilega" in p_lower:
+    if "waterfall" in p_lower or "chartink" in p_lower:
+        return StrategyConfig(
+            strategy_type="Chartink_75_Waterfall",
+            name="🏆 Chartink 75m Waterfall (Weekly CPR R1 / 0.5 SL)",
+            use_cpr_exits=True,
+            cpr_target_level="R1",
+            cpr_stop_level="S_05",
+            target_pct=5.0,
+            stop_loss_pct=2.5,
+            use_trailing_stop=False,
+            exit_on_signal_reversal=True
+        )
+    elif "hilega" in p_lower:
         return StrategyConfig(
             strategy_type="Hilega_Milega",
             name="Hilega Milega Momentum (NK Sir)",

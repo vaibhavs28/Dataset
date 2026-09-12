@@ -559,6 +559,7 @@ def render_strategy_lab_page(theme: str = "dark"):
 
         with col_st1:
             strategy_options = [
+                "🏆 Chartink 75m Waterfall (Weekly CPR R1 / 0.5 SL)",
                 "⚡ Hilega Milega Momentum (NK Sir)",
                 "🌊 Triple EMA Ribbon Trend (9/20/50)",
                 "🏹 SuperTrend Volatility Rider (10, 3.0)",
@@ -583,6 +584,21 @@ def render_strategy_lab_page(theme: str = "dark"):
         cfg = get_preset_strategy(selected_strat_name)
         cfg.slippage_brokerage_pct = slippage_pct
 
+        # Waterfall Strategy Info Banner
+        if "Waterfall" in selected_strat_name:
+            st.markdown(f"""
+            <div style="margin-top: 6px; margin-bottom: 12px; padding: 10px 16px; background: rgba(59, 130, 246, 0.08); border-left: 4px solid #38BDF8; border-radius: 6px;">
+                <div style="font-weight: 700; color: #38BDF8; font-size: 14px; margin-bottom: 4px;">
+                    🏆 Chartink 75-Min Waterfall Positional Strategy (Scan #364)
+                </div>
+                <div style="font-size: 12.5px; color: {tc['text_secondary']}; line-height: 1.5;">
+                    • <b>Direction</b>: Long Only (Buy Only) on Stage 4 alignment (Monthly + Weekly + Daily + 75m Trigger).<br>
+                    • <b>🎯 Take Profit (TP)</b>: <b>Weekly CPR R1</b> resistance level (from prior week's range).<br>
+                    • <b>🛑 Stop Loss (SL)</b>: <b>Weekly CPR 0.5 Support</b> midpoint between Weekly Pivot and S1: <code>(P + S1) / 2</code>.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         # Custom Rule Builder Panel
         if "Custom" in selected_strat_name:
             st.markdown("##### ⚙️ Custom Rule Definition")
@@ -600,9 +616,9 @@ def render_strategy_lab_page(theme: str = "dark"):
         st.markdown("##### 🛡️ Risk Management & Exit Rules")
         r_col1, r_col2, r_col3, r_col4 = st.columns(4)
         with r_col1:
-            cfg.target_pct = float(st.number_input("Profit Target (%):", min_value=0.0, max_value=100.0, value=float(cfg.target_pct), step=0.5, help="0 to disable fixed target"))
+            cfg.target_pct = float(st.number_input("Profit Target (%):", min_value=0.0, max_value=100.0, value=float(cfg.target_pct), step=0.5, help="0 to disable fixed target (Weekly CPR R1 takes precedence for Waterfall)"))
         with r_col2:
-            cfg.stop_loss_pct = float(st.number_input("Stop Loss (%):", min_value=0.0, max_value=50.0, value=float(cfg.stop_loss_pct), step=0.5, help="0 to disable fixed stop loss"))
+            cfg.stop_loss_pct = float(st.number_input("Stop Loss (%):", min_value=0.0, max_value=50.0, value=float(cfg.stop_loss_pct), step=0.5, help="0 to disable fixed stop loss (Weekly CPR 0.5 takes precedence for Waterfall)"))
         with r_col3:
             use_trail = st.checkbox("Trailing Stop Loss", value=cfg.use_trailing_stop)
             cfg.use_trailing_stop = use_trail
@@ -611,7 +627,14 @@ def render_strategy_lab_page(theme: str = "dark"):
         with r_col4:
             cfg.exit_on_signal_reversal = st.checkbox("Exit on Signal Reversal", value=cfg.exit_on_signal_reversal, help="Close trade immediately when strategy gives exit/reversal signal")
 
-        if cfg.stop_loss_pct > 0 and cfg.target_pct > 0:
+        if "Waterfall" in selected_strat_name:
+            st.markdown(f"""
+            <div style="margin-top: 4px; margin-bottom: 8px; padding: 6px 14px; background: rgba(16, 185, 129, 0.10); border: 1px solid rgba(16, 185, 129, 0.3); border-radius: 6px; display: inline-flex; align-items: center; gap: 10px;">
+                <span style="font-size: 13px; font-weight: 700; color: #10B981;">🎯 Dynamic Weekly CPR Exits: TP @ Weekly R1 &bull; SL @ Weekly CPR 0.5 Support</span>
+                <span style="font-size: 11.5px; opacity: 0.85; color: {tc['text_secondary']};">(Planned Risk:Reward dynamically calculated per trade)</span>
+            </div>
+            """, unsafe_allow_html=True)
+        elif cfg.stop_loss_pct > 0 and cfg.target_pct > 0:
             planned_rr_ratio = cfg.target_pct / cfg.stop_loss_pct
             st.markdown(f"""
             <div style="margin-top: 4px; margin-bottom: 8px; padding: 6px 14px; background: rgba(59, 130, 246, 0.10); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; display: inline-flex; align-items: center; gap: 10px;">
@@ -632,15 +655,16 @@ def render_strategy_lab_page(theme: str = "dark"):
     # ==========================================
     with tab_single:
         tf_options = [
-            "Daily", "75-Min", "125-Min", "60-Min (1h)", "45-Min", "30-Min", "15-Min", "5-Min", "3-Min", "1-Min",
+            "75-Min", "Daily", "125-Min", "60-Min (1h)", "45-Min", "30-Min", "15-Min", "5-Min", "3-Min", "1-Min",
             "Weekly", "Monthly", "Custom (Minutes)"
         ]
+        default_tf_idx = 0 if "Waterfall" in selected_strat_name else 1
         s_col1, s_col2, s_col3, s_col4 = st.columns([1.8, 1.4, 1.4, 1.4])
         with s_col1:
             default_sym_idx = all_symbols.index("RELIANCE") if "RELIANCE" in all_symbols else 0
             sel_sym = st.selectbox("Select Stock:", options=all_symbols, index=default_sym_idx, key="slab_single_sym")
         with s_col2:
-            sel_tf = st.selectbox("Timeframe:", options=tf_options, index=0, key="slab_single_tf")
+            sel_tf = st.selectbox("Timeframe:", options=tf_options, index=default_tf_idx, key="slab_single_tf")
             if sel_tf == "Custom (Minutes)":
                 custom_min_val = st.number_input("Custom Minutes:", min_value=1, max_value=375, value=10, step=1, key="slab_single_custom_min")
                 effective_tf = f"{int(custom_min_val)}-Min"

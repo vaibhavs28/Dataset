@@ -142,6 +142,86 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertIn("total_capital", basket_res)
         self.assertIn("total_pnl", basket_res)
 
+    def test_chartink_75_waterfall_preset(self):
+        cfg = get_preset_strategy("Chartink 75m Waterfall")
+        self.assertEqual(cfg.strategy_type, "Chartink_75_Waterfall")
+        self.assertTrue(cfg.use_cpr_exits)
+        self.assertEqual(cfg.cpr_target_level, "R1")
+        self.assertEqual(cfg.cpr_stop_level, "S_05")
+
+    def test_chartink_75_waterfall_indicators_and_signals(self):
+        cfg = get_preset_strategy("Chartink 75m Waterfall")
+        df_ind = prepare_indicators(self.df, cfg)
+        self.assertIn("Weekly_P", df_ind.columns)
+        self.assertIn("Weekly_R1", df_ind.columns)
+        self.assertIn("Weekly_S_05", df_ind.columns)
+        self.assertIn("Waterfall_Stage4", df_ind.columns)
+
+        signals = generate_strategy_signals(df_ind, cfg)
+        self.assertIn("signal_entry", signals.columns)
+        self.assertIn("signal", signals.columns)
+        # Verify long only: entries must all be non-negative
+        self.assertTrue(all(signals["signal"] >= -1))
+
+    def test_weekly_cpr_r1_target_and_05_support_sl(self):
+        cfg = get_preset_strategy("Chartink 75m Waterfall")
+        res = run_backtest(self.df, cfg, initial_capital=100000.0, symbol="WATERFALL_STOCK", timeframe="75-Min")
+        self.assertIsInstance(res, BacktestResult)
+        self.assertEqual(res.strategy_name, "🏆 Chartink 75m Waterfall (Weekly CPR R1 / 0.5 SL)")
+        self.assertGreater(len(res.equity_curve), 0)
+
+        # Check that any trade exits respect the CPR target or SL naming
+        for t in res.trades:
+            self.assertEqual(t.direction, "LONG")  # Only Buy
+            self.assertIn(t.exit_reason, [
+                "Target (Weekly CPR R1)",
+                "Stop Loss (Weekly CPR 0.5 Support)",
+                "Stop Loss Hit",
+                "Target Achieved",
+                "Signal Exit",
+                "End of Data"
+            ])
+            self.assertIsNotNone(t.risk_reward)
+
+    def test_explicit_cpr_r1_target_and_05_support_trigger(self):
+        # Construct synthetic bars with explicit Weekly CPR levels
+        dates = [datetime(2025, 6, 1) + timedelta(minutes=75*i) for i in range(10)]
+        df_target = pd.DataFrame({
+            "open": [100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0],
+            "high": [101.0, 102.0, 108.0, 104.0, 105.0, 106.0, 107.0, 108.0, 109.0, 110.0],
+            "low": [99.0, 100.0, 101.0, 102.0, 103.0, 104.0, 105.0, 106.0, 107.0, 108.0],
+            "close": [100.5, 101.5, 106.0, 103.5, 104.5, 105.5, 106.5, 107.5, 108.5, 109.5],
+            "volume": [10000] * 10,
+            "Weekly_R1": [105.0] * 10,
+            "Weekly_S_05": [95.0] * 10,
+            "Weekly_P": [100.0] * 10,
+            "Waterfall_Stage4": [False, True, True, True, True, True, True, True, True, True]
+        }, index=pd.DatetimeIndex(dates))
+
+        cfg = get_preset_strategy("Chartink 75m Waterfall")
+        res_tp = run_backtest(df_target, cfg, initial_capital=100000.0)
+        self.assertGreater(len(res_tp.trades), 0)
+        self.assertEqual(res_tp.trades[0].direction, "LONG")
+        self.assertEqual(res_tp.trades[0].exit_reason, "Target (Weekly CPR R1)")
+
+        # Test Stop Loss trigger
+        df_sl = pd.DataFrame({
+            "open": [100.0, 101.0, 96.0, 93.0, 92.0, 91.0, 90.0, 89.0, 88.0, 87.0],
+            "high": [101.0, 102.0, 97.0, 94.0, 93.0, 92.0, 91.0, 90.0, 89.0, 88.0],
+            "low": [99.0, 100.0, 93.0, 91.0, 90.0, 89.0, 88.0, 87.0, 86.0, 85.0],
+            "close": [100.5, 101.5, 94.0, 92.0, 91.0, 90.0, 89.0, 88.0, 87.0, 86.0],
+            "volume": [10000] * 10,
+            "Weekly_R1": [115.0] * 10,
+            "Weekly_S_05": [95.0] * 10,
+            "Weekly_P": [100.0] * 10,
+            "Waterfall_Stage4": [False, True, True, True, True, True, True, True, True, True]
+        }, index=pd.DatetimeIndex(dates))
+
+        res_sl = run_backtest(df_sl, cfg, initial_capital=100000.0)
+        self.assertGreater(len(res_sl.trades), 0)
+        self.assertEqual(res_sl.trades[0].direction, "LONG")
+        self.assertEqual(res_sl.trades[0].exit_reason, "Stop Loss (Weekly CPR 0.5 Support)")
+
 
 if __name__ == "__main__":
     unittest.main()

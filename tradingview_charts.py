@@ -7333,6 +7333,9 @@ def generate_strategy_backtest_chart_html(
         "SuperTrend": "#10B981", # Green
         "SMA_50": "#A855F7",     # Purple
         "SMA_200": "#6366F1",    # Indigo
+        "Weekly_R1": "#EF4444",   # Red Target Line
+        "Weekly_P": "#8B5CF6",    # Purple Pivot Line
+        "Weekly_S_05": "#F59E0B", # Amber 0.5 Support Stop Loss Line
     }
 
     for col, clr in ind_colors.items():
