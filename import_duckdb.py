@@ -59,10 +59,11 @@ def inspect_external_duckdb(file_path: str) -> Dict[str, Any]:
         conn.close()
 
 
-def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict[str, Any]:
+def merge_external_duckdb(file_path: str, replace_existing: bool = True, resample_only: bool = False) -> Dict[str, Any]:
     """
     Merges tables from the external DuckDB file directly into market_data.duckdb.
     Uses ATTACH DATABASE for fast bulk insertion.
+    If resample_only=True, extracts Daily & 75m candles without copying the heavy 441M raw 1-min table (saves 97% disk space).
     """
     p = Path(file_path).resolve()
     if not p.exists():
@@ -143,49 +144,52 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
                 adj_count = dest_conn.execute("SELECT count(*) FROM _corp_factors WHERE factor != 1.0;").fetchone()[0]
                 logger.info(f"✅ Found {adj_count} stocks requiring bonus/split ratio adjustments. Applying adjustment factors...")
 
-                t0 = time.time()
-                # A. Copy / Merge 1-minute data table with bonus/split adjustment
-                if replace_existing:
-                    dest_conn.execute("DROP TABLE IF EXISTS stocks;")
+                if not resample_only:
+                    t0 = time.time()
+                    # A. Copy / Merge 1-minute data table with bonus/split adjustment
+                    if replace_existing:
+                        dest_conn.execute("DROP TABLE IF EXISTS stocks;")
 
-                dest_conn.execute(f"""
-                    CREATE TABLE IF NOT EXISTS stocks (
-                        ticker VARCHAR,
-                        date DATE,
-                        time VARCHAR,
-                        datetime TIMESTAMP,
-                        open DOUBLE,
-                        high DOUBLE,
-                        low DOUBLE,
-                        close DOUBLE,
-                        volume BIGINT
-                    );
-                """)
-                dest_conn.execute(f"""
-                    INSERT INTO stocks (ticker, date, time, datetime, open, high, low, close, volume)
-                    SELECT 
-                        s.ticker,
-                        {date_sel} AS date,
-                        {time_sel} AS time,
-                        CAST(s.datetime AS TIMESTAMP) AS datetime,
-                        ROUND(s.open * COALESCE(f.factor, 1.0), 2) AS open,
-                        ROUND(s.high * COALESCE(f.factor, 1.0), 2) AS high,
-                        ROUND(s.low * COALESCE(f.factor, 1.0), 2) AS low,
-                        ROUND(s.close * COALESCE(f.factor, 1.0), 2) AS close,
-                        CAST(ROUND(s.volume / COALESCE(f.factor, 1.0)) AS BIGINT) AS volume
-                    FROM ext_db."{tbl_name}" s
-                    LEFT JOIN _corp_factors f ON (f.ticker = s.ticker);
-                """)
-                logger.info(f"✅ Copied {row_count:,} adjusted 1-min bars into 'stocks' in {time.time()-t0:.2f}s")
+                    dest_conn.execute(f"""
+                        CREATE TABLE IF NOT EXISTS stocks (
+                            ticker VARCHAR,
+                            date DATE,
+                            time VARCHAR,
+                            datetime TIMESTAMP,
+                            open DOUBLE,
+                            high DOUBLE,
+                            low DOUBLE,
+                            close DOUBLE,
+                            volume BIGINT
+                        );
+                    """)
+                    dest_conn.execute(f"""
+                        INSERT INTO stocks (ticker, date, time, datetime, open, high, low, close, volume)
+                        SELECT 
+                            s.ticker,
+                            {date_sel} AS date,
+                            {time_sel} AS time,
+                            CAST(s.datetime AS TIMESTAMP) AS datetime,
+                            ROUND(s.open * COALESCE(f.factor, 1.0), 2) AS open,
+                            ROUND(s.high * COALESCE(f.factor, 1.0), 2) AS high,
+                            ROUND(s.low * COALESCE(f.factor, 1.0), 2) AS low,
+                            ROUND(s.close * COALESCE(f.factor, 1.0), 2) AS close,
+                            CAST(ROUND(s.volume / COALESCE(f.factor, 1.0)) AS BIGINT) AS volume
+                        FROM ext_db."{tbl_name}" s
+                        LEFT JOIN _corp_factors f ON (f.ticker = s.ticker);
+                    """)
+                    logger.info(f"✅ Copied {row_count:,} adjusted 1-min bars into 'stocks' in {time.time()-t0:.2f}s")
 
-                # B. Create index on stocks (ticker, datetime) for sub-5ms queries
-                logger.info("Creating index on stocks(ticker, datetime)...")
-                t_idx = time.time()
-                try:
-                    dest_conn.execute("CREATE INDEX IF NOT EXISTS idx_stocks_ticker_dt ON stocks (ticker, datetime);")
-                    logger.info(f"✅ Index created in {time.time()-t_idx:.2f}s")
-                except Exception as e_idx:
-                    logger.warning(f"Index creation note: {e_idx}")
+                    # B. Create index on stocks (ticker, datetime) for sub-5ms queries
+                    logger.info("Creating index on stocks(ticker, datetime)...")
+                    t_idx = time.time()
+                    try:
+                        dest_conn.execute("CREATE INDEX IF NOT EXISTS idx_stocks_ticker_dt ON stocks (ticker, datetime);")
+                        logger.info(f"✅ Index created in {time.time()-t_idx:.2f}s")
+                    except Exception as e_idx:
+                        logger.warning(f"Index creation note: {e_idx}")
+                else:
+                    logger.info("⚡ Resample-Only Mode: Skipping heavy 441M 1-min raw table copy; pre-aggregating Daily & 75m candles directly (saving 97% disk space)...")
 
                 # C. Resample pre-2020 daily bars into daily_candles
                 logger.info("Resampling pre-2020 daily candles from 1-min data into daily_candles...")
@@ -389,6 +393,12 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
 
 
         dest_conn.execute("DETACH ext_db;")
+        logger.info("Optimizing and compacting DuckDB database pages (CHECKPOINT & VACUUM)...")
+        dest_conn.execute("CHECKPOINT;")
+        try:
+            dest_conn.execute("VACUUM;")
+        except Exception:
+            pass
 
     finally:
         dest_conn.close()
@@ -407,6 +417,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Merge external DuckDB file into market_data.duckdb")
     parser.add_argument("--file", "-f", type=str, required=True, help="Path to external .duckdb file")
     parser.add_argument("--inspect-only", action="store_true", help="Inspect tables and schema without merging")
+    parser.add_argument("--resample-only", action="store_true", help="Only import pre-calculated Daily and 75m candles, skipping raw 1-min table (saves 97% disk space)")
     parser.add_argument("--delete-source", action="store_true", help="Delete external source .duckdb file after successful merge")
 
     args = parser.parse_args()
@@ -419,7 +430,7 @@ if __name__ == "__main__":
             print(f"\nTable: {tbl} ({d['row_count']:,} rows)")
             print(f"Columns: {', '.join(d['columns'])}")
     else:
-        res = merge_external_duckdb(args.file)
+        res = merge_external_duckdb(args.file, resample_only=args.resample_only)
         print("\n--- Merge Summary ---")
         print(f"Source: {res['source_file']}")
         print(f"Time: {res['elapsed_seconds']}s")

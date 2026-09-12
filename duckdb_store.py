@@ -131,6 +131,8 @@ def _init_schema(conn: duckdb.DuckDBPyConnection):
     """)
     try:
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_intraday_uniq ON intraday_candles (instrument_key, timeframe, timestamp);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_sym_date ON daily_candles (trading_symbol, date);")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_intraday_sym_tf_ts ON intraday_candles (trading_symbol, timeframe, timestamp);")
     except Exception:
         pass
 
