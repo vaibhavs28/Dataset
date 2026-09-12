@@ -212,11 +212,13 @@ def run_75m_waterfall_broadcast(
     channels: Optional[List[str]] = None,
     symbols: Optional[List[str]] = None,
     candle_label: Optional[str] = None,
+    sync_first: bool = True,
     progress_callback=None
 ) -> Dict[str, Any]:
     """
     Executes a complete 75-min Waterfall Scan, generates 4-quadrant screenshots
     for every qualifying stock, and dispatches multi-channel alerts.
+    When sync_first is True, updates database with the latest 75m intraday candles from Upstox first.
     """
     start_time = datetime.now()
     if candle_label is None:
@@ -226,7 +228,25 @@ def run_75m_waterfall_broadcast(
     if symbols is None or len(symbols) == 0:
         symbols = get_target_equities(universe)
 
+    # 0. Sync fresh intraday 75m candle data from Upstox if requested
+    if sync_first:
+        try:
+            import sync_75m_intraday
+            logger.info(f"🔄 Ingesting live 75-minute candle data from Upstox for {len(symbols)} stocks (Universe: {universe})...")
+            sync_res = sync_75m_intraday.sync_all_symbols_75m(
+                symbols=symbols,
+                universe=universe,
+                progress_callback=progress_callback
+            )
+            logger.info(
+                f"🔄 Upstox Ingestion Complete: {sync_res.get('synced_count', 0)}/{len(symbols)} stocks updated "
+                f"({sync_res.get('total_75m_bars', 0)} 75m bars added) in {sync_res.get('elapsed_seconds', 0)}s."
+            )
+        except Exception as se:
+            logger.warning(f"Live Upstox 75m sync skipped or encountered error: {se}")
+
     logger.info(f"⚡ Starting 75-Min Waterfall Scan across {len(symbols)} stocks (Universe: {universe}, Stage Filter: {stage_filter})...")
+
 
     # 1. Run Waterfall Scan
     scan_res = screener_engine.run_waterfall_scan(symbols, progress_callback=progress_callback)
@@ -335,15 +355,17 @@ def run_daemon(
     universe: str = "All Database Equities",
     stage_filter: int = 4,
     channels: Optional[List[str]] = None,
+    sync_first: bool = True,
     poll_interval: int = 10
 ):
     """
     Continuous background daemon that monitors the system clock and executes
     the Waterfall Scan & Screenshot Broadcast immediately at every 75-min candle close.
+    Automatically updates database with fresh 75-minute candle data from Upstox.
     """
     logger.info("🛰️ Starting 75-Minute Intraday Waterfall Broadcaster Daemon...")
     logger.info(f"Schedule: 10:30, 11:45, 13:00, 14:15, 15:30 IST (Mon-Fri)")
-    logger.info(f"Universe: {universe} | Stage Filter: Stage {stage_filter}")
+    logger.info(f"Universe: {universe} | Stage Filter: Stage {stage_filter} | Auto-Sync: {sync_first}")
 
     last_triggered_slot = None  # (YYYY-MM-DD, hour, minute)
 
@@ -365,7 +387,8 @@ def run_daemon(
                                 universe=universe,
                                 stage_filter=stage_filter,
                                 channels=channels,
-                                candle_label=label
+                                candle_label=label,
+                                sync_first=sync_first
                             )
                             break
 
@@ -387,6 +410,7 @@ if __name__ == "__main__":
     parser.add_argument("--once", action="store_true", help="Execute scan and broadcast immediately once and exit")
     parser.add_argument("--universe", type=str, default="All Database Equities", help="Universe: 'All Database Equities', 'Nifty 50', 'Nifty 100', 'Nifty 500'")
     parser.add_argument("--stage", type=int, default=4, help="Stage filter (default 4 for Full Alignment Only)")
+    parser.add_argument("--no-sync", action="store_true", help="Skip live Upstox intraday data sync before scanning")
     parser.add_argument("--test-symbol", type=str, help="Generate screenshot and dispatch test alert for a single symbol immediately")
 
     args = parser.parse_args()
@@ -409,8 +433,9 @@ if __name__ == "__main__":
             )
             print("Dispatch delivery result:", res)
     elif args.daemon:
-        run_daemon(universe=args.universe, stage_filter=args.stage)
+        run_daemon(universe=args.universe, stage_filter=args.stage, sync_first=(not args.no_sync))
     elif args.once:
-        run_75m_waterfall_broadcast(universe=args.universe, stage_filter=args.stage)
+        run_75m_waterfall_broadcast(universe=args.universe, stage_filter=args.stage, sync_first=(not args.no_sync))
     else:
         parser.print_help()
+

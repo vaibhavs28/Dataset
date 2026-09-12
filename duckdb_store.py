@@ -47,7 +47,16 @@ def get_connection() -> duckdb.DuckDBPyConnection:
 def get_write_connection() -> duckdb.DuckDBPyConnection:
     """
     Returns a short-lived write connection. Caller must close it immediately after writing.
+    Closes any existing read-only connection first to allow configuration change.
     """
+    global _conn
+    if _conn is not None:
+        try:
+            _conn.close()
+        except Exception:
+            pass
+        _conn = None
+
     conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
     conn.execute("PRAGMA threads=4;")
     try:
@@ -55,6 +64,7 @@ def get_write_connection() -> duckdb.DuckDBPyConnection:
     except Exception:
         pass
     return conn
+
 
 
 def _init_schema(conn: duckdb.DuckDBPyConnection):
@@ -119,6 +129,11 @@ def _init_schema(conn: duckdb.DuckDBPyConnection):
             PRIMARY KEY (instrument_key, timeframe, timestamp)
         );
     """)
+    try:
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_intraday_uniq ON intraday_candles (instrument_key, timeframe, timestamp);")
+    except Exception:
+        pass
+
 
 
 def get_candles_df(symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
@@ -563,4 +578,92 @@ def upsert_instruments(instruments: List[Dict[str, Any]]):
             conn.unregister("_temp_inst_in")
         finally:
             conn.close()
+
+
+def upsert_intraday_candles(candles: List[Dict[str, Any]]):
+    """Inserts or updates intraday candles (e.g. 75m) in DuckDB."""
+    if not candles:
+        return
+
+    df = pd.DataFrame(candles)
+    for col, default in [
+        ("instrument_key", ""), ("trading_symbol", ""), ("timeframe", "75m"),
+        ("timestamp", ""), ("open", 0.0), ("high", 0.0), ("low", 0.0),
+        ("close", 0.0), ("volume", 0)
+    ]:
+        if col not in df.columns:
+            df[col] = default
+
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    if df["timestamp"].dt.tz is not None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize(None)
+
+    with _lock:
+        conn = get_write_connection()
+        try:
+            conn.register("_temp_intraday_in", df)
+            conn.execute("""
+                INSERT INTO intraday_candles (
+                    instrument_key, trading_symbol, timeframe, timestamp, open, high, low, close, volume
+                )
+                SELECT
+                    instrument_key, trading_symbol, timeframe, timestamp, open, high, low, close, volume
+                FROM _temp_intraday_in
+                ON CONFLICT (instrument_key, timeframe, timestamp) DO UPDATE SET
+                    trading_symbol = EXCLUDED.trading_symbol,
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume;
+            """)
+            conn.unregister("_temp_intraday_in")
+        except Exception as e:
+            logger.warning(f"Error upserting intraday candles into DuckDB: {e}")
+        finally:
+            conn.close()
+
+
+def upsert_daily_candles(candles: List[Dict[str, Any]]):
+    """Inserts or updates daily candles in DuckDB."""
+    if not candles:
+        return
+
+    df = pd.DataFrame(candles)
+    for col, default in [
+        ("instrument_key", ""), ("trading_symbol", ""), ("date", ""),
+        ("open", 0.0), ("high", 0.0), ("low", 0.0), ("close", 0.0),
+        ("volume", 0), ("open_interest", 0)
+    ]:
+        if col not in df.columns:
+            df[col] = default
+
+    df["date"] = df["date"].astype(str)
+
+    with _lock:
+        conn = get_write_connection()
+        try:
+            conn.register("_temp_daily_in", df)
+            conn.execute("""
+                INSERT INTO daily_candles (
+                    instrument_key, trading_symbol, date, open, high, low, close, volume, open_interest
+                )
+                SELECT
+                    instrument_key, trading_symbol, date, open, high, low, close, volume, open_interest
+                FROM _temp_daily_in
+                ON CONFLICT (instrument_key, date) DO UPDATE SET
+                    trading_symbol = EXCLUDED.trading_symbol,
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    open_interest = EXCLUDED.open_interest;
+            """)
+            conn.unregister("_temp_daily_in")
+        except Exception as e:
+            logger.warning(f"Error upserting daily candles into DuckDB: {e}")
+        finally:
+            conn.close()
+
 

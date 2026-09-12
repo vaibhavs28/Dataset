@@ -22,6 +22,7 @@ import parquet_loader
 import alert_engine
 import quadrant_image_generator
 import auto_75m_broadcaster
+import sync_75m_intraday
 
 
 def _get_theme_styles(theme: str) -> dict:
@@ -252,7 +253,7 @@ def render_alert_page(theme: str = "dark"):
         st.markdown("---")
 
         # Controls
-        ctrl_col1, ctrl_col2, ctrl_col3 = st.columns([2, 2, 2.5])
+        ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1.8, 1.8])
         with ctrl_col1:
             bc_universe = st.selectbox(
                 "Scanning Universe:",
@@ -276,13 +277,42 @@ def render_alert_page(theme: str = "dark"):
         with ctrl_col3:
             st.write("")
             st.write("")
-            trigger_now = st.button("⚡ Run 75-Min Scan & Broadcast Now", type="primary", use_container_width=True, key="btn_run_75m_now")
+            btn_sync_now = st.button("🔄 Sync Upstox 75m Now", use_container_width=True, key="btn_sync_75m_upstox_now")
+        with ctrl_col4:
+            st.write("")
+            st.write("")
+            trigger_now = st.button("⚡ Run Scan & Broadcast", type="primary", use_container_width=True, key="btn_run_75m_now")
+
+        auto_sync_upstox = st.checkbox(
+            "🔄 Auto-sync live Upstox 75m intraday data into database before scanning",
+            value=True,
+            key="cb_auto_sync_upstox"
+        )
+
+        if btn_sync_now:
+            sync_prog = st.progress(0.0, text=f"Initiating Upstox sync for {bc_universe}...")
+            def _sync_cb(curr, tot, sym):
+                frac = min(1.0, curr / max(1, tot))
+                sync_prog.progress(frac, text=f"Syncing Upstox 75m: {sym} ({curr}/{tot})...")
+
+            with st.spinner(f"Ingesting live 75-min intraday candles from Upstox API for {bc_universe}..."):
+                s_res = sync_75m_intraday.sync_all_symbols_75m(
+                    universe=bc_universe,
+                    progress_callback=_sync_cb
+                )
+                sync_prog.progress(1.0, text="Sync complete!")
+                st.success(
+                    f"✅ Ingestion Complete in {s_res['elapsed_seconds']}s! "
+                    f"Updated {s_res['synced_count']}/{s_res['total_symbols']} stocks. "
+                    f"Added {s_res['total_75m_bars']} new 75m candles into DuckDB, SQLite & Parquet."
+                )
 
         if trigger_now:
-            with st.spinner(f"Running 75-Min Waterfall Scan across {bc_universe} & generating quadrant screenshots..."):
+            with st.spinner(f"Running 75-Min Waterfall Scan across {bc_universe} (Auto-sync: {auto_sync_upstox})..."):
                 bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
                     universe=bc_universe,
-                    stage_filter=stage_num
+                    stage_filter=stage_num,
+                    sync_first=auto_sync_upstox
                 )
                 q_count = bc_res.get("qualifying_count", 0)
                 el_sec = bc_res.get("elapsed_seconds", 0.0)
@@ -290,6 +320,7 @@ def render_alert_page(theme: str = "dark"):
                     st.success(f"🎉 Scan Complete in {el_sec:.1f}s! Found {q_count} qualifying stock(s). 4-Quadrant screenshots generated and dispatched!")
                 else:
                     st.info(f"✅ Scan Complete in {el_sec:.1f}s. Scanned {bc_res.get('scanned_count')} stocks in {bc_universe}. Currently 0 stocks match Stage {stage_num} criteria.")
+
 
         # Single Stock Instant Test Section
         with st.expander("🖼️ **On-Demand Single Stock Quadrant Preview & Test**", expanded=False):

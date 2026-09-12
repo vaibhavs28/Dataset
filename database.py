@@ -316,28 +316,39 @@ def get_candles_df(symbol: str, start_date: Optional[str] = None, end_date: Opti
 
 def upsert_intraday_candles(candles: List[Dict[str, Any]]):
     """
-    Inserts or updates intraday candles (e.g. 75m, 1m).
+    Inserts or updates intraday candles (e.g. 75m, 1m) into DuckDB and SQLite.
     Replaces any duplicate record for (trading_symbol, timeframe, timestamp) with new data.
     """
     if not candles:
         return
-    with get_connection() as conn:
-        cursor = conn.cursor()
-        cursor.executemany("""
-            INSERT INTO intraday_candles (
-                instrument_key, trading_symbol, timeframe, timestamp, open, high, low, close, volume
-            ) VALUES (
-                :instrument_key, :trading_symbol, :timeframe, :timestamp, :open, :high, :low, :close, :volume
-            )
-            ON CONFLICT(trading_symbol, timeframe, timestamp) DO UPDATE SET
-                instrument_key=excluded.instrument_key,
-                open=excluded.open,
-                high=excluded.high,
-                low=excluded.low,
-                close=excluded.close,
-                volume=excluded.volume;
-        """, candles)
-        conn.commit()
+
+    try:
+        import duckdb_store
+        duckdb_store.upsert_intraday_candles(candles)
+    except Exception:
+        pass
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.executemany("""
+                INSERT INTO intraday_candles (
+                    instrument_key, trading_symbol, timeframe, timestamp, open, high, low, close, volume
+                ) VALUES (
+                    :instrument_key, :trading_symbol, :timeframe, :timestamp, :open, :high, :low, :close, :volume
+                )
+                ON CONFLICT(trading_symbol, timeframe, timestamp) DO UPDATE SET
+                    instrument_key=excluded.instrument_key,
+                    open=excluded.open,
+                    high=excluded.high,
+                    low=excluded.low,
+                    close=excluded.close,
+                    volume=excluded.volume;
+            """, candles)
+            conn.commit()
+    except Exception:
+        pass
+
 
 
 def get_intraday_candles_df(symbol: str, timeframe: str = "75m", limit: int = 5000) -> pd.DataFrame:
