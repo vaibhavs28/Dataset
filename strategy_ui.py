@@ -8,6 +8,7 @@ candlestick trade overlays, and CSV export.
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -18,6 +19,7 @@ import config
 import database
 import scanner
 import parquet_loader
+import tradingview_charts
 from strategy_engine import (
     StrategyConfig,
     BacktestResult,
@@ -27,6 +29,191 @@ from strategy_engine import (
     run_basket_backtest,
     get_preset_strategy,
 )
+
+
+def calculate_advanced_metrics(result: BacktestResult, initial_capital: float, df_ind: pd.DataFrame = None) -> dict:
+    """Calculates hedge-fund grade risk and performance metrics (CAGR, Sharpe, Sortino, Calmar, Streaks)."""
+    eq_df = result.equity_curve
+    if eq_df is None or eq_df.empty or len(eq_df) < 2:
+        return {
+            "cagr_pct": 0.0, "sharpe_ratio": 0.0, "sortino_ratio": 0.0, "calmar_ratio": 0.0,
+            "max_dd_bars": 0, "max_consecutive_wins": 0, "max_consecutive_losses": 0,
+            "payoff_ratio": 0.0, "bench_return_pct": 0.0, "alpha_pct": 0.0
+        }
+
+    start_dt = pd.to_datetime(eq_df.index[0])
+    end_dt = pd.to_datetime(eq_df.index[-1])
+    total_days = max(1, (end_dt - start_dt).days)
+    years = total_days / 365.25
+
+    # 1. CAGR
+    final_eq = float(result.final_equity)
+    init_cap = float(initial_capital)
+    if years > 0 and init_cap > 0 and final_eq > 0:
+        cagr_pct = ((final_eq / init_cap) ** (1.0 / max(years, 0.05)) - 1.0) * 100.0
+    else:
+        cagr_pct = result.total_net_pnl_pct
+
+    # 2. Sharpe & Sortino (annualized with 6% risk-free rate)
+    pct_changes = eq_df["equity"].pct_change().dropna()
+    rf_daily = 0.06 / 252.0
+    excess_returns = pct_changes - rf_daily
+
+    std_ret = pct_changes.std()
+    if std_ret > 0 and len(pct_changes) > 5:
+        sharpe = float((excess_returns.mean() / std_ret) * np.sqrt(252))
+    else:
+        sharpe = 0.0
+
+    downside_returns = pct_changes[pct_changes < 0]
+    downside_std = downside_returns.std()
+    if downside_std > 0 and len(downside_returns) > 3:
+        sortino = float((excess_returns.mean() / downside_std) * np.sqrt(252))
+    else:
+        sortino = 0.0
+
+    # 3. Calmar Ratio
+    max_dd = abs(float(result.max_drawdown_pct))
+    calmar = (cagr_pct / max_dd) if max_dd > 0 else 0.0
+
+    # 4. Max Drawdown Duration (consecutive bars in drawdown)
+    in_dd = eq_df["drawdown_pct"] > 0
+    max_dd_bars = 0
+    curr_dd_bars = 0
+    for val in in_dd:
+        if val:
+            curr_dd_bars += 1
+            if curr_dd_bars > max_dd_bars:
+                max_dd_bars = curr_dd_bars
+        else:
+            curr_dd_bars = 0
+
+    # 5. Consecutive Wins and Losses
+    max_wins, max_losses = 0, 0
+    curr_w, curr_l = 0, 0
+    for t in result.trades:
+        if t.pnl_percent >= 0:
+            curr_w += 1
+            curr_l = 0
+            if curr_w > max_wins:
+                max_wins = curr_w
+        else:
+            curr_l += 1
+            curr_w = 0
+            if curr_l > max_losses:
+                max_losses = curr_l
+
+    # 6. Payoff Ratio
+    payoff = (abs(result.avg_win) / abs(result.avg_loss)) if (result.avg_loss and abs(result.avg_loss) > 0) else 0.0
+
+    # 7. Benchmark Buy & Hold Return
+    bench_return_pct = 0.0
+    if df_ind is not None and not df_ind.empty and "close" in df_ind.columns:
+        c_first = df_ind["close"].dropna().iloc[0]
+        c_last = df_ind["close"].dropna().iloc[-1]
+        if c_first > 0:
+            bench_return_pct = ((c_last - c_first) / c_first) * 100.0
+
+    alpha_pct = result.total_net_pnl_pct - bench_return_pct
+
+    return {
+        "cagr_pct": round(cagr_pct, 2),
+        "sharpe_ratio": round(sharpe, 2),
+        "sortino_ratio": round(sortino, 2),
+        "calmar_ratio": round(calmar, 2),
+        "max_dd_bars": max_dd_bars,
+        "max_consecutive_wins": max_wins,
+        "max_consecutive_losses": max_losses,
+        "payoff_ratio": round(payoff, 2),
+        "bench_return_pct": round(bench_return_pct, 2),
+        "alpha_pct": round(alpha_pct, 2)
+    }
+
+
+def calculate_monthly_returns_matrix(equity_df: pd.DataFrame) -> pd.DataFrame:
+    """Computes month-by-month and year-by-year return % matrix for heatmap presentation."""
+    if equity_df is None or equity_df.empty or len(equity_df) < 5:
+        return pd.DataFrame()
+
+    df = equity_df.copy()
+    if not isinstance(df.index, pd.DatetimeIndex):
+        df.index = pd.to_datetime(df.index)
+    df.sort_index(inplace=True)
+
+    # Resample to end of month equity
+    m_df = df["equity"].resample("ME").last().dropna()
+    if m_df.empty:
+        return pd.DataFrame()
+
+    first_eq = df["equity"].iloc[0]
+    returns = m_df.pct_change() * 100.0
+    if not m_df.empty and first_eq > 0:
+        returns.iloc[0] = ((m_df.iloc[0] - first_eq) / first_eq) * 100.0
+
+    month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+    matrix = {}
+
+    for dt, ret in returns.items():
+        yr = dt.year
+        m_name = month_names[dt.month - 1]
+        if yr not in matrix:
+            matrix[yr] = {m: np.nan for m in month_names}
+            matrix[yr]["Year"] = yr
+        matrix[yr][m_name] = round(float(ret), 2)
+
+    if not matrix:
+        return pd.DataFrame()
+
+    res_df = pd.DataFrame(list(matrix.values()))
+
+    annual_totals = []
+    for idx, row in res_df.iterrows():
+        yr = row["Year"]
+        yr_pts = df[df.index.year == yr]["equity"]
+        if not yr_pts.empty and yr_pts.iloc[0] > 0:
+            yr_ret = ((yr_pts.iloc[-1] - yr_pts.iloc[0]) / yr_pts.iloc[0]) * 100.0
+        else:
+            yr_ret = 0.0
+        annual_totals.append(round(yr_ret, 2))
+
+    res_df["Year Return"] = annual_totals
+    res_df.sort_values("Year", ascending=False, inplace=True)
+    cols = ["Year"] + month_names + ["Year Return"]
+    return res_df[cols]
+
+
+def calculate_exit_reason_breakdown(trades: list) -> pd.DataFrame:
+    """Aggregates trades by exit reason for risk diagnostics."""
+    if not trades:
+        return pd.DataFrame()
+    reasons = {}
+    for t in trades:
+        r = t.exit_reason or "Signal Reversal"
+        if r not in reasons:
+            reasons[r] = {"count": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "total_pct": 0.0}
+        reasons[r]["count"] += 1
+        if t.pnl_percent >= 0:
+            reasons[r]["wins"] += 1
+        else:
+            reasons[r]["losses"] += 1
+        reasons[r]["total_pnl"] += t.pnl_rupees
+        reasons[r]["total_pct"] += t.pnl_percent
+
+    records = []
+    for r, d in reasons.items():
+        cnt = d["count"]
+        records.append({
+            "Exit Reason": r,
+            "Trades": cnt,
+            "Win Rate (%)": round(d["wins"] / cnt * 100.0, 1),
+            "Total P&L (₹)": round(d["total_pnl"], 2),
+            "Avg Return (%)": round(d["total_pct"] / cnt, 2),
+            "Wins": d["wins"],
+            "Losses": d["losses"]
+        })
+    res_df = pd.DataFrame(records)
+    res_df.sort_values("Trades", ascending=False, inplace=True)
+    return res_df
 
 
 def _get_theme_colors(theme: str) -> dict:
@@ -73,7 +260,7 @@ def render_metric_card(title: str, value: str, subtext: str = "", delta_color: s
     st.markdown(html, unsafe_allow_html=True)
 
 
-def plot_equity_and_drawdown(result: BacktestResult, tc: dict) -> go.Figure:
+def plot_equity_and_drawdown(result: BacktestResult, tc: dict, benchmark_df: pd.DataFrame = None) -> go.Figure:
     eq_df = result.equity_curve
     if eq_df.empty:
         fig = go.Figure()
@@ -95,8 +282,8 @@ def plot_equity_and_drawdown(result: BacktestResult, tc: dict) -> go.Figure:
             x=x_vals,
             y=eq_df["equity"],
             mode="lines",
-            name="Equity (₹)",
-            line=dict(color=tc["blue"], width=2.2),
+            name="Strategy Equity (₹)",
+            line=dict(color=tc["blue"], width=2.5),
             fill="tozeroy",
             fillcolor="rgba(59, 130, 246, 0.08)"
         ),
@@ -114,6 +301,24 @@ def plot_equity_and_drawdown(result: BacktestResult, tc: dict) -> go.Figure:
         ),
         row=1, col=1
     )
+
+    # Benchmark line (Buy & Hold)
+    if benchmark_df is not None and not benchmark_df.empty and "close" in benchmark_df.columns:
+        b_clean = benchmark_df.dropna(subset=["close"])
+        if not b_clean.empty:
+            c0 = b_clean["close"].iloc[0]
+            if c0 > 0:
+                bench_vals = result.initial_capital * (b_clean["close"] / c0)
+                fig.add_trace(
+                    go.Scatter(
+                        x=b_clean.index,
+                        y=bench_vals,
+                        mode="lines",
+                        name="Buy & Hold Benchmark",
+                        line=dict(color="#A855F7", width=1.5, dash="dot")
+                    ),
+                    row=1, col=1
+                )
 
     # Drawdown % area
     fig.add_trace(
@@ -435,8 +640,9 @@ def render_strategy_lab_page(theme: str = "dark"):
         # Render Results Dashboard
         if sim_key in st.session_state:
             res, df_ind = st.session_state[sim_key]
+            adv = calculate_advanced_metrics(res, initial_cap, df_ind)
 
-            # Metric Cards Row
+            # 1. Primary Metric Cards Row
             m1, m2, m3, m4, m5, m6 = st.columns(6)
             pnl_delta = "green" if res.total_net_pnl >= 0 else "red"
             with m1:
@@ -452,14 +658,124 @@ def render_strategy_lab_page(theme: str = "dark"):
             with m6:
                 render_metric_card("Trade Expectancy", f"₹{res.expectancy:+,.2f}", "Avg Profit / Trade", pnl_delta, tc)
 
-            # Equity Curve & Underwater Drawdown Chart
-            st.plotly_chart(plot_equity_and_drawdown(res, tc), use_container_width=True)
+            # 2. Portfolio Equity Curve & Underwater Drawdown Section
+            st.markdown("---")
+            eq_head_col1, eq_head_col2 = st.columns([3.0, 1.5])
+            with eq_head_col1:
+                st.markdown("#### 📈 Portfolio Equity Curve & Underwater Drawdown")
+                st.caption(f"Initial Capital: **₹{res.initial_capital:,.0f}** ➔ Peak High-Watermark: **₹{res.equity_curve['high_watermark'].max():,.0f}** ➔ Final Equity: **₹{res.final_equity:,.0f}**")
+            with eq_head_col2:
+                eq_view_mode = st.radio(
+                    "Equity View Engine:",
+                    ["⚡ Interactive TradingView", "📊 Plotly Advanced"],
+                    horizontal=True,
+                    key=f"eq_view_engine_{sel_sym}"
+                )
 
-            # Candlestick Chart with Buy/Sell markers
-            st.markdown("#### 🕯️ Trade Executions Overlaid on Candles")
-            st.plotly_chart(plot_candlesticks_with_trade_markers(df_ind, res, cfg, tc), use_container_width=True)
+            if eq_view_mode == "⚡ Interactive TradingView":
+                components.html(
+                    tradingview_charts.generate_equity_drawdown_chart_html(
+                        res.equity_curve,
+                        initial_capital=initial_cap,
+                        final_equity=res.final_equity,
+                        symbol=res.symbol,
+                        strategy_name=cfg.name,
+                        benchmark_df=df_ind,
+                        height=460,
+                        theme=theme,
+                        chart_id=f"tv_eq_{sel_sym}_{sel_tf}"
+                    ),
+                    height=480
+                )
+            else:
+                st.plotly_chart(plot_equity_and_drawdown(res, tc, benchmark_df=df_ind), use_container_width=True)
 
-            # Trade Log Table
+            # 3. Institutional Risk & Performance Analytics Dashboard
+            with st.expander("🛡️ **Advanced Risk & Health KPI Dashboard**", expanded=True):
+                rk1, rk2, rk3, rk4 = st.columns(4)
+                with rk1:
+                    cagr_clr = "green" if adv["cagr_pct"] >= 0 else "red"
+                    render_metric_card("CAGR (Annualized)", f"{adv['cagr_pct']:+.2f}%", f"Buy & Hold: {adv['bench_return_pct']:+.2f}% (Alpha: {adv['alpha_pct']:+.2f}%)", cagr_clr, tc)
+                with rk2:
+                    s_clr = "green" if adv["sharpe_ratio"] >= 1.0 else ("blue" if adv["sharpe_ratio"] >= 0.5 else "normal")
+                    render_metric_card("Sharpe Ratio", f"{adv['sharpe_ratio']:.2f}", f"Sortino: {adv['sortino_ratio']:.2f} (Risk-Free: 6%)", s_clr, tc)
+                with rk3:
+                    render_metric_card("Calmar Ratio", f"{adv['calmar_ratio']:.2f}", f"Max DD Duration: {adv['max_dd_bars']} bars", "normal", tc)
+                with rk4:
+                    render_metric_card("Streaks & Payoff", f"{adv['max_consecutive_wins']}W / {adv['max_consecutive_losses']}L", f"Payoff Ratio: {adv['payoff_ratio']:.2f} (Avg Win / Avg Loss)", "blue", tc)
+
+            # 4. Monthly & Annual Returns Matrix (Heatmap Table)
+            m_matrix = calculate_monthly_returns_matrix(res.equity_curve)
+            if not m_matrix.empty:
+                with st.expander("📅 **Monthly & Annual Returns Matrix (Heatmap)**", expanded=False):
+                    def _color_matrix(val):
+                        if pd.isna(val) or not isinstance(val, (int, float)):
+                            return ""
+                        if val > 5.0:
+                            return "background-color: rgba(16, 185, 129, 0.35); color: #10B981; font-weight: 700;"
+                        elif val > 0.0:
+                            return "background-color: rgba(16, 185, 129, 0.15); color: #10B981; font-weight: 600;"
+                        elif val < -5.0:
+                            return "background-color: rgba(239, 68, 68, 0.35); color: #EF4444; font-weight: 700;"
+                        elif val < 0.0:
+                            return "background-color: rgba(239, 68, 68, 0.15); color: #EF4444; font-weight: 600;"
+                        return ""
+
+                    format_dict = {m: "{:+.2f}%" for m in ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Year Return"]}
+                    format_dict["Year"] = "{:d}"
+
+                    styled_matrix = m_matrix.style.format(format_dict, na_rep="-").map(_color_matrix, subset=[c for c in m_matrix.columns if c != "Year"])
+                    st.dataframe(styled_matrix, use_container_width=True)
+
+            # 5. Candlestick Chart with Trade Execution Markers
+            st.markdown("---")
+            tv_head_col1, tv_head_col2 = st.columns([3.0, 1.5])
+            with tv_head_col1:
+                st.markdown("#### 🕯️ Trade Executions Overlaid on Candles")
+                st.caption(f"Interactive TradingView chart with official Buy (🟢 arrowUp) and Exit (🔴/🟢 arrowDown) markers, indicators, hover cards, and fullscreen mode.")
+            with tv_head_col2:
+                chart_view_mode = st.radio(
+                    "Candle Engine:",
+                    ["⚡ TradingView (Markers)", "📊 Plotly Classic"],
+                    horizontal=True,
+                    key=f"chart_view_engine_{sel_sym}"
+                )
+
+            if chart_view_mode == "⚡ TradingView (Markers)":
+                is_intra = (sel_tf in ("75-Min", "75m", "1-Min", "5-Min", "15-Min"))
+                components.html(
+                    tradingview_charts.generate_strategy_backtest_chart_html(
+                        df_ind,
+                        trades=res.trades,
+                        symbol=res.symbol,
+                        strategy_name=cfg.name,
+                        timeframe=res.timeframe,
+                        height=640,
+                        theme=theme,
+                        is_intraday=is_intra,
+                        chart_id=f"tv_strat_{sel_sym}_{sel_tf}"
+                    ),
+                    height=660
+                )
+            else:
+                st.plotly_chart(plot_candlesticks_with_trade_markers(df_ind, res, cfg, tc), use_container_width=True)
+
+            # 6. Exit Reason & Win/Loss Diagnostics
+            if res.trades:
+                ex_df = calculate_exit_reason_breakdown(res.trades)
+                if not ex_df.empty:
+                    with st.expander("📊 **Exit Reason Diagnostics & Trade Distribution**", expanded=False):
+                        st.dataframe(
+                            ex_df.style.format({
+                                "Win Rate (%)": "{:.1f}%",
+                                "Total P&L (₹)": "₹{:,.2f}",
+                                "Avg Return (%)": "{:+.2f}%"
+                            }).map(lambda v: "color: #10B981; font-weight: 600;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: 600;" if isinstance(v, (int, float)) and v < 0 else ""), subset=["Total P&L (₹)", "Avg Return (%)"]),
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+            # 7. Complete Trade Log Table
             st.markdown("#### 📜 Complete Trade Log")
             if res.trades:
                 trade_rows = []

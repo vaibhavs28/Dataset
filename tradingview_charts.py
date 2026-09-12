@@ -7243,3 +7243,1078 @@ def generate_quad_chart_html(
 </html>"""
     return html_code
 
+
+def generate_strategy_backtest_chart_html(
+    df: pd.DataFrame,
+    trades: list,
+    symbol: str,
+    strategy_name: str,
+    timeframe: str = "Daily",
+    height: int = 620,
+    theme: str = "dark",
+    is_intraday: bool = False,
+    chart_id: str = "tv_strat_chart"
+) -> str:
+    """
+    Renders a TradingView Lightweight Chart with Trade Execution Markers (arrowUp Buy, arrowDown Exit)
+    overlaid directly on candlesticks, with indicators, volume, and trade hover inspection cards.
+    """
+    is_light = (str(theme).lower() == "light")
+    bg_init = "#ffffff" if is_light else "#131722"
+    txt_init = "#787B86"
+
+    if df.empty:
+        return f"""<div style="height:{height}px; background:{bg_init}; color:{txt_init}; display:flex; align-items:center; justify-content:center; font-family:sans-serif; border-radius:8px; border:1px solid {'#e0e3eb' if is_light else '#2A2E39'};">No candle data available for {symbol}</div>"""
+
+    df_clean = df.copy()
+    if not isinstance(df_clean.index, pd.DatetimeIndex):
+        df_clean.index = pd.to_datetime(df_clean.index)
+    df_clean.sort_index(inplace=True)
+    df_clean = df_clean[~df_clean.index.duplicated(keep="last")]
+
+    # 1. Format Candlesticks & Volumes
+    candles = []
+    volumes = []
+    time_map = {}  # maps timestamp/date string to formatted time value
+
+    for dt, row in df_clean.iterrows():
+        if is_intraday or timeframe in ("1-Min", "3-Min", "5-Min", "15-Min", "75-Min", "75m"):
+            if dt.tzinfo is None:
+                dt_ist = dt.tz_localize("Asia/Kolkata")
+            else:
+                dt_ist = dt.tz_convert("Asia/Kolkata")
+            t_val = int(dt_ist.timestamp())
+            key_str = dt_ist.strftime("%Y-%m-%d %H:%M:%S")
+            short_key = dt_ist.strftime("%Y-%m-%d")
+        else:
+            t_val = dt.strftime("%Y-%m-%d")
+            key_str = dt.strftime("%Y-%m-%d")
+            short_key = key_str
+
+        time_map[key_str] = t_val
+        time_map[short_key] = t_val
+
+        o = float(row.get("open", 0))
+        h = float(row.get("high", 0))
+        l = float(row.get("low", 0))
+        c = float(row.get("close", 0))
+        v = float(row.get("volume", 0)) if "volume" in row and not pd.isna(row["volume"]) else 0
+
+        if o > 0 and h > 0 and l > 0 and c > 0:
+            candles.append({"time": t_val, "open": round(o, 2), "high": round(h, 2), "low": round(l, 2), "close": round(c, 2)})
+            volumes.append({"time": t_val, "value": round(v, 2), "color": "rgba(16, 185, 129, 0.4)" if c >= o else "rgba(239, 68, 68, 0.4)"})
+
+    if not candles:
+        return f"""<div style="height:{height}px; background:{bg_init}; color:{txt_init}; display:flex; align-items:center; justify-content:center; font-family:sans-serif; border-radius:8px; border:1px solid {'#e0e3eb' if is_light else '#2A2E39'};">Insufficient valid price bars for {symbol}</div>"""
+
+    # 2. Build Strategy Indicator Line Series
+    indicators_data = {}
+    ind_colors = {
+        "EMA_Fast": "#38BDF8",   # Sky Blue
+        "EMA_Mid": "#F59E0B",    # Amber
+        "EMA_Slow": "#EC4899",   # Pink
+        "SuperTrend": "#10B981", # Green
+        "SMA_50": "#A855F7",     # Purple
+        "SMA_200": "#6366F1",    # Indigo
+    }
+
+    for col, clr in ind_colors.items():
+        if col in df_clean.columns and not df_clean[col].dropna().empty:
+            pts = []
+            for dt, row in df_clean.iterrows():
+                val = row.get(col)
+                if not pd.isna(val) and float(val) > 0:
+                    if is_intraday:
+                        dt_ist = dt.tz_localize("Asia/Kolkata") if dt.tzinfo is None else dt.tz_convert("Asia/Kolkata")
+                        t_val = int(dt_ist.timestamp())
+                    else:
+                        t_val = dt.strftime("%Y-%m-%d")
+                    pts.append({"time": t_val, "value": round(float(val), 2)})
+            if pts:
+                indicators_data[col] = {"name": col.replace("_", " "), "color": clr, "data": pts}
+
+    # 3. Check for RSI / Hilega Milega Subplot
+    has_rsi = ("RSI" in df_clean.columns and not df_clean["RSI"].dropna().empty)
+    rsi_pts, rsi_ema3_pts, rsi_wma21_pts = [], [], []
+    if has_rsi:
+        for dt, row in df_clean.iterrows():
+            if is_intraday:
+                dt_ist = dt.tz_localize("Asia/Kolkata") if dt.tzinfo is None else dt.tz_convert("Asia/Kolkata")
+                t_val = int(dt_ist.timestamp())
+            else:
+                t_val = dt.strftime("%Y-%m-%d")
+            r = row.get("RSI")
+            if not pd.isna(r):
+                rsi_pts.append({"time": t_val, "value": round(float(r), 2)})
+            e3 = row.get("RSI_EMA3")
+            if not pd.isna(e3):
+                rsi_ema3_pts.append({"time": t_val, "value": round(float(e3), 2)})
+            w21 = row.get("RSI_WMA21")
+            if not pd.isna(w21):
+                rsi_wma21_pts.append({"time": t_val, "value": round(float(w21), 2)})
+
+    # 4. Build Trade Execution Markers and Trade Inspection Dictionary
+    trade_markers = []
+    trade_lookup = {}  # t_val -> list of trade detail strings
+
+    for t in (trades or []):
+        e_time = pd.to_datetime(t.entry_time)
+        e_str = e_time.strftime("%Y-%m-%d %H:%M:%S") if (is_intraday and e_time.hour != 0) else e_time.strftime("%Y-%m-%d")
+        t_entry_val = time_map.get(e_str, time_map.get(e_time.strftime("%Y-%m-%d")))
+
+        if t_entry_val:
+            trade_markers.append({
+                "time": t_entry_val,
+                "position": "belowBar",
+                "color": "#10B981",
+                "shape": "arrowUp",
+                "text": f"BUY #{t.trade_id} @ ₹{t.entry_price:,.2f}",
+                "size": 2
+            })
+            if t_entry_val not in trade_lookup:
+                trade_lookup[t_entry_val] = []
+            trade_lookup[t_entry_val].append({
+                "type": "BUY",
+                "id": t.trade_id,
+                "price": t.entry_price,
+                "qty": t.quantity,
+                "time": e_str
+            })
+
+        if t.exit_time:
+            x_time = pd.to_datetime(t.exit_time)
+            x_str = x_time.strftime("%Y-%m-%d %H:%M:%S") if (is_intraday and x_time.hour != 0) else x_time.strftime("%Y-%m-%d")
+            t_exit_val = time_map.get(x_str, time_map.get(x_time.strftime("%Y-%m-%d")))
+            if t_exit_val:
+                is_win = (t.pnl_percent >= 0)
+                clr = "#10B981" if is_win else "#EF4444"
+                sign = "+" if is_win else ""
+                trade_markers.append({
+                    "time": t_exit_val,
+                    "position": "aboveBar",
+                    "color": clr,
+                    "shape": "arrowDown",
+                    "text": f"EXIT #{t.trade_id} ({sign}{t.pnl_percent:.1f}%)",
+                    "size": 2
+                })
+                if t_exit_val not in trade_lookup:
+                    trade_lookup[t_exit_val] = []
+                trade_lookup[t_exit_val].append({
+                    "type": "EXIT",
+                    "id": t.trade_id,
+                    "price": t.exit_price,
+                    "pnl_rupees": t.pnl_rupees,
+                    "pnl_percent": t.pnl_percent,
+                    "reason": t.exit_reason or "Signal Reversal",
+                    "duration": t.duration_bars,
+                    "mfe": t.max_favorable_excursion,
+                    "mae": t.max_adverse_excursion,
+                    "time": x_str
+                })
+
+    # Sort markers strictly by time for Lightweight Charts v4.x compliance
+    def _marker_sort_key(m):
+        t = m["time"]
+        return t if isinstance(t, int) else str(t)
+    trade_markers.sort(key=_marker_sort_key)
+
+    total_trades_count = len(trades or [])
+    wins_count = sum(1 for t in (trades or []) if t.pnl_percent >= 0)
+    win_rate = (wins_count / total_trades_count * 100.0) if total_trades_count > 0 else 0.0
+    net_pnl = sum(t.pnl_rupees for t in (trades or []))
+
+    # Serialize JSON for injection
+    candles_json = json.dumps(candles)
+    volumes_json = json.dumps(volumes)
+    indicators_json = json.dumps(indicators_data)
+    markers_json = json.dumps(trade_markers)
+    trades_lookup_json = json.dumps(trade_lookup)
+    rsi_json = json.dumps(rsi_pts)
+    rsi_ema3_json = json.dumps(rsi_ema3_pts)
+    rsi_wma21_json = json.dumps(rsi_wma21_pts)
+
+    header_h = 42
+    avail_h = height - header_h
+    if has_rsi:
+        main_h = max(280, int(avail_h * 0.70))
+        rsi_h = max(110, int(avail_h * 0.30))
+    else:
+        main_h = avail_h
+        rsi_h = 0
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>{symbol} {timeframe} - Trade Executions Overlaid on Candles</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        html, body {{
+            background-color: {"#ffffff" if is_light else "#131722"};
+            color: {"#1e293b" if is_light else "#d1d4dc"};
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Ubuntu, sans-serif;
+            overflow: hidden;
+            width: 100%;
+            height: 100%;
+        }}
+        .tv-wrapper {{
+            width: 100%;
+            height: {height}px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background-color: {"#ffffff" if is_light else "#131722"};
+            border-radius: 10px;
+            border: 1px solid {"#e2e8f0" if is_light else "#2A2E39"};
+            overflow: hidden;
+        }}
+        .tv-wrapper.is-fullscreen {{
+            position: fixed !important;
+            top: 0 !important; left: 0 !important;
+            width: 100vw !important; height: 100vh !important;
+            z-index: 9999999 !important;
+            border-radius: 0 !important;
+            border: none !important;
+        }}
+        .tv-header {{
+            height: {header_h}px;
+            padding: 0 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: {"#f8fafc" if is_light else "#1e222d"};
+            border-bottom: 1px solid {"#e2e8f0" if is_light else "#2a2e39"};
+            font-size: 12px;
+            user-select: none;
+        }}
+        .badge-group {{
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: nowrap;
+            overflow-x: auto;
+        }}
+        .badge {{
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 11.5px;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }}
+        .badge-sym {{
+            background: {"#e0e7ff" if is_light else "#2e3748"};
+            color: {"#3730a3" if is_light else "#a5b4fc"};
+            font-size: 12px;
+        }}
+        .badge-strat {{
+            background: {"#f1f5f9" if is_light else "#242938"};
+            color: {"#475569" if is_light else "#cbd5e1"};
+        }}
+        .badge-win {{
+            background: rgba(16, 185, 129, 0.15);
+            color: #10B981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }}
+        .badge-pnl-pos {{
+            background: rgba(16, 185, 129, 0.15);
+            color: #10B981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }}
+        .badge-pnl-neg {{
+            background: rgba(239, 68, 68, 0.15);
+            color: #EF4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }}
+        .controls-group {{
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }}
+        .btn {{
+            background: {"#e2e8f0" if is_light else "#2a2e39"};
+            color: {"#334155" if is_light else "#cbd5e1"};
+            border: 1px solid {"#cbd5e1" if is_light else "#3b4253"};
+            border-radius: 5px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.15s ease;
+        }}
+        .btn:hover {{
+            background: {"#cbd5e1" if is_light else "#3b4253"};
+            color: {"#0f172a" if is_light else "#ffffff"};
+        }}
+        .btn-fs {{
+            background: #3B82F6;
+            color: #ffffff;
+            border-color: #2563EB;
+        }}
+        .btn-fs:hover {{
+            background: #2563EB;
+        }}
+        .chart-container {{
+            width: 100%;
+            height: {main_h}px;
+            position: relative;
+        }}
+        .rsi-container {{
+            width: 100%;
+            height: {rsi_h}px;
+            position: relative;
+            border-top: 1px solid {"#e2e8f0" if is_light else "#2a2e39"};
+            display: {"block" if has_rsi else "none"};
+        }}
+        /* Floating OHLCV & Trade Inspection Card */
+        .tooltip-card {{
+            position: absolute;
+            top: 10px;
+            left: 14px;
+            z-index: 100;
+            background: {"rgba(255, 255, 255, 0.95)" if is_light else "rgba(19, 23, 34, 0.92)"};
+            border: 1px solid {"#cbd5e1" if is_light else "#2a2e39"};
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 11px;
+            line-height: 1.4;
+            box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25);
+            pointer-events: none;
+            max-width: 380px;
+            backdrop-filter: blur(4px);
+        }}
+        .tooltip-ohlc {{
+            display: flex;
+            gap: 8px;
+            font-weight: 600;
+            margin-bottom: 3px;
+        }}
+        .trade-exec-card {{
+            margin-top: 6px;
+            padding: 6px 8px;
+            border-radius: 6px;
+            font-size: 11px;
+            font-weight: 600;
+        }}
+        .trade-buy-card {{
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid #10B981;
+            color: {"#065f46" if is_light else "#34d399"};
+        }}
+        .trade-exit-card-win {{
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid #10B981;
+            color: {"#065f46" if is_light else "#34d399"};
+        }}
+        .trade-exit-card-loss {{
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid #EF4444;
+            color: {"#991b1b" if is_light else "#f87171"};
+        }}
+    </style>
+</head>
+<body>
+    <div class="tv-wrapper" id="{chart_id}_wrapper">
+        <div class="tv-header">
+            <div class="badge-group">
+                <span class="badge badge-sym">📈 {symbol} ({timeframe})</span>
+                <span class="badge badge-strat">⚙️ {strategy_name}</span>
+                <span class="badge badge-win">🎯 {win_rate:.1f}% Win ({wins_count}/{total_trades_count})</span>
+                <span class="badge {"badge-pnl-pos" if net_pnl >= 0 else "badge-pnl-neg"}">
+                    {"₹+" if net_pnl >= 0 else "₹"}{net_pnl:,.2f}
+                </span>
+            </div>
+            <div class="controls-group">
+                <button class="btn" onclick="zoomPreset('1M')">1M</button>
+                <button class="btn" onclick="zoomPreset('3M')">3M</button>
+                <button class="btn" onclick="zoomPreset('6M')">6M</button>
+                <button class="btn" onclick="zoomPreset('1Y')">1Y</button>
+                <button class="btn" onclick="zoomPreset('ALL')">All</button>
+                <button class="btn" onclick="toggleIndicators()">Indicators</button>
+                <button class="btn btn-fs" id="{chart_id}_fs_btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
+            </div>
+        </div>
+
+        <div class="chart-container" id="{chart_id}_main">
+            <div class="tooltip-card" id="{chart_id}_tooltip">
+                <div style="font-weight: 700; color: {"#3b82f6" if is_light else "#60a5fa"}; margin-bottom: 2px;" id="tt_date">Hover over candles</div>
+                <div class="tooltip-ohlc" id="tt_ohlc">
+                    <span>O: -</span><span>H: -</span><span>L: -</span><span>C: -</span>
+                </div>
+                <div id="tt_trade_info"></div>
+            </div>
+        </div>
+
+        {"<div class='rsi-container' id='" + chart_id + "_rsi'></div>" if has_rsi else ""}
+    </div>
+
+    <script>
+        const isLight = {"true" if is_light else "false"};
+        const themeColors = {{
+            bg: isLight ? "#ffffff" : "#131722",
+            grid: isLight ? "#f1f5f9" : "#1e222d",
+            text: isLight ? "#475569" : "#94a3b8",
+            border: isLight ? "#e2e8f0" : "#2a2e39",
+            up: "#10B981",
+            down: "#EF4444"
+        }};
+
+        const candlesData = {candles_json};
+        const volumesData = {volumes_json};
+        const indicatorsData = {indicators_json};
+        const tradeMarkers = {markers_json};
+        const tradeLookup = {trades_lookup_json};
+        const rsiData = {rsi_json};
+        const rsiEma3Data = {rsi_ema3_json};
+        const rsiWma21Data = {rsi_wma21_json};
+        const hasRsiPane = {"true" if has_rsi else "false"};
+
+        // 1. Initialize Main Lightweight Chart
+        const mainContainer = document.getElementById("{chart_id}_main");
+        const chart = LightweightCharts.createChart(mainContainer, {{
+            width: mainContainer.clientWidth,
+            height: mainContainer.clientHeight,
+            layout: {{
+                background: {{ type: 'solid', color: themeColors.bg }},
+                textColor: themeColors.text,
+                fontSize: 11,
+                fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
+            }},
+            grid: {{
+                vertLines: {{ color: themeColors.grid }},
+                horzLines: {{ color: themeColors.grid }}
+            }},
+            rightPriceScale: {{
+                borderColor: themeColors.border,
+                scaleMargins: {{ top: 0.08, bottom: 0.20 }}
+            }},
+            timeScale: {{
+                borderColor: themeColors.border,
+                timeVisible: true,
+                secondsVisible: false
+            }},
+            crosshair: {{
+                mode: LightweightCharts.CrosshairMode.Normal,
+                vertLine: {{ color: isLight ? "#94a3b8" : "#475569", width: 1, style: 3 }},
+                horzLine: {{ color: isLight ? "#94a3b8" : "#475569", width: 1, style: 3 }}
+            }}
+        }});
+
+        // 2. Add Candlestick Series
+        const candleSeries = chart.addCandlestickSeries({{
+            upColor: themeColors.up,
+            downColor: themeColors.down,
+            borderUpColor: themeColors.up,
+            borderDownColor: themeColors.down,
+            wickUpColor: themeColors.up,
+            wickDownColor: themeColors.down
+        }});
+        candleSeries.setData(candlesData);
+
+        // 3. Add Trade Execution Markers (arrowUp Buy, arrowDown Exit)
+        if (tradeMarkers && tradeMarkers.length > 0) {{
+            candleSeries.setMarkers(tradeMarkers);
+        }}
+
+        // 4. Add Volume Series
+        const volumeSeries = chart.addHistogramSeries({{
+            priceFormat: {{ type: 'volume' }},
+            priceScaleId: '',
+            scaleMargins: {{ top: 0.82, bottom: 0 }}
+        }});
+        volumeSeries.setData(volumesData);
+
+        // 5. Add Strategy Indicator Lines (Fast/Mid/Slow EMA, SuperTrend)
+        const indSeriesMap = {{}};
+        for (const [key, item] of Object.entries(indicatorsData)) {{
+            const s = chart.addLineSeries({{
+                color: item.color,
+                lineWidth: key.includes("Fast") ? 1.5 : (key.includes("Slow") ? 2 : 1.5),
+                title: item.name,
+                priceLineVisible: false
+            }});
+            s.setData(item.data);
+            indSeriesMap[key] = s;
+        }}
+
+        // 6. Optional RSI Subplot
+        let rsiChart = null;
+        let rsiSeries = null;
+        if (hasRsiPane && rsiData.length > 0) {{
+            const rsiContainer = document.getElementById("{chart_id}_rsi");
+            rsiChart = LightweightCharts.createChart(rsiContainer, {{
+                width: rsiContainer.clientWidth,
+                height: rsiContainer.clientHeight,
+                layout: {{
+                    background: {{ type: 'solid', color: themeColors.bg }},
+                    textColor: themeColors.text,
+                    fontSize: 10
+                }},
+                grid: {{
+                    vertLines: {{ color: themeColors.grid }},
+                    horzLines: {{ color: themeColors.grid }}
+                }},
+                rightPriceScale: {{
+                    borderColor: themeColors.border,
+                    scaleMargins: {{ top: 0.1, bottom: 0.1 }}
+                }},
+                timeScale: {{
+                    borderColor: themeColors.border,
+                    timeVisible: true
+                }}
+            }});
+
+            rsiSeries = rsiChart.addLineSeries({{ color: "#10B981", lineWidth: 1.5, title: "RSI 9" }});
+            rsiSeries.setData(rsiData);
+
+            if (rsiEma3Data.length > 0) {{
+                const e3Series = rsiChart.addLineSeries({{ color: "#EF4444", lineWidth: 1.2, title: "EMA 3" }});
+                e3Series.setData(rsiEma3Data);
+            }}
+            if (rsiWma21Data.length > 0) {{
+                const w21Series = rsiChart.addLineSeries({{ color: "#3B82F6", lineWidth: 1.2, title: "WMA 21" }});
+                w21Series.setData(rsiWma21Data);
+            }}
+
+            // Reference lines 50, 70, 30
+            rsiSeries.createPriceLine({{ price: 50.0, color: '#94a3b8', lineWidth: 1, lineStyle: 2, title: '50' }});
+            rsiSeries.createPriceLine({{ price: 70.0, color: 'rgba(239, 68, 68, 0.4)', lineWidth: 1, lineStyle: 3 }});
+            rsiSeries.createPriceLine({{ price: 30.0, color: 'rgba(16, 185, 129, 0.4)', lineWidth: 1, lineStyle: 3 }});
+
+            // Synchronize Crosshair and TimeScale
+            chart.timeScale().subscribeVisibleLogicalRangeChange(range => {{
+                if (rsiChart && range) rsiChart.timeScale().setVisibleLogicalRange(range);
+            }});
+            rsiChart.timeScale().subscribeVisibleLogicalRangeChange(range => {{
+                if (chart && range) chart.timeScale().setVisibleLogicalRange(range);
+            }});
+        }}
+
+        // 7. Dynamic Hover Inspection Tooltip
+        const ttDate = document.getElementById("tt_date");
+        const ttOhlc = document.getElementById("tt_ohlc");
+        const ttTrade = document.getElementById("tt_trade_info");
+
+        chart.subscribeCrosshairMove(param => {{
+            if (!param || !param.time || !param.seriesData) {{
+                return;
+            }}
+            const candle = param.seriesData.get(candleSeries);
+            if (candle) {{
+                const dateStr = typeof param.time === 'number' 
+                    ? new Date(param.time * 1000).toLocaleString('en-IN', {{ timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }})
+                    : param.time;
+                ttDate.innerText = dateStr;
+                const chg = ((candle.close - candle.open) / candle.open * 100).toFixed(2);
+                const chgSign = chg >= 0 ? "+" : "";
+                const chgColor = chg >= 0 ? "#10B981" : "#EF4444";
+                ttOhlc.innerHTML = `<span>O: ₹${{candle.open.toFixed(2)}}</span><span>H: ₹${{candle.high.toFixed(2)}}</span><span>L: ₹${{candle.low.toFixed(2)}}</span><span>C: ₹${{candle.close.toFixed(2)}}</span> <span style="color:${{chgColor}}">(${{chgSign}}${{chg}}%)</span>`;
+
+                // Check trade overlay on this exact bar
+                const tInfoList = tradeLookup[param.time];
+                if (tInfoList && tInfoList.length > 0) {{
+                    let htmlCard = "";
+                    tInfoList.forEach(t => {{
+                        if (t.type === "BUY") {{
+                            htmlCard += `<div class="trade-exec-card trade-buy-card">
+                                🟢 <b>BUY ENTRY #${{t.id}}</b> @ ₹${{t.price.toFixed(2)}} &nbsp;|&nbsp; Qty: ${{t.qty}}
+                            </div>`;
+                        }} else if (t.type === "EXIT") {{
+                            const isWin = t.pnl_percent >= 0;
+                            const cls = isWin ? "trade-exit-card-win" : "trade-exit-card-loss";
+                            const pSign = isWin ? "+" : "";
+                            htmlCard += `<div class="trade-exec-card ${{cls}}">
+                                ${{isWin ? "🎯" : "🛑"}} <b>EXIT #${{t.id}} (${{t.reason}})</b><br>
+                                Exit: ₹${{t.price.toFixed(2)}} &nbsp;|&nbsp; <b>P&L: ${{pSign}}₹${{t.pnl_rupees.toFixed(2)}} (${{pSign}}${{t.pnl_percent.toFixed(2)}}%)</b><br>
+                                <span style="font-size: 10px; opacity: 0.85;">Bars Held: ${{t.duration}} &nbsp;|&nbsp; MFE: +${{t.mfe.toFixed(1)}}% &nbsp;|&nbsp; MAE: ${{t.mae.toFixed(1)}}%</span>
+                            </div>`;
+                        }}
+                    }});
+                    ttTrade.innerHTML = htmlCard;
+                }} else {{
+                    ttTrade.innerHTML = "";
+                }}
+            }}
+        }});
+
+        // 8. Quick Zoom Presets
+        window.zoomPreset = function(period) {{
+            const totalBars = candlesData.length;
+            if (totalBars === 0) return;
+            let bars = totalBars;
+            if (period === '1M') bars = Math.min(22, totalBars);
+            else if (period === '3M') bars = Math.min(66, totalBars);
+            else if (period === '6M') bars = Math.min(130, totalBars);
+            else if (period === '1Y') bars = Math.min(260, totalBars);
+            
+            if (period === 'ALL') {{
+                chart.timeScale().fitContent();
+            }} else {{
+                chart.timeScale().setVisibleLogicalRange({{
+                    from: totalBars - bars,
+                    to: totalBars - 1
+                }});
+            }}
+        }};
+
+        // 9. Toggle Indicators Visibility
+        let indicatorsVisible = true;
+        window.toggleIndicators = function() {{
+            indicatorsVisible = !indicatorsVisible;
+            for (const [k, s] of Object.entries(indSeriesMap)) {{
+                s.applyOptions({{ visible: indicatorsVisible }});
+            }}
+        }};
+
+        // 10. Seamless Fullscreen API
+        const wrapper = document.getElementById("{chart_id}_wrapper");
+        const fsBtn = document.getElementById("{chart_id}_fs_btn");
+
+        function resizeAll() {{
+            const w = wrapper.clientWidth;
+            const h = wrapper.clientHeight;
+            const headerHeight = {header_h};
+            const availHeight = h - headerHeight;
+            let mH = availHeight;
+            let rH = 0;
+            if (hasRsiPane) {{
+                mH = Math.max(200, Math.floor(availHeight * 0.70));
+                rH = Math.max(90, Math.floor(availHeight * 0.30));
+            }}
+            mainContainer.style.height = mH + 'px';
+            chart.resize(w, mH);
+            if (rsiChart) {{
+                const rContainer = document.getElementById("{chart_id}_rsi");
+                rContainer.style.height = rH + 'px';
+                rsiChart.resize(w, rH);
+            }}
+        }}
+
+        window.toggleFullscreen = function() {{
+            if (!document.fullscreenElement && !wrapper.classList.contains('is-fullscreen')) {{
+                if (wrapper.requestFullscreen) {{
+                    wrapper.requestFullscreen().catch(() => enableCssFullscreen());
+                }} else {{
+                    enableCssFullscreen();
+                }}
+            }} else {{
+                if (document.exitFullscreen) {{
+                    document.exitFullscreen().catch(() => disableCssFullscreen());
+                }} else {{
+                    disableCssFullscreen();
+                }}
+            }}
+        }};
+
+        function enableCssFullscreen() {{
+            wrapper.classList.add('is-fullscreen');
+            fsBtn.innerHTML = "✖ Exit";
+            resizeAll();
+        }}
+        function disableCssFullscreen() {{
+            wrapper.classList.remove('is-fullscreen');
+            fsBtn.innerHTML = "⛶ Fullscreen";
+            resizeAll();
+        }}
+
+        document.addEventListener('fullscreenchange', () => {{
+            if (document.fullscreenElement) {{
+                fsBtn.innerHTML = "✖ Exit";
+            }} else {{
+                fsBtn.innerHTML = "⛶ Fullscreen";
+            }}
+            setTimeout(resizeAll, 100);
+        }});
+
+        window.addEventListener('resize', () => setTimeout(resizeAll, 50));
+        setTimeout(resizeAll, 100);
+        setTimeout(resizeAll, 300);
+    </script>
+</body>
+</html>"""
+    return html
+
+
+def generate_equity_drawdown_chart_html(
+    equity_df: pd.DataFrame,
+    initial_capital: float,
+    final_equity: float,
+    symbol: str = "",
+    strategy_name: str = "",
+    benchmark_df: pd.DataFrame = None,
+    height: int = 450,
+    theme: str = "dark",
+    chart_id: str = "tv_equity_chart"
+) -> str:
+    """
+    Renders a dual-pane TradingView Lightweight Chart with:
+    - Top Pane: Portfolio Equity Curve (glowing area) + Peak High-Watermark line + Benchmark comparison line.
+    - Bottom Pane: Underwater Drawdown % area chart with red negative gradient.
+    - Synchronized crosshairs and interactive tooltips.
+    """
+    is_light = (str(theme).lower() == "light")
+    bg_init = "#ffffff" if is_light else "#131722"
+    txt_init = "#787B86"
+
+    if equity_df.empty:
+        return f"""<div style="height:{height}px; background:{bg_init}; color:{txt_init}; display:flex; align-items:center; justify-content:center; font-family:sans-serif; border-radius:8px; border:1px solid {'#e0e3eb' if is_light else '#2A2E39'};">No equity curve data available</div>"""
+
+    eq_clean = equity_df.copy()
+    if not isinstance(eq_clean.index, pd.DatetimeIndex):
+        eq_clean.index = pd.to_datetime(eq_clean.index)
+    eq_clean.sort_index(inplace=True)
+    eq_clean = eq_clean[~eq_clean.index.duplicated(keep="last")]
+
+    equity_pts = []
+    hwm_pts = []
+    dd_pts = []
+
+    for dt, row in eq_clean.iterrows():
+        t_val = dt.strftime("%Y-%m-%d")
+        eq = round(float(row.get("equity", initial_capital)), 2)
+        hwm = round(float(row.get("high_watermark", eq)), 2)
+        dd = round(-abs(float(row.get("drawdown_pct", 0.0))), 2)
+
+        equity_pts.append({"time": t_val, "value": eq})
+        hwm_pts.append({"time": t_val, "value": hwm})
+        dd_pts.append({"time": t_val, "value": dd})
+
+    # Benchmark Points (if provided)
+    bench_pts = []
+    if benchmark_df is not None and not benchmark_df.empty and "close" in benchmark_df.columns:
+        b_clean = benchmark_df.copy()
+        if not isinstance(b_clean.index, pd.DatetimeIndex):
+            b_clean.index = pd.to_datetime(b_clean.index)
+        b_clean.sort_index(inplace=True)
+        first_close = b_clean["close"].dropna().iloc[0] if not b_clean["close"].dropna().empty else 1.0
+        for dt, row in b_clean.iterrows():
+            t_val = dt.strftime("%Y-%m-%d")
+            c = row.get("close")
+            if not pd.isna(c) and first_close > 0:
+                b_val = round(initial_capital * (float(c) / first_close), 2)
+                bench_pts.append({"time": t_val, "value": b_val})
+
+    net_return_pct = ((final_equity - initial_capital) / initial_capital * 100.0) if initial_capital > 0 else 0.0
+    net_return_rupees = final_equity - initial_capital
+    max_dd_val = min(p["value"] for p in dd_pts) if dd_pts else 0.0
+
+    eq_json = json.dumps(equity_pts)
+    hwm_json = json.dumps(hwm_pts)
+    dd_json = json.dumps(dd_pts)
+    bench_json = json.dumps(bench_pts)
+
+    header_h = 40
+    avail_h = height - header_h
+    main_h = max(200, int(avail_h * 0.68))
+    dd_h = max(90, int(avail_h * 0.32))
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Portfolio Equity Curve & Underwater Drawdown</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        html, body {{
+            background-color: {"#ffffff" if is_light else "#131722"};
+            color: {"#1e293b" if is_light else "#d1d4dc"};
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            overflow: hidden;
+            width: 100%; height: 100%;
+        }}
+        .eq-wrapper {{
+            width: 100%;
+            height: {height}px;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            background-color: {"#ffffff" if is_light else "#131722"};
+            border-radius: 10px;
+            border: 1px solid {"#e2e8f0" if is_light else "#2A2E39"};
+            overflow: hidden;
+        }}
+        .eq-wrapper.is-fullscreen {{
+            position: fixed !important;
+            top: 0 !important; left: 0 !important;
+            width: 100vw !important; height: 100vh !important;
+            z-index: 9999999 !important;
+            border-radius: 0 !important;
+            border: none !important;
+        }}
+        .eq-header {{
+            height: {header_h}px;
+            padding: 0 14px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: {"#f8fafc" if is_light else "#1e222d"};
+            border-bottom: 1px solid {"#e2e8f0" if is_light else "#2a2e39"};
+            font-size: 12px;
+        }}
+        .badge {{
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-weight: 700;
+            font-size: 11.5px;
+            display: inline-flex;
+            align-items: center;
+        }}
+        .badge-pos {{
+            background: rgba(16, 185, 129, 0.15);
+            color: #10B981;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }}
+        .badge-neg {{
+            background: rgba(239, 68, 68, 0.15);
+            color: #EF4444;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }}
+        .btn {{
+            background: {"#e2e8f0" if is_light else "#2a2e39"};
+            color: {"#334155" if is_light else "#cbd5e1"};
+            border: 1px solid {"#cbd5e1" if is_light else "#3b4253"};
+            border-radius: 5px;
+            padding: 4px 9px;
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+        }}
+        .btn-fs {{
+            background: #3B82F6;
+            color: #ffffff;
+            border-color: #2563EB;
+        }}
+        .chart-pane-main {{
+            width: 100%;
+            height: {main_h}px;
+            position: relative;
+        }}
+        .chart-pane-dd {{
+            width: 100%;
+            height: {dd_h}px;
+            position: relative;
+            border-top: 1px solid {"#e2e8f0" if is_light else "#2a2e39"};
+        }}
+        .tooltip-card {{
+            position: absolute;
+            top: 10px;
+            left: 14px;
+            z-index: 100;
+            background: {"rgba(255, 255, 255, 0.92)" if is_light else "rgba(19, 23, 34, 0.90)"};
+            border: 1px solid {"#cbd5e1" if is_light else "#2a2e39"};
+            border-radius: 6px;
+            padding: 6px 10px;
+            font-size: 11px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+            pointer-events: none;
+            backdrop-filter: blur(4px);
+        }}
+    </style>
+</head>
+<body>
+    <div class="eq-wrapper" id="{chart_id}_wrapper">
+        <div class="eq-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="font-weight: 700; color: {"#0f172a" if is_light else "#f8fafc"};">📈 Portfolio Equity Curve</span>
+                <span class="badge {"badge-pos" if net_return_rupees >= 0 else "badge-neg"}">
+                    {"₹+" if net_return_rupees >= 0 else "₹"}{net_return_rupees:,.2f} ({"+" if net_return_pct >= 0 else ""}{net_return_pct:.2f}%)
+                </span>
+                <span class="badge badge-neg">Max DD: {max_dd_val:.2f}%</span>
+            </div>
+            <div style="display: flex; gap: 6px;">
+                <button class="btn" onclick="fitEq()">Fit</button>
+                <button class="btn btn-fs" id="{chart_id}_fs_btn" onclick="toggleFs()">⛶ Fullscreen</button>
+            </div>
+        </div>
+
+        <div class="chart-pane-main" id="{chart_id}_main">
+            <div class="tooltip-card" id="{chart_id}_tt">
+                <span id="eq_tt_dt" style="font-weight: 700; color: #3B82F6;">Hover to inspect</span> &nbsp;|&nbsp; 
+                <span id="eq_tt_val">Equity: ₹{final_equity:,.2f}</span>
+            </div>
+        </div>
+        <div class="chart-pane-dd" id="{chart_id}_dd"></div>
+    </div>
+
+    <script>
+        const isLight = {"true" if is_light else "false"};
+        const theme = {{
+            bg: isLight ? "#ffffff" : "#131722",
+            grid: isLight ? "#f1f5f9" : "#1e222d",
+            text: isLight ? "#475569" : "#94a3b8",
+            border: isLight ? "#e2e8f0" : "#2a2e39",
+            blue: "#3B82F6",
+            red: "#EF4444"
+        }};
+
+        const eqData = {eq_json};
+        const hwmData = {hwm_json};
+        const ddData = {dd_json};
+        const benchData = {bench_json};
+
+        // 1. Equity Main Chart
+        const mainEl = document.getElementById("{chart_id}_main");
+        const chart = LightweightCharts.createChart(mainEl, {{
+            width: mainEl.clientWidth,
+            height: mainEl.clientHeight,
+            layout: {{
+                background: {{ type: 'solid', color: theme.bg }},
+                textColor: theme.text,
+                fontSize: 11
+            }},
+            grid: {{
+                vertLines: {{ color: theme.grid }},
+                horzLines: {{ color: theme.grid }}
+            }},
+            rightPriceScale: {{
+                borderColor: theme.border,
+                scaleMargins: {{ top: 0.1, bottom: 0.1 }}
+            }},
+            timeScale: {{
+                borderColor: theme.border,
+                timeVisible: false
+            }},
+            crosshair: {{
+                mode: LightweightCharts.CrosshairMode.Normal,
+                vertLine: {{ color: "#64748b", width: 1, style: 3 }},
+                horzLine: {{ color: "#64748b", width: 1, style: 3 }}
+            }}
+        }});
+
+        // Area Series for Equity Curve
+        const eqSeries = chart.addAreaSeries({{
+            topColor: 'rgba(59, 130, 246, 0.45)',
+            bottomColor: 'rgba(59, 130, 246, 0.02)',
+            lineColor: '#3B82F6',
+            lineWidth: 2,
+            title: 'Equity (₹)'
+        }});
+        eqSeries.setData(eqData);
+
+        // Peak High-Watermark line
+        const hwmSeries = chart.addLineSeries({{
+            color: 'rgba(148, 163, 184, 0.7)',
+            lineWidth: 1.5,
+            lineStyle: 2,
+            title: 'Peak Equity',
+            priceLineVisible: false
+        }});
+        hwmSeries.setData(hwmData);
+
+        // Benchmark line (if present)
+        if (benchData && benchData.length > 0) {{
+            const benchSeries = chart.addLineSeries({{
+                color: '#A855F7',
+                lineWidth: 1.5,
+                lineStyle: 3,
+                title: 'Buy & Hold Benchmark',
+                priceLineVisible: false
+            }});
+            benchSeries.setData(benchData);
+        }}
+
+        // 2. Underwater Drawdown Chart
+        const ddEl = document.getElementById("{chart_id}_dd");
+        const ddChart = LightweightCharts.createChart(ddEl, {{
+            width: ddEl.clientWidth,
+            height: ddEl.clientHeight,
+            layout: {{
+                background: {{ type: 'solid', color: theme.bg }},
+                textColor: theme.text,
+                fontSize: 10
+            }},
+            grid: {{
+                vertLines: {{ color: theme.grid }},
+                horzLines: {{ color: theme.grid }}
+            }},
+            rightPriceScale: {{
+                borderColor: theme.border,
+                scaleMargins: {{ top: 0.05, bottom: 0.1 }}
+            }},
+            timeScale: {{
+                borderColor: theme.border,
+                timeVisible: false
+            }}
+        }});
+
+        const ddSeries = ddChart.addAreaSeries({{
+            topColor: 'rgba(239, 68, 68, 0.02)',
+            bottomColor: 'rgba(239, 68, 68, 0.40)',
+            lineColor: '#EF4444',
+            lineWidth: 1.5,
+            title: 'Drawdown (%)'
+        }});
+        ddSeries.setData(ddData);
+
+        // Reference lines
+        ddSeries.createPriceLine({{ price: 0.0, color: '#94a3b8', lineWidth: 1, lineStyle: 0 }});
+        ddSeries.createPriceLine({{ price: -10.0, color: 'rgba(239, 68, 68, 0.4)', lineWidth: 1, lineStyle: 2, title: '-10%' }});
+
+        // Synchronize TimeScales
+        chart.timeScale().subscribeVisibleLogicalRangeChange(range => {{
+            if (ddChart && range) ddChart.timeScale().setVisibleLogicalRange(range);
+        }});
+        ddChart.timeScale().subscribeVisibleLogicalRangeChange(range => {{
+            if (chart && range) chart.timeScale().setVisibleLogicalRange(range);
+        }});
+
+        // Tooltip inspection
+        const ttDt = document.getElementById("eq_tt_dt");
+        const ttVal = document.getElementById("eq_tt_val");
+
+        chart.subscribeCrosshairMove(param => {{
+            if (!param || !param.time || !param.seriesData) return;
+            const pt = param.seriesData.get(eqSeries);
+            if (pt) {{
+                ttDt.innerText = param.time;
+                const gain = pt.value - {initial_capital};
+                const gainPct = (gain / {initial_capital} * 100).toFixed(2);
+                const gSign = gain >= 0 ? "+" : "";
+                const gColor = gain >= 0 ? "#10B981" : "#EF4444";
+                ttVal.innerHTML = `Equity: <b>₹${{pt.value.toLocaleString('en-IN', {{minimumFractionDigits: 2}})}}</b> <span style="color:${{gColor}}">(${{gSign}}₹${{gain.toLocaleString('en-IN', {{minimumFractionDigits: 2}})}} / ${{gSign}}${{gainPct}}%)</span>`;
+            }}
+        }});
+
+        window.fitEq = function() {{
+            chart.timeScale().fitContent();
+            ddChart.timeScale().fitContent();
+        }};
+
+        // Fullscreen logic
+        const wrapper = document.getElementById("{chart_id}_wrapper");
+        const fsBtn = document.getElementById("{chart_id}_fs_btn");
+
+        function resizeCharts() {{
+            const w = wrapper.clientWidth;
+            const h = wrapper.clientHeight;
+            const avail = h - {header_h};
+            const mH = Math.max(160, Math.floor(avail * 0.70));
+            const dH = Math.max(80, Math.floor(avail * 0.30));
+            mainEl.style.height = mH + 'px';
+            ddEl.style.height = dH + 'px';
+            chart.resize(w, mH);
+            ddChart.resize(w, dH);
+        }}
+
+        window.toggleFs = function() {{
+            if (!wrapper.classList.contains('is-fullscreen')) {{
+                wrapper.classList.add('is-fullscreen');
+                fsBtn.innerText = "✖ Exit";
+            }} else {{
+                wrapper.classList.remove('is-fullscreen');
+                fsBtn.innerText = "⛶ Fullscreen";
+            }}
+            setTimeout(resizeCharts, 50);
+        }};
+
+        window.addEventListener('resize', () => setTimeout(resizeCharts, 50));
+        setTimeout(resizeCharts, 100);
+        setTimeout(resizeCharts, 300);
+    </script>
+</body>
+</html>"""
+    return html
+
