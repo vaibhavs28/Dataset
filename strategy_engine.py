@@ -595,7 +595,8 @@ def run_basket_backtest(
     symbol_dfs: Dict[str, pd.DataFrame],
     cfg: StrategyConfig,
     timeframe: str = "Daily",
-    capital_per_stock: float = 50000.0
+    capital_per_stock: float = 50000.0,
+    slippage_pct: float = 0.05
 ) -> Dict[str, Any]:
     """
     Runs strategy backtesting concurrently across a dictionary of stock DataFrames.
@@ -610,7 +611,8 @@ def run_basket_backtest(
                 cfg=cfg,
                 symbol=sym,
                 timeframe=timeframe,
-                initial_capital=capital_per_stock
+                initial_capital=capital_per_stock,
+                slippage_pct=slippage_pct
             )
             results.append(res)
 

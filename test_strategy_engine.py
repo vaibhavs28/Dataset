@@ -129,7 +129,7 @@ class TestStrategyEngine(unittest.TestCase):
             "STOCK_C": create_synthetic_ohlcv(120, 80.0),
         }
         cfg = get_preset_strategy("Triple_EMA")
-        basket_res = run_basket_backtest(basket_data, cfg, capital_per_stock=50000.0)
+        basket_res = run_basket_backtest(basket_data, cfg, timeframe="15-Min", capital_per_stock=50000.0, slippage_pct=0.08)
         leaderboard = basket_res["leaderboard"]
         
         self.assertFalse(leaderboard.empty)
