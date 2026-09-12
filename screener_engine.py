@@ -304,17 +304,28 @@ def run_screen(
     symbols: List[str],
     cfg: ScreenerConfig,
     as_of_date: Optional[Any] = None,
+    as_of_time: Optional[str] = None,
     data_provider_fn=None
 ) -> pd.DataFrame:
     """
     Executes a screener across a list of symbols.
-    Supports historical date backtesting via `as_of_date`.
+    Supports historical date & time backtesting via `as_of_date` and `as_of_time`.
     data_provider_fn(symbol, timeframe) returns raw OHLCV DataFrame.
     """
     matches = []
     needed_tfs = set(c.timeframe for c in cfg.clauses)
     if not needed_tfs:
         needed_tfs = {"Daily"}
+
+    close_to_start = {
+        "10:30": "09:15:00",
+        "11:45": "10:30:00",
+        "13:00": "11:45:00",
+        "14:15": "13:00:00",
+        "15:30": "14:15:00",
+    }
+    time_str = as_of_time[:5] if as_of_time else "15:30"
+    time_cutoff = close_to_start.get(time_str, "14:15:00")
 
     for sym in symbols:
         tf_dfs = {}
@@ -369,12 +380,11 @@ def run_screen(
                     intra_raw = intra_raw.copy()
                     intra_raw.index = pd.to_datetime(intra_raw.index)
                 if as_of_date is not None:
-                    target_dt = pd.to_datetime(as_of_date)
-                    eod_naive = target_dt.replace(hour=23, minute=59, second=59)
+                    target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
                     if intra_raw.index.tz is not None:
-                        intra_raw = intra_raw[intra_raw.index <= eod_naive.tz_localize(intra_raw.index.tz)]
+                        intra_raw = intra_raw[intra_raw.index <= target_dt.tz_localize(intra_raw.index.tz)]
                     else:
-                        intra_raw = intra_raw[intra_raw.index <= eod_naive]
+                        intra_raw = intra_raw[intra_raw.index <= target_dt]
                 if intra_raw is not None and not intra_raw.empty:
                     tf_dfs["75-Min"] = compute_screener_indicators(intra_raw)
 
@@ -382,6 +392,7 @@ def run_screen(
         if eval_res is not None:
             as_of_str = str(daily_raw.index[-1])[:10]
             eval_res["Scan_Date"] = as_of_str
+            eval_res["Scan_Time"] = time_str
             if len(full_daily) > len(daily_raw):
                 future_close = float(full_daily["close"].iloc[-1])
                 curr_p = float(eval_res.get("LTP", 0.0))
@@ -404,14 +415,15 @@ def evaluate_stock_waterfall(
     symbol: str,
     daily_df: pd.DataFrame,
     intra_75_df: Optional[pd.DataFrame] = None,
-    as_of_date: Optional[Any] = None
+    as_of_date: Optional[Any] = None,
+    as_of_time: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Evaluates exact Chartink 'positional-scan-364' rules via a strict Waterfall Model:
     Monthly Pass ➔ Weekly Pass ➔ Daily Pass ➔ 75-Min Pass.
     If any stage fails, the stock cannot progress to subsequent stages.
     If Monthly fails, the stock is completely excluded (returns None).
-    Supports historical date slicing if as_of_date is provided.
+    Supports historical date & time slicing if as_of_date/as_of_time are provided.
     """
     if daily_df is None or daily_df.empty:
         return None
@@ -422,6 +434,30 @@ def evaluate_stock_waterfall(
 
     full_daily = daily_df
     latest_market_close = float(full_daily["close"].iloc[-1])
+
+    # Determine candle close and start time mappings
+    candle_close_map = {
+        (9, 15): "10:30",
+        (10, 30): "11:45",
+        (11, 45): "13:00",
+        (13, 0): "14:15",
+        (14, 15): "15:30",
+    }
+    close_to_start = {
+        "10:30": "09:15:00",
+        "11:45": "10:30:00",
+        "13:00": "11:45:00",
+        "14:15": "13:00:00",
+        "15:30": "14:15:00",
+    }
+
+    scan_time_str = "15:30"
+    if as_of_time:
+        scan_time_str = as_of_time[:5]
+    elif intra_75_df is not None and not intra_75_df.empty:
+        last_intra_dt = intra_75_df.index[-1]
+        if hasattr(last_intra_dt, "hour"):
+            scan_time_str = candle_close_map.get((last_intra_dt.hour, last_intra_dt.minute), f"{last_intra_dt.hour:02d}:{last_intra_dt.minute:02d}")
 
     if as_of_date is not None:
         target_dt = pd.to_datetime(as_of_date)
@@ -435,16 +471,23 @@ def evaluate_stock_waterfall(
             if not isinstance(intra_75_df.index, pd.DatetimeIndex):
                 intra_75_df = intra_75_df.copy()
                 intra_75_df.index = pd.to_datetime(intra_75_df.index)
+
+            time_cutoff = close_to_start.get(scan_time_str, "14:15:00")
+            dt_str = str(as_of_date)[:10]
+            cutoff_dt = pd.to_datetime(f"{dt_str} {time_cutoff}")
             if intra_75_df.index.tz is not None:
-                intra_75_df = intra_75_df[intra_75_df.index <= eod_naive.tz_localize(intra_75_df.index.tz)]
+                intra_75_df = intra_75_df[intra_75_df.index <= cutoff_dt.tz_localize(intra_75_df.index.tz)]
             else:
-                intra_75_df = intra_75_df[intra_75_df.index <= eod_naive]
+                intra_75_df = intra_75_df[intra_75_df.index <= cutoff_dt]
 
     if daily_df is None or daily_df.empty or len(daily_df) < 15:
         return None
 
     close = daily_df["close"].values
     ltp = float(close[-1])
+    if as_of_time and as_of_time[:5] != "15:30" and intra_75_df is not None and not intra_75_df.empty:
+        ltp = float(intra_75_df["close"].iloc[-1])
+
     if ltp < 100.0 or ltp > 10000.0:
         return None
 
@@ -600,6 +643,7 @@ def evaluate_stock_waterfall(
     return {
         "Symbol": symbol,
         "Scan Date": as_of_str,
+        "Scan Time": scan_time_str,
         "LTP": round(ltp, 2),
         "1D Return (%)": round(change_pct, 2),
         "Return Since Scan (%)": fwd_return_pct if has_forward_data else None,
@@ -626,12 +670,13 @@ def evaluate_stock_waterfall(
 def run_waterfall_scan(
     symbols: List[str],
     as_of_date: Optional[Any] = None,
+    as_of_time: Optional[str] = None,
     data_provider_fn=None,
     progress_callback=None
 ) -> Dict[str, Any]:
     """
     Executes the complete Chartink 'positional-scan-364' waterfall screening across symbols.
-    Supports historical date backtesting via `as_of_date`.
+    Supports historical date and time backtesting via `as_of_date` and `as_of_time`.
     Returns filtered dataframes for each stage.
     """
     results = []
@@ -656,7 +701,7 @@ def run_waterfall_scan(
         else:
             intra_75_df = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
 
-        eval_res = evaluate_stock_waterfall(sym, daily_df, intra_75_df, as_of_date=as_of_date)
+        eval_res = evaluate_stock_waterfall(sym, daily_df, intra_75_df, as_of_date=as_of_date, as_of_time=as_of_time)
         if eval_res is not None:
             results.append(eval_res)
 
@@ -668,7 +713,7 @@ def run_waterfall_scan(
             "stage_3_daily": empty_df,
             "stage_2_weekly": empty_df,
             "stage_1_monthly": empty_df,
-            "counts": {"total": total_scanned, "as_of_date": str(as_of_date) if as_of_date else "Latest Live", "m_pass": 0, "w_pass": 0, "d_pass": 0, "q4_pass": 0}
+            "counts": {"total": total_scanned, "as_of_date": str(as_of_date) if as_of_date else "Latest Live", "as_of_time": str(as_of_time) if as_of_time else "15:30", "m_pass": 0, "w_pass": 0, "d_pass": 0, "q4_pass": 0}
         }
 
     sort_cols = ["Stage", "1D Return (%)"]
@@ -683,6 +728,7 @@ def run_waterfall_scan(
     counts = {
         "total": total_scanned,
         "as_of_date": str(as_of_date) if as_of_date else "Latest Live",
+        "as_of_time": str(as_of_time) if as_of_time else "15:30",
         "m_pass": len(df_s1),
         "w_pass": len(df_s2),
         "d_pass": len(df_s3),

@@ -163,8 +163,9 @@ def render_screener_page(theme: str = "dark"):
             )
 
         as_of_param = None
+        as_of_time_param = None
         if "Historical" in wf_date_mode:
-            hist_c1, hist_c2 = st.columns([1.6, 2.4])
+            hist_c1, hist_c2, hist_c3 = st.columns([1.5, 1.4, 2.1])
             with hist_c1:
                 # Default to 5 Sept 2026 or previous trading day
                 default_dt = datetime(2026, 9, 5).date()
@@ -178,11 +179,26 @@ def render_screener_page(theme: str = "dark"):
                 as_of_param = selected_as_of.strftime("%Y-%m-%d")
 
             with hist_c2:
+                selected_time_opt = st.selectbox(
+                    "⏰ Select Candle / Time:",
+                    [
+                        "15:30 (Market Close / EOD)",
+                        "14:15 (75m Candle 4 Close)",
+                        "13:00 (75m Candle 3 Close)",
+                        "11:45 (75m Candle 2 Close)",
+                        "10:30 (75m Candle 1 Close)"
+                    ],
+                    index=0,
+                    key="wf_as_of_time_input"
+                )
+                as_of_time_param = selected_time_opt[:5]
+
+            with hist_c3:
                 st.markdown(f"""
                 <div style="background: rgba(16, 185, 129, 0.08); border-left: 3px solid #10B981; padding: 7px 12px; border-radius: 4px; margin-top: 14px; font-size: 11.5px; color: {styles['text_secondary']};">
-                    <b>🎯 Backtest Mode Active (As-Of: {as_of_param}):</b><br/>
-                    All candles are sliced up to <b>{as_of_param} EOD</b>. Zero future data is used in indicators. 
-                    Forward returns to present day will be calculated automatically.
+                    <b>🎯 Backtest Active: {as_of_param} {as_of_time_param}</b><br/>
+                    Candles sliced up to <b>{as_of_param} {as_of_time_param}</b>. Zero future data is leaked.
+                    Forward returns to present day calculated automatically.
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -215,7 +231,7 @@ def render_screener_page(theme: str = "dark"):
             run_wf_btn = st.button("🚀 Run Waterfall Scan", type="primary", use_container_width=True, key="run_wf_scan_btn")
 
         # Auto-run or button press
-        scan_id = as_of_param if as_of_param else "latest"
+        scan_id = f"{as_of_param}_{as_of_time_param}" if as_of_param else "latest"
         wf_cache_key = f"wf_res_{wf_universe}_{scan_id}"
         if run_wf_btn or wf_cache_key not in st.session_state:
             target_syms = get_target_equities(wf_universe)
@@ -227,7 +243,7 @@ def render_screener_page(theme: str = "dark"):
                     p_bar.progress(min(curr / max(total, 1), 1.0))
                     p_txt.caption(f"Screening {sym} ({curr}/{total})...")
 
-            wf_results = run_waterfall_scan(target_syms, as_of_date=as_of_param, progress_callback=_wf_progress)
+            wf_results = run_waterfall_scan(target_syms, as_of_date=as_of_param, as_of_time=as_of_time_param, progress_callback=_wf_progress)
             p_bar.empty()
             p_txt.empty()
             st.session_state[wf_cache_key] = wf_results
@@ -236,7 +252,7 @@ def render_screener_page(theme: str = "dark"):
         if wf_cache_key in st.session_state:
             wf_data = st.session_state[wf_cache_key]
             counts = wf_data.get("counts", {})
-            as_of_label = counts.get("as_of_date", "Latest Live")
+            as_of_label = f"{counts.get('as_of_date', 'Latest')} {counts.get('as_of_time', '')}".strip()
 
             # Funnel Progression Metric Cards
             fk1, fk2, fk3, fk4, fk5 = st.columns(5)
@@ -275,7 +291,7 @@ def render_screener_page(theme: str = "dark"):
                 st.warning(f"⚠️ No stocks qualified under '{wf_stage_filter}' as of {as_of_label}. All non-passing stocks have been hidden.")
                 st.caption("Tip: Select 'Stage 3+' or 'Stage 2+' to see stocks in earlier stages of alignment on that date.")
             else:
-                display_cols = ["Symbol", "Scan Date", "LTP", "1D Return (%)"]
+                display_cols = ["Symbol", "Scan Date", "Scan Time", "LTP", "1D Return (%)"]
                 if "Return Since Scan (%)" in active_df.columns and active_df["Return Since Scan (%)"].notna().any():
                     display_cols.extend(["Return Since Scan (%)", "Latest Price"])
                 display_cols.extend([
@@ -392,8 +408,9 @@ def render_screener_page(theme: str = "dark"):
             logic_val = "ALL" if "ALL" in filter_logic else "ANY"
 
         cust_as_of_param = None
+        cust_as_of_time_param = None
         if "Historical" in cust_date_mode:
-            c_d1, c_d2 = st.columns([1.5, 3.5])
+            c_d1, c_d2, c_d3 = st.columns([1.5, 1.4, 2.1])
             with c_d1:
                 c_sel_date = st.date_input(
                     "📅 Select Scan Date:",
@@ -404,9 +421,23 @@ def render_screener_page(theme: str = "dark"):
                 )
                 cust_as_of_param = c_sel_date.strftime("%Y-%m-%d")
             with c_d2:
+                c_sel_time = st.selectbox(
+                    "⏰ Select Time:",
+                    [
+                        "15:30 (Market Close / EOD)",
+                        "14:15 (75m Candle 4 Close)",
+                        "13:00 (75m Candle 3 Close)",
+                        "11:45 (75m Candle 2 Close)",
+                        "10:30 (75m Candle 1 Close)"
+                    ],
+                    index=0,
+                    key="scr_cust_as_of_time_input"
+                )
+                cust_as_of_time_param = c_sel_time[:5]
+            with c_d3:
                 st.markdown(f"""
                 <div style="background: rgba(16, 185, 129, 0.08); border-left: 3px solid #10B981; padding: 7px 12px; border-radius: 4px; margin-top: 14px; font-size: 11.5px; color: {styles['text_secondary']};">
-                    <b>🎯 Backtest Mode Active (As-Of: {cust_as_of_param}):</b> Slicing candles up to <b>{cust_as_of_param} EOD</b>. Returns since scan will be included.
+                    <b>🎯 Backtest Active: {cust_as_of_param} {cust_as_of_time_param}</b><br/>Slicing candles up to <b>{cust_as_of_param} {cust_as_of_time_param}</b>.
                 </div>
                 """, unsafe_allow_html=True)
 
@@ -560,7 +591,7 @@ def render_screener_page(theme: str = "dark"):
             ]
             cfg = ScreenerConfig(name=selected_preset, logic=logic_val, universe=universe_choice, clauses=screener_clauses)
             p_bar = st.progress(0)
-            res_df = run_screen(target_symbols, cfg, as_of_date=cust_as_of_param)
+            res_df = run_screen(target_symbols, cfg, as_of_date=cust_as_of_param, as_of_time=cust_as_of_time_param)
             p_bar.empty()
             st.session_state["last_screener_results"] = res_df
             st.session_state["last_screener_total_scanned"] = len(target_symbols)
@@ -590,15 +621,23 @@ def render_screener_page(theme: str = "dark"):
                 with m4:
                     render_metric_card("Top Gainer", f"{top_stock}", f"{res_df.iloc[0]['Change_%']:+.2f}%" if (not res_df.empty and 'Change_%' in res_df.columns) else "", "normal", styles)
 
-                display_df = res_df.rename(columns={"Change_%": "1D Return (%)", "LTP": "LTP (₹)", "Clauses_Passed": "Rules Passed"})
+                display_df = res_df.rename(columns={
+                    "Change_%": "1D Return (%)",
+                    "LTP": "LTP (₹)",
+                    "Clauses_Passed": "Rules Passed",
+                    "Scan_Date": "Scan Date",
+                    "Scan_Time": "Scan Time",
+                    "Return_Since_Scan_%": "Return Since Scan (%)",
+                    "Latest_Close": "Latest Price"
+                })
                 fmt_custom = {
                     "LTP (₹)": "₹{:,.2f}",
                     "1D Return (%)": "{:+.2f}%",
-                    "Return_Since_Scan_%": "{:+.2f}%",
-                    "Latest_Close": "₹{:,.2f}",
+                    "Return Since Scan (%)": "{:+.2f}%",
+                    "Latest Price": "₹{:,.2f}",
                     "Volume": "{:,}"
                 }
-                color_subsets = [c for c in ["1D Return (%)", "Return_Since_Scan_%"] if c in display_df.columns]
+                color_subsets = [c for c in ["1D Return (%)", "Return Since Scan (%)"] if c in display_df.columns]
                 st_custom_styled = display_df.style.format(fmt_custom)
                 if color_subsets:
                     st_custom_styled = st_custom_styled.map(

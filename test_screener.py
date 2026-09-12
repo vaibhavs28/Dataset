@@ -141,9 +141,10 @@ class TestScreenerEngine(unittest.TestCase):
         mid_date = df.index[45].strftime("%Y-%m-%d")
         
         # Sliced directly or via as_of_date
-        res_hist = evaluate_stock_waterfall("TEST_SYM", df, as_of_date=mid_date)
+        res_hist = evaluate_stock_waterfall("TEST_SYM", df, as_of_date=mid_date, as_of_time="13:00")
         if res_hist is not None:
             self.assertEqual(res_hist["Scan Date"], mid_date)
+            self.assertEqual(res_hist["Scan Time"], "13:00")
             self.assertIsNotNone(res_hist.get("Return Since Scan (%)"))
             self.assertEqual(res_hist["LTP"], round(float(df.iloc[45]["close"]), 2))
 
@@ -157,9 +158,10 @@ class TestScreenerEngine(unittest.TestCase):
                 ScreenerClause(timeframe="Daily", lhs="High", operator=">", rhs_type="Indicator", rhs_indicator="Low")
             ]
         )
-        res = run_screen(["TEST_SYM"], cfg, as_of_date=mid_date, data_provider_fn=lambda s, tf: df)
+        res = run_screen(["TEST_SYM"], cfg, as_of_date=mid_date, as_of_time="11:45", data_provider_fn=lambda s, tf: df)
         self.assertFalse(res.empty)
         self.assertEqual(res.iloc[0]["Scan_Date"], mid_date)
+        self.assertEqual(res.iloc[0]["Scan_Time"], "11:45")
         self.assertIn("Return_Since_Scan_%", res.columns)
 
 
