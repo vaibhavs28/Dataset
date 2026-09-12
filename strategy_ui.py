@@ -182,15 +182,15 @@ def calculate_monthly_returns_matrix(equity_df: pd.DataFrame) -> pd.DataFrame:
     return res_df[cols]
 
 
-def calculate_exit_reason_breakdown(trades: list) -> pd.DataFrame:
-    """Aggregates trades by exit reason for risk diagnostics."""
+def calculate_exit_reason_breakdown(trades: list, stop_loss_pct: float = 0.0) -> pd.DataFrame:
+    """Aggregates trades by exit reason for risk diagnostics including Risk:Reward."""
     if not trades:
         return pd.DataFrame()
     reasons = {}
     for t in trades:
         r = t.exit_reason or "Signal Reversal"
         if r not in reasons:
-            reasons[r] = {"count": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "total_pct": 0.0}
+            reasons[r] = {"count": 0, "wins": 0, "losses": 0, "total_pnl": 0.0, "total_pct": 0.0, "r_list": []}
         reasons[r]["count"] += 1
         if t.pnl_percent >= 0:
             reasons[r]["wins"] += 1
@@ -198,16 +198,22 @@ def calculate_exit_reason_breakdown(trades: list) -> pd.DataFrame:
             reasons[r]["losses"] += 1
         reasons[r]["total_pnl"] += t.pnl_rupees
         reasons[r]["total_pct"] += t.pnl_percent
+        if hasattr(t, "realized_rr") and t.realized_rr != 0.0:
+            reasons[r]["r_list"].append(t.realized_rr)
+        elif stop_loss_pct > 0:
+            reasons[r]["r_list"].append(t.pnl_percent / stop_loss_pct)
 
     records = []
     for r, d in reasons.items():
         cnt = d["count"]
+        avg_r = (sum(d["r_list"]) / len(d["r_list"])) if d["r_list"] else 0.0
         records.append({
             "Exit Reason": r,
             "Trades": cnt,
             "Win Rate (%)": round(d["wins"] / cnt * 100.0, 1),
             "Total P&L (₹)": round(d["total_pnl"], 2),
             "Avg Return (%)": round(d["total_pct"] / cnt, 2),
+            "Avg Risk:Reward": f"{avg_r:+.2f}R" if avg_r != 0 else "-",
             "Wins": d["wins"],
             "Losses": d["losses"]
         })
@@ -482,19 +488,42 @@ def plot_candlesticks_with_trade_markers(
     return fig
 
 
-def load_candles_for_simulation(symbol: str, timeframe: str) -> pd.DataFrame:
-    """Loads and resamples authentic candles for simulation."""
-    if timeframe == "75-Min":
-        df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=100)
-        if df is not None and not df.empty:
-            return df
-    # Daily fallback or primary
+def load_candles_for_simulation(symbol: str, timeframe: str, custom_minutes: int = 15) -> pd.DataFrame:
+    """Loads and resamples authentic candles for simulation across any timeframe (Daily, Weekly, Monthly, or custom minutes)."""
+    import re
+    tf_str = str(timeframe).strip()
+    if tf_str == "Weekly":
+        daily = database.get_candles_df(symbol)
+        return scanner.resample_ohlcv(daily, "weekly") if (daily is not None and not daily.empty) else pd.DataFrame()
+    elif tf_str == "Monthly":
+        daily = database.get_candles_df(symbol)
+        return scanner.resample_ohlcv(daily, "monthly") if (daily is not None and not daily.empty) else pd.DataFrame()
+    elif tf_str == "Daily":
+        daily = database.get_candles_df(symbol)
+        return daily if (daily is not None and not daily.empty) else pd.DataFrame()
+    elif tf_str in ("75-Min", "75m"):
+        df_75 = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=50)
+        if df_75 is not None and not df_75.empty:
+            return df_75
+
+    # Intraday minutes extraction (e.g. 1-Min, 3-Min, 5-Min, 10-Min, 15-Min, 30-Min, 45-Min, 60-Min, 125-Min, Custom)
+    minutes = custom_minutes
+    m = re.search(r"(\d+)", tf_str)
+    if m:
+        minutes = int(m.group(1))
+    elif "custom" in tf_str.lower():
+        minutes = custom_minutes
+
+    try:
+        df_intra = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=minutes, min_bars=20)
+        if df_intra is not None and not df_intra.empty:
+            return df_intra
+    except Exception as e:
+        logger.warning(f"Note loading {minutes}-min candles for {symbol}: {e}")
+
+    # Fallback to daily
     daily = database.get_candles_df(symbol)
-    if daily is None or daily.empty:
-        return pd.DataFrame()
-    if timeframe == "Weekly":
-        return scanner.resample_ohlcv(daily, "weekly")
-    return daily
+    return daily if (daily is not None and not daily.empty) else pd.DataFrame()
 
 
 def render_strategy_lab_page(theme: str = "dark"):
@@ -582,6 +611,15 @@ def render_strategy_lab_page(theme: str = "dark"):
         with r_col4:
             cfg.exit_on_signal_reversal = st.checkbox("Exit on Signal Reversal", value=cfg.exit_on_signal_reversal, help="Close trade immediately when strategy gives exit/reversal signal")
 
+        if cfg.stop_loss_pct > 0 and cfg.target_pct > 0:
+            planned_rr_ratio = cfg.target_pct / cfg.stop_loss_pct
+            st.markdown(f"""
+            <div style="margin-top: 4px; margin-bottom: 8px; padding: 6px 14px; background: rgba(59, 130, 246, 0.10); border: 1px solid rgba(59, 130, 246, 0.3); border-radius: 6px; display: inline-flex; align-items: center; gap: 10px;">
+                <span style="font-size: 13px; font-weight: 700; color: #38BDF8;">🎯 Planned Risk : Reward = 1 : {planned_rr_ratio:.2f}</span>
+                <span style="font-size: 11.5px; opacity: 0.85; color: {tc['text_secondary']};">(Risk ₹{cfg.stop_loss_pct:.1f}% to make ₹{cfg.target_pct:.1f}%)</span>
+            </div>
+            """, unsafe_allow_html=True)
+
     # 3. Main Tabs
     tab_single, tab_basket, tab_compare = st.tabs([
         "🎯 Single-Stock Simulation",
@@ -593,12 +631,21 @@ def render_strategy_lab_page(theme: str = "dark"):
     # TAB 1: SINGLE-STOCK SIMULATION
     # ==========================================
     with tab_single:
-        s_col1, s_col2, s_col3, s_col4 = st.columns([1.8, 1.2, 1.5, 1.5])
+        tf_options = [
+            "Daily", "75-Min", "125-Min", "60-Min (1h)", "45-Min", "30-Min", "15-Min", "5-Min", "3-Min", "1-Min",
+            "Weekly", "Monthly", "Custom (Minutes)"
+        ]
+        s_col1, s_col2, s_col3, s_col4 = st.columns([1.8, 1.4, 1.4, 1.4])
         with s_col1:
             default_sym_idx = all_symbols.index("RELIANCE") if "RELIANCE" in all_symbols else 0
             sel_sym = st.selectbox("Select Stock:", options=all_symbols, index=default_sym_idx, key="slab_single_sym")
         with s_col2:
-            sel_tf = st.selectbox("Timeframe:", options=["Daily", "Weekly", "75-Min"], index=0, key="slab_single_tf")
+            sel_tf = st.selectbox("Timeframe:", options=tf_options, index=0, key="slab_single_tf")
+            if sel_tf == "Custom (Minutes)":
+                custom_min_val = st.number_input("Custom Minutes:", min_value=1, max_value=375, value=10, step=1, key="slab_single_custom_min")
+                effective_tf = f"{int(custom_min_val)}-Min"
+            else:
+                effective_tf = sel_tf
         with s_col3:
             lookback_choice = st.selectbox("Historical Lookback:", ["All Available Data", "Past 2 Years", "Past 1 Year", "Past 6 Months"], index=0)
         with s_col4:
@@ -607,12 +654,12 @@ def render_strategy_lab_page(theme: str = "dark"):
             run_btn = st.button("🚀 Run Backtest", type="primary", use_container_width=True, key="slab_run_single_btn")
 
         # Auto-run on first load or button press
-        sim_key = f"slab_result_{sel_sym}_{sel_tf}_{selected_strat_name}"
+        sim_key = f"slab_result_{sel_sym}_{effective_tf}_{selected_strat_name}"
         if run_btn or sim_key not in st.session_state:
-            with st.spinner(f"Simulating {selected_strat_name} on {sel_sym} ({sel_tf})..."):
-                df_raw = load_candles_for_simulation(sel_sym, sel_tf)
+            with st.spinner(f"Simulating {selected_strat_name} on {sel_sym} ({effective_tf})..."):
+                df_raw = load_candles_for_simulation(sel_sym, effective_tf)
                 if df_raw.empty or len(df_raw) < 15:
-                    st.warning(f"Insufficient candle data for {sel_sym} on {sel_tf}. Try syncing data or another timeframe.")
+                    st.warning(f"Insufficient candle data for {sel_sym} on {effective_tf}. Try syncing data or another timeframe.")
                 else:
                     # Filter lookback if requested
                     if lookback_choice == "Past 6 Months":
@@ -631,7 +678,7 @@ def render_strategy_lab_page(theme: str = "dark"):
                         df_ind,
                         cfg,
                         symbol=sel_sym,
-                        timeframe=sel_tf,
+                        timeframe=effective_tf,
                         initial_capital=initial_cap,
                         slippage_pct=slippage_pct
                     )
@@ -702,7 +749,8 @@ def render_strategy_lab_page(theme: str = "dark"):
                 with rk3:
                     render_metric_card("Calmar Ratio", f"{adv['calmar_ratio']:.2f}", f"Max DD Duration: {adv['max_dd_bars']} bars", "normal", tc)
                 with rk4:
-                    render_metric_card("Streaks & Payoff", f"{adv['max_consecutive_wins']}W / {adv['max_consecutive_losses']}L", f"Payoff Ratio: {adv['payoff_ratio']:.2f} (Avg Win / Avg Loss)", "blue", tc)
+                    payoff_sub = f"Avg R:R: {res.avg_risk_reward:+.2f}R | Planned: 1:{res.planned_risk_reward:.2f}" if res.planned_risk_reward > 0 else f"Streaks: {adv['max_consecutive_wins']}W / {adv['max_consecutive_losses']}L"
+                    render_metric_card("Risk:Reward & Payoff", f"1 : {adv['payoff_ratio']:.2f}", payoff_sub, "blue", tc)
 
             # 4. Monthly & Annual Returns Matrix (Heatmap Table)
             m_matrix = calculate_monthly_returns_matrix(res.equity_curve)
@@ -742,7 +790,8 @@ def render_strategy_lab_page(theme: str = "dark"):
                 )
 
             if chart_view_mode == "⚡ TradingView (Markers)":
-                is_intra = (sel_tf in ("75-Min", "75m", "1-Min", "5-Min", "15-Min"))
+                is_intra = (res.timeframe not in ("Daily", "Weekly", "Monthly"))
+                safe_tf_id = res.timeframe.replace(" ", "_").replace("(", "").replace(")", "").replace("-", "_")
                 components.html(
                     tradingview_charts.generate_strategy_backtest_chart_html(
                         df_ind,
@@ -753,7 +802,7 @@ def render_strategy_lab_page(theme: str = "dark"):
                         height=640,
                         theme=theme,
                         is_intraday=is_intra,
-                        chart_id=f"tv_strat_{sel_sym}_{sel_tf}",
+                        chart_id=f"tv_strat_{sel_sym}_{safe_tf_id}",
                         show_volume=False
                     ),
                     height=660
@@ -763,7 +812,7 @@ def render_strategy_lab_page(theme: str = "dark"):
 
             # 6. Exit Reason & Win/Loss Diagnostics
             if res.trades:
-                ex_df = calculate_exit_reason_breakdown(res.trades)
+                ex_df = calculate_exit_reason_breakdown(res.trades, stop_loss_pct=cfg.stop_loss_pct)
                 if not ex_df.empty:
                     with st.expander("📊 **Exit Reason Diagnostics & Trade Distribution**", expanded=False):
                         st.dataframe(
@@ -780,7 +829,16 @@ def render_strategy_lab_page(theme: str = "dark"):
             st.markdown("#### 📜 Complete Trade Log")
             if res.trades:
                 trade_rows = []
+                planned_rr_str = f"1 : {cfg.target_pct / cfg.stop_loss_pct:.2f}" if (cfg.stop_loss_pct > 0 and cfg.target_pct > 0) else "-"
                 for t in res.trades:
+                    if hasattr(t, "risk_reward") and t.risk_reward:
+                        rr_display = t.risk_reward
+                    elif cfg.stop_loss_pct > 0:
+                        r_mult = t.pnl_percent / cfg.stop_loss_pct
+                        rr_display = f"1 : {r_mult:.2f} (+{r_mult:.2f}R)" if r_mult >= 0 else f"-1 : {abs(r_mult):.2f} ({r_mult:.2f}R)"
+                    else:
+                        rr_display = "-"
+
                     trade_rows.append({
                         "Trade #": t.trade_id,
                         "Type": t.direction,
@@ -791,6 +849,8 @@ def render_strategy_lab_page(theme: str = "dark"):
                         "Qty": t.quantity,
                         "Net P&L (₹)": round(t.pnl_rupees, 2),
                         "Return (%)": round(t.pnl_percent, 2),
+                        "Risk:Reward (R)": rr_display,
+                        "Planned R:R": planned_rr_str,
                         "Exit Reason": t.exit_reason,
                         "Bars Held": t.duration_bars,
                         "MFE (%)": round(t.max_favorable_excursion, 2),
@@ -799,6 +859,14 @@ def render_strategy_lab_page(theme: str = "dark"):
                 trades_df = pd.DataFrame(trade_rows)
                 
                 # Format dataframe styling
+                def _color_rr_cell(val):
+                    if isinstance(val, str):
+                        if val.startswith("1 :") or "(+" in val or "+ " in val:
+                            return "color: #10B981; font-weight: 600;"
+                        elif val.startswith("-1 :") or "(-" in val or "- " in val:
+                            return "color: #EF4444; font-weight: 600;"
+                    return ""
+
                 st.dataframe(
                     trades_df.style.format({
                         "Entry (₹)": "₹{:,.2f}",
@@ -807,7 +875,8 @@ def render_strategy_lab_page(theme: str = "dark"):
                         "Return (%)": "{:+.2f}%",
                         "MFE (%)": "{:+.2f}%",
                         "MAE (%)": "{:+.2f}%",
-                    }).map(lambda v: "color: #10B981; font-weight: 600;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: 600;" if isinstance(v, (int, float)) and v < 0 else ""), subset=["Net P&L (₹)", "Return (%)"]),
+                    }).map(lambda v: "color: #10B981; font-weight: 600;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: 600;" if isinstance(v, (int, float)) and v < 0 else ""), subset=["Net P&L (₹)", "Return (%)"]
+                    ).map(_color_rr_cell, subset=["Risk:Reward (R)"]),
                     use_container_width=True,
                     height=360
                 )
@@ -840,7 +909,12 @@ def render_strategy_lab_page(theme: str = "dark"):
                 key="slab_basket_choice"
             )
         with b_col2:
-            basket_tf = st.selectbox("Timeframe:", ["Daily", "Weekly"], index=0, key="slab_basket_tf")
+            basket_tf = st.selectbox("Timeframe:", ["Daily", "75-Min", "15-Min", "5-Min", "Weekly", "Custom (Minutes)"], index=0, key="slab_basket_tf")
+            if basket_tf == "Custom (Minutes)":
+                basket_custom_min = st.number_input("Minutes:", min_value=1, max_value=375, value=15, step=1, key="slab_basket_custom_min")
+                effective_basket_tf = f"{int(basket_custom_min)}-Min"
+            else:
+                effective_basket_tf = basket_tf
         with b_col3:
             cap_per_stock = st.number_input("Capital per Stock (₹):", min_value=10000.0, value=50000.0, step=10000.0)
         with b_col4:
@@ -865,7 +939,7 @@ def render_strategy_lab_page(theme: str = "dark"):
             for i, sym in enumerate(custom_basket_syms):
                 p_bar.progress(min((i + 1) / max(total_n, 1), 1.0))
                 p_msg.caption(f"Loading & backtesting {sym} ({i+1}/{total_n})...")
-                df_b = load_candles_for_simulation(sym, basket_tf)
+                df_b = load_candles_for_simulation(sym, effective_basket_tf)
                 if not df_b.empty and len(df_b) >= 20:
                     basket_data[sym] = df_b
 
@@ -873,7 +947,7 @@ def render_strategy_lab_page(theme: str = "dark"):
             basket_res = run_basket_backtest(
                 basket_data,
                 cfg,
-                timeframe=basket_tf,
+                timeframe=effective_basket_tf,
                 capital_per_stock=cap_per_stock,
                 slippage_pct=slippage_pct
             )
@@ -890,16 +964,16 @@ def render_strategy_lab_page(theme: str = "dark"):
             with bk1:
                 render_metric_card("Portfolio Capital", f"₹{b_res['total_capital']:,.0f}", f"{b_res['total_symbols']} Active Equities", "normal", tc)
             with bk2:
-                render_metric_card("Net Portfolio P&L", f"{b_res['total_pnl_pct']:+.2f}%", f"₹{b_res['total_pnl']:+,.2f}", pnl_c, tc)
+                render_metric_card("Portfolio Net P&L", f"{b_res['total_pnl_pct']:+.2f}%", f"₹{b_res['total_pnl']:+,.2f}", pnl_c, tc)
             with bk3:
-                render_metric_card("Overall Win Rate", f"{b_res['win_rate']:.1f}%", "All basket trades", "blue", tc)
+                render_metric_card("Overall Win Rate", f"{b_res['win_rate']:.1f}%", f"{b_res['total_trades']} Total Closed Trades", "blue", tc)
             with bk4:
-                render_metric_card("Total Trades", f"{b_res['total_trades']}", "Executed across basket", "normal", tc)
+                render_metric_card("Final Portfolio Value", f"₹{b_res['final_equity']:,.0f}", f"Initial: ₹{b_res['total_capital']:,.0f}", pnl_c, tc)
             with bk5:
-                render_metric_card("Final Portfolio Equity", f"₹{b_res['final_equity']:,.0f}", f"Net Gain: ₹{b_res['total_pnl']:+,.0f}", pnl_c, tc)
+                render_metric_card("Strategy Edge", f"{cfg.name[:18]}", f"Timeframe: {effective_basket_tf}", "normal", tc)
 
-            # Strategy Leaderboard Table
-            st.markdown("#### 🏆 Basket Strategy Performance Leaderboard")
+            # Leaderboard Table
+            st.markdown("##### 🏆 Basket Equities Leaderboard")
             lead_df = b_res["leaderboard"]
             if not lead_df.empty:
                 st.dataframe(
@@ -931,7 +1005,7 @@ def render_strategy_lab_page(theme: str = "dark"):
         st.markdown("#### ⚖️ Head-to-Head Strategy Comparison")
         st.caption("Compare two trading setups directly on the same stock and timeframe to identify the superior edge.")
 
-        cmp_col1, cmp_col2, cmp_col3, cmp_col4 = st.columns([1.5, 1.5, 1.2, 1.0])
+        cmp_col1, cmp_col2, cmp_col3, cmp_col4, cmp_col5 = st.columns([1.4, 1.4, 1.1, 1.1, 1.0])
         with cmp_col1:
             strat_a_name = st.selectbox("Strategy A:", options=strategy_options, index=0, key="slab_cmp_strat_a")
         with cmp_col2:
@@ -939,22 +1013,29 @@ def render_strategy_lab_page(theme: str = "dark"):
         with cmp_col3:
             cmp_sym = st.selectbox("Benchmark Stock:", options=all_symbols, index=default_sym_idx, key="slab_cmp_sym")
         with cmp_col4:
+            cmp_tf = st.selectbox("Timeframe:", ["Daily", "75-Min", "15-Min", "5-Min", "Weekly", "Custom (Minutes)"], index=0, key="slab_cmp_tf")
+            if cmp_tf == "Custom (Minutes)":
+                cmp_custom_min = st.number_input("Minutes:", min_value=1, max_value=375, value=15, step=1, key="slab_cmp_custom_min")
+                effective_cmp_tf = f"{int(cmp_custom_min)}-Min"
+            else:
+                effective_cmp_tf = cmp_tf
+        with cmp_col5:
             st.write("")
             st.write("")
             cmp_btn = st.button("⚖️ Compare", type="primary", use_container_width=True, key="slab_run_cmp_btn")
 
         if cmp_btn:
-            with st.spinner(f"Comparing {strat_a_name} vs {strat_b_name} on {cmp_sym}..."):
-                df_cmp_raw = load_candles_for_simulation(cmp_sym, "Daily")
+            with st.spinner(f"Comparing {strat_a_name} vs {strat_b_name} on {cmp_sym} ({effective_cmp_tf})..."):
+                df_cmp_raw = load_candles_for_simulation(cmp_sym, effective_cmp_tf)
                 if not df_cmp_raw.empty and len(df_cmp_raw) >= 30:
                     cfg_a = get_preset_strategy(strat_a_name)
                     cfg_b = get_preset_strategy(strat_b_name)
 
                     df_a = prepare_indicators(df_cmp_raw, cfg_a)
-                    res_a = run_backtest(df_a, cfg_a, symbol=cmp_sym, initial_capital=initial_cap, slippage_pct=slippage_pct)
+                    res_a = run_backtest(df_a, cfg_a, symbol=cmp_sym, timeframe=effective_cmp_tf, initial_capital=initial_cap, slippage_pct=slippage_pct)
 
                     df_b = prepare_indicators(df_cmp_raw, cfg_b)
-                    res_b = run_backtest(df_b, cfg_b, symbol=cmp_sym, initial_capital=initial_cap, slippage_pct=slippage_pct)
+                    res_b = run_backtest(df_b, cfg_b, symbol=cmp_sym, timeframe=effective_cmp_tf, initial_capital=initial_cap, slippage_pct=slippage_pct)
 
                     st.session_state["slab_cmp_res"] = (res_a, res_b, strat_a_name, strat_b_name)
 
@@ -966,6 +1047,8 @@ def render_strategy_lab_page(theme: str = "dark"):
                 {"Metric": "Strategy Name", "Strategy A": name_a, "Strategy B": name_b},
                 {"Metric": "Net Return (%)", "Strategy A": f"{res_a.total_net_pnl_pct:+.2f}%", "Strategy B": f"{res_b.total_net_pnl_pct:+.2f}%"},
                 {"Metric": "Net P&L (₹)", "Strategy A": f"₹{res_a.total_net_pnl:+,.2f}", "Strategy B": f"₹{res_b.total_net_pnl:+,.2f}"},
+                {"Metric": "Planned Risk:Reward", "Strategy A": f"1 : {res_a.planned_risk_reward:.2f}" if res_a.planned_risk_reward > 0 else "Discretionary", "Strategy B": f"1 : {res_b.planned_risk_reward:.2f}" if res_b.planned_risk_reward > 0 else "Discretionary"},
+                {"Metric": "Avg Realized R:R (Payoff)", "Strategy A": f"1 : {abs(res_a.avg_win / res_a.avg_loss):.2f} ({res_a.avg_risk_reward:+.2f}R)" if (res_a.avg_loss and abs(res_a.avg_loss) > 0) else "-", "Strategy B": f"1 : {abs(res_b.avg_win / res_b.avg_loss):.2f} ({res_b.avg_risk_reward:+.2f}R)" if (res_b.avg_loss and abs(res_b.avg_loss) > 0) else "-"},
                 {"Metric": "Win Rate (%)", "Strategy A": f"{res_a.win_rate:.1f}% ({res_a.winning_trades}/{res_a.total_trades})", "Strategy B": f"{res_b.win_rate:.1f}% ({res_b.winning_trades}/{res_b.total_trades})"},
                 {"Metric": "Profit Factor", "Strategy A": f"{res_a.profit_factor:.2f}", "Strategy B": f"{res_b.profit_factor:.2f}"},
                 {"Metric": "Max Drawdown (%)", "Strategy A": f"-{res_a.max_drawdown_pct:.2f}%", "Strategy B": f"-{res_b.max_drawdown_pct:.2f}%"},

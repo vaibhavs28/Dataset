@@ -7280,7 +7280,7 @@ def generate_strategy_backtest_chart_html(
     time_map = {}  # maps timestamp/date string to formatted time value
 
     for dt, row in df_clean.iterrows():
-        if is_intraday or timeframe in ("1-Min", "3-Min", "5-Min", "15-Min", "75-Min", "75m"):
+        if is_intraday or "min" in str(timeframe).lower() or "m" in str(timeframe).lower() or timeframe not in ("Daily", "Weekly", "Monthly"):
             if dt.tzinfo is None:
                 dt_ist = dt.tz_localize("Asia/Kolkata")
             else:
@@ -7411,6 +7411,7 @@ def generate_strategy_backtest_chart_html(
                     "duration": t.duration_bars,
                     "mfe": t.max_favorable_excursion,
                     "mae": t.max_adverse_excursion,
+                    "risk_reward": getattr(t, "risk_reward", ""),
                     "time": x_str
                 })
 
@@ -7838,7 +7839,7 @@ def generate_strategy_backtest_chart_html(
                             htmlCard += `<div class="trade-exec-card ${{cls}}">
                                 ${{isWin ? "🎯" : "🛑"}} <b>EXIT #${{t.id}} (${{t.reason}})</b><br>
                                 Exit: ₹${{t.price.toFixed(2)}} &nbsp;|&nbsp; <b>P&L: ${{pSign}}₹${{t.pnl_rupees.toFixed(2)}} (${{pSign}}${{t.pnl_percent.toFixed(2)}}%)</b><br>
-                                <span style="font-size: 10px; opacity: 0.85;">Bars Held: ${{t.duration}} &nbsp;|&nbsp; MFE: +${{t.mfe.toFixed(1)}}% &nbsp;|&nbsp; MAE: ${{t.mae.toFixed(1)}}%</span>
+                                <span style="font-size: 10px; opacity: 0.85;">Bars Held: ${{t.duration}} &nbsp;|&nbsp; MFE: +${{t.mfe.toFixed(1)}}% &nbsp;|&nbsp; MAE: ${{t.mae.toFixed(1)}}%${{t.risk_reward ? ` &nbsp;|&nbsp; <b>R:R: ${{t.risk_reward}}</b>` : ''}}</span>
                             </div>`;
                         }}
                     }});

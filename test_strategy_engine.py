@@ -102,6 +102,10 @@ class TestStrategyEngine(unittest.TestCase):
             self.assertEqual(res.total_trades, res.winning_trades + res.losing_trades)
             self.assertTrue(0.0 <= res.win_rate <= 100.0)
             self.assertGreaterEqual(res.profit_factor, 0.0)
+            self.assertEqual(res.planned_risk_reward, 2.0)
+            for t in res.trades:
+                self.assertIsNotNone(t.risk_reward)
+                self.assertIsNotNone(t.realized_rr)
 
     def test_trailing_stop_execution(self):
         cfg = StrategyConfig(
@@ -134,6 +138,7 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertIn("Net P&L (₹)", leaderboard.columns)
         self.assertIn("Win Rate (%)", leaderboard.columns)
         self.assertIn("Trades", leaderboard.columns)
+        self.assertIn("Avg Risk:Reward", leaderboard.columns)
         self.assertIn("total_capital", basket_res)
         self.assertIn("total_pnl", basket_res)
 

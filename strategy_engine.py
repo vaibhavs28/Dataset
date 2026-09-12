@@ -31,6 +31,9 @@ class Trade:
     duration_bars: int = 0
     max_favorable_excursion: float = 0.0
     max_adverse_excursion: float = 0.0
+    planned_rr: float = 0.0
+    realized_rr: float = 0.0
+    risk_reward: str = ""
 
 
 @dataclass
@@ -59,6 +62,8 @@ class BacktestResult:
     trades: List[Trade] = field(default_factory=list)
     equity_curve: pd.DataFrame = field(default_factory=pd.DataFrame)
     indicators_df: pd.DataFrame = field(default_factory=pd.DataFrame)
+    avg_risk_reward: float = 0.0
+    planned_risk_reward: float = 0.0
 
 
 @dataclass
@@ -434,6 +439,18 @@ def run_backtest(
                 pnl = (open_trade.exit_price - open_trade.entry_price) * qty
                 open_trade.pnl_rupees = round(pnl, 2)
                 open_trade.pnl_percent = round((open_trade.exit_price / open_trade.entry_price - 1.0) * 100.0, 2)
+                
+                # Risk-to-Reward calculation
+                if cfg.stop_loss_pct > 0:
+                    r_mult = open_trade.pnl_percent / cfg.stop_loss_pct
+                    open_trade.realized_rr = round(r_mult, 2)
+                    if r_mult >= 0:
+                        open_trade.risk_reward = f"1 : {r_mult:.2f} (+{r_mult:.2f}R)"
+                    else:
+                        open_trade.risk_reward = f"-1 : {abs(r_mult):.2f} ({r_mult:.2f}R)"
+                if cfg.stop_loss_pct > 0 and cfg.target_pct > 0:
+                    open_trade.planned_rr = round(cfg.target_pct / cfg.stop_loss_pct, 2)
+
                 trades.append(open_trade)
                 cash += open_trade.exit_price * qty
                 open_trade = None
@@ -487,6 +504,18 @@ def run_backtest(
         pnl = (open_trade.exit_price - open_trade.entry_price) * open_trade.quantity
         open_trade.pnl_rupees = round(pnl, 2)
         open_trade.pnl_percent = round((open_trade.exit_price / open_trade.entry_price - 1.0) * 100.0, 2)
+
+        # Risk-to-Reward calculation
+        if cfg.stop_loss_pct > 0:
+            r_mult = open_trade.pnl_percent / cfg.stop_loss_pct
+            open_trade.realized_rr = round(r_mult, 2)
+            if r_mult >= 0:
+                open_trade.risk_reward = f"1 : {r_mult:.2f} (+{r_mult:.2f}R)"
+            else:
+                open_trade.risk_reward = f"-1 : {abs(r_mult):.2f} ({r_mult:.2f}R)"
+        if cfg.stop_loss_pct > 0 and cfg.target_pct > 0:
+            open_trade.planned_rr = round(cfg.target_pct / cfg.stop_loss_pct, 2)
+
         trades.append(open_trade)
         cash += open_trade.exit_price * open_trade.quantity
         current_equity = cash
@@ -528,6 +557,10 @@ def run_backtest(
     avg_trade_pnl = (total_net_pnl / total_trades) if total_trades > 0 else 0.0
     expectancy = ((win_rate / 100.0 * avg_win) - ((1.0 - win_rate / 100.0) * avg_loss)) if total_trades > 0 else 0.0
 
+    planned_rr = round(cfg.target_pct / cfg.stop_loss_pct, 2) if (cfg.stop_loss_pct > 0 and cfg.target_pct > 0) else 0.0
+    r_multiples = [t.realized_rr for t in trades if hasattr(t, "realized_rr") and t.realized_rr != 0.0]
+    avg_rr = round(float(np.mean(r_multiples)), 2) if r_multiples else 0.0
+
     return BacktestResult(
         symbol=symbol,
         strategy_name=cfg.name,
@@ -552,7 +585,9 @@ def run_backtest(
         expectancy=round(expectancy, 2),
         trades=trades,
         equity_curve=eq_df,
-        indicators_df=df_sig
+        indicators_df=df_sig,
+        avg_risk_reward=avg_rr,
+        planned_risk_reward=planned_rr
     )
 
 
@@ -613,7 +648,8 @@ def run_basket_backtest(
             "Wins": r.winning_trades,
             "Losses": r.losing_trades,
             "Profit Factor": r.profit_factor,
-            "Max DD (%)": r.max_drawdown_pct
+            "Max DD (%)": r.max_drawdown_pct,
+            "Avg Risk:Reward": f"{r.avg_risk_reward:+.2f}R" if r.avg_risk_reward != 0 else (f"1 : {r.win_loss_ratio:.2f}" if r.win_loss_ratio > 0 else "-")
         })
 
     leaderboard = pd.DataFrame(records)

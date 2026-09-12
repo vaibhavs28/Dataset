@@ -197,11 +197,35 @@ class TestStrategyTradingViewCharts(unittest.TestCase):
         self.assertIn("Jan", matrix.columns)
 
     def test_calculate_exit_reason_breakdown(self):
-        breakdown = strategy_ui.calculate_exit_reason_breakdown(self.trades)
+        breakdown = strategy_ui.calculate_exit_reason_breakdown(self.trades, stop_loss_pct=2.0)
         self.assertIsInstance(breakdown, pd.DataFrame)
         self.assertEqual(len(breakdown), 2)
         self.assertIn("Target Achieved", breakdown["Exit Reason"].values)
         self.assertIn("Stop Loss Hit", breakdown["Exit Reason"].values)
+        self.assertIn("Avg Risk:Reward", breakdown.columns)
+
+    def test_custom_timeframe_and_risk_reward(self):
+        self.trades[0].risk_reward = "1 : 2.00 (+2.00R)"
+        html = tradingview_charts.generate_strategy_backtest_chart_html(
+            df=self.df,
+            trades=self.trades,
+            symbol="RELIANCE",
+            strategy_name="Custom Strategy",
+            timeframe="15-Min",
+            height=620,
+            theme="dark"
+        )
+        self.assertIn("15-Min", html)
+        self.assertIn("1 : 2.00 (+2.00R)", html)
+        self.assertIn("R:R:", html)
+
+    def test_load_candles_for_simulation_custom_tf(self):
+        df_daily = strategy_ui.load_candles_for_simulation("RELIANCE", "Daily")
+        self.assertFalse(df_daily.empty)
+        df_15m = strategy_ui.load_candles_for_simulation("RELIANCE", "15-Min")
+        self.assertFalse(df_15m.empty)
+        df_cust = strategy_ui.load_candles_for_simulation("RELIANCE", "Custom (Minutes)", custom_minutes=10)
+        self.assertFalse(df_cust.empty)
 
 
 if __name__ == "__main__":
