@@ -130,7 +130,7 @@ def render_screener_page(theme: str = "dark"):
         </div>
         """, unsafe_allow_html=True)
 
-        w_col1, w_col2, w_col3 = st.columns([1.8, 1.8, 1.4])
+        w_col1, w_col2, w_col3 = st.columns([1.5, 1.7, 1.8])
         with w_col1:
             wf_universe = st.selectbox(
                 "Stock Universe to Scan:",
@@ -140,6 +140,14 @@ def render_screener_page(theme: str = "dark"):
             )
 
         with w_col2:
+            wf_date_mode = st.radio(
+                "Scan Date Mode:",
+                ["⚡ Latest Live Data", "📅 Historical Date (As-Of)"],
+                horizontal=True,
+                key="wf_date_mode_select"
+            )
+
+        with w_col3:
             wf_stage_filter = st.selectbox(
                 "Waterfall Table Display Filter:",
                 [
@@ -154,13 +162,61 @@ def render_screener_page(theme: str = "dark"):
                 help="Only stocks passing the selected tier are shown in the table. All failing stocks are hidden."
             )
 
-        with w_col3:
-            st.write("")
-            st.write("")
+        as_of_param = None
+        if "Historical" in wf_date_mode:
+            hist_c1, hist_c2 = st.columns([1.6, 2.4])
+            with hist_c1:
+                # Default to 5 Sept 2026 or previous trading day
+                default_dt = datetime(2026, 9, 5).date()
+                selected_as_of = st.date_input(
+                    "📅 Select Historical Scan Date:",
+                    value=default_dt,
+                    min_value=datetime(2020, 1, 1).date(),
+                    max_value=datetime.today().date(),
+                    key="wf_as_of_date_input"
+                )
+                as_of_param = selected_as_of.strftime("%Y-%m-%d")
+
+            with hist_c2:
+                st.markdown(f"""
+                <div style="background: rgba(16, 185, 129, 0.08); border-left: 3px solid #10B981; padding: 7px 12px; border-radius: 4px; margin-top: 14px; font-size: 11.5px; color: {styles['text_secondary']};">
+                    <b>🎯 Backtest Mode Active (As-Of: {as_of_param}):</b><br/>
+                    All candles are sliced up to <b>{as_of_param} EOD</b>. Zero future data is used in indicators. 
+                    Forward returns to present day will be calculated automatically.
+                </div>
+                """, unsafe_allow_html=True)
+
+            # Quick presets
+            st.markdown("<div style='font-size: 11px; color: #94A3B8; margin-bottom: 4px;'>⚡ Quick Date Presets:</div>", unsafe_allow_html=True)
+            q_cols = st.columns(5)
+            with q_cols[0]:
+                if st.button("📅 05 Sep 2026", key="q_btn_5sep", use_container_width=True):
+                    st.session_state["wf_as_of_date_input"] = datetime(2026, 9, 5).date()
+                    st.rerun()
+            with q_cols[1]:
+                if st.button("📅 01 Sep 2026", key="q_btn_1sep", use_container_width=True):
+                    st.session_state["wf_as_of_date_input"] = datetime(2026, 9, 1).date()
+                    st.rerun()
+            with q_cols[2]:
+                if st.button("📅 14 Aug 2026", key="q_btn_14aug", use_container_width=True):
+                    st.session_state["wf_as_of_date_input"] = datetime(2026, 8, 14).date()
+                    st.rerun()
+            with q_cols[3]:
+                if st.button("📅 01 Aug 2026", key="q_btn_1aug", use_container_width=True):
+                    st.session_state["wf_as_of_date_input"] = datetime(2026, 8, 1).date()
+                    st.rerun()
+            with q_cols[4]:
+                if st.button("📅 01 Jul 2026", key="q_btn_1jul", use_container_width=True):
+                    st.session_state["wf_as_of_date_input"] = datetime(2026, 7, 1).date()
+                    st.rerun()
+
+        w_btn_col1, w_btn_col2 = st.columns([3.5, 1.5])
+        with w_btn_col2:
             run_wf_btn = st.button("🚀 Run Waterfall Scan", type="primary", use_container_width=True, key="run_wf_scan_btn")
 
         # Auto-run or button press
-        wf_cache_key = f"wf_res_{wf_universe}"
+        scan_id = as_of_param if as_of_param else "latest"
+        wf_cache_key = f"wf_res_{wf_universe}_{scan_id}"
         if run_wf_btn or wf_cache_key not in st.session_state:
             target_syms = get_target_equities(wf_universe)
             p_bar = st.progress(0)
@@ -171,7 +227,7 @@ def render_screener_page(theme: str = "dark"):
                     p_bar.progress(min(curr / max(total, 1), 1.0))
                     p_txt.caption(f"Screening {sym} ({curr}/{total})...")
 
-            wf_results = run_waterfall_scan(target_syms, progress_callback=_wf_progress)
+            wf_results = run_waterfall_scan(target_syms, as_of_date=as_of_param, progress_callback=_wf_progress)
             p_bar.empty()
             p_txt.empty()
             st.session_state[wf_cache_key] = wf_results
@@ -180,11 +236,12 @@ def render_screener_page(theme: str = "dark"):
         if wf_cache_key in st.session_state:
             wf_data = st.session_state[wf_cache_key]
             counts = wf_data.get("counts", {})
+            as_of_label = counts.get("as_of_date", "Latest Live")
 
             # Funnel Progression Metric Cards
             fk1, fk2, fk3, fk4, fk5 = st.columns(5)
             with fk1:
-                render_metric_card("Total Scanned", f"{counts.get('total', 0):,}", f"{wf_universe}", "normal", styles)
+                render_metric_card("Total Scanned", f"{counts.get('total', 0):,}", f"{wf_universe} ({as_of_label})", "normal", styles)
             with fk2:
                 render_metric_card("Step 1: Monthly Pass", f"{counts.get('m_pass', 0):,}", "Macro Trend Bullish", "purple", styles)
             with fk3:
@@ -212,31 +269,48 @@ def render_screener_page(theme: str = "dark"):
                 tier_title = "🌊 Complete Waterfall Alignment Table"
 
             st.markdown("---")
-            st.markdown(f"#### {tier_title} ({len(active_df)} stocks)")
+            st.markdown(f"#### {tier_title} ({len(active_df)} stocks) — [Scan As-Of: {as_of_label}]")
 
             if active_df.empty:
-                st.warning(f"⚠️ No stocks currently qualify under '{wf_stage_filter}'. All non-passing stocks have been hidden.")
-                st.caption("Tip: Select 'Stage 3+' or 'Stage 2+' to see stocks currently in the pipeline ready for entry.")
+                st.warning(f"⚠️ No stocks qualified under '{wf_stage_filter}' as of {as_of_label}. All non-passing stocks have been hidden.")
+                st.caption("Tip: Select 'Stage 3+' or 'Stage 2+' to see stocks in earlier stages of alignment on that date.")
             else:
-                display_cols = [
-                    "Symbol", "LTP", "1D Return (%)", "Volume",
-                    "Waterfall Stage", "Monthly", "Weekly", "Daily", "75-Min",
+                display_cols = ["Symbol", "Scan Date", "LTP", "1D Return (%)"]
+                if "Return Since Scan (%)" in active_df.columns and active_df["Return Since Scan (%)"].notna().any():
+                    display_cols.extend(["Return Since Scan (%)", "Latest Price"])
+                display_cols.extend([
+                    "Volume", "Waterfall Stage", "Monthly", "Weekly", "Daily", "75-Min",
                     "M_RSI", "W_RSI", "D_RSI", "75m_RSI"
-                ]
+                ])
                 show_df = active_df[[c for c in display_cols if c in active_df.columns]].copy()
 
+                fmt_dict = {
+                    "LTP": "₹{:,.2f}",
+                    "Latest Price": "₹{:,.2f}",
+                    "1D Return (%)": "{:+.2f}%",
+                    "Return Since Scan (%)": "{:+.2f}%",
+                    "Volume": "{:,}",
+                    "M_RSI": "{:.1f}",
+                    "W_RSI": "{:.1f}",
+                    "D_RSI": "{:.1f}",
+                    "75m_RSI": "{:.1f}"
+                }
+                return_subsets = [c for c in ["1D Return (%)", "Return Since Scan (%)"] if c in show_df.columns]
+
                 # Style dataframe: green/red on return, green badge on pass
+                st_styled = show_df.style.format(fmt_dict)
+                if return_subsets:
+                    st_styled = st_styled.map(
+                        lambda v: "color: #10B981; font-weight: bold;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: bold;" if isinstance(v, (int, float)) and v < 0 else ""),
+                        subset=return_subsets
+                    )
+                st_styled = st_styled.map(
+                    lambda v: "background-color: rgba(16, 185, 129, 0.2); color: #10B981; font-weight: bold;" if v == "✅ PASS" else ("color: #94A3B8;" if v == "❌ FAIL" else ""),
+                    subset=[c for c in ["Monthly", "Weekly", "Daily", "75-Min"] if c in show_df.columns]
+                )
+
                 st.dataframe(
-                    show_df.style.format({
-                        "LTP": "₹{:,.2f}",
-                        "1D Return (%)": "{:+.2f}%",
-                        "Volume": "{:,}",
-                        "M_RSI": "{:.1f}",
-                        "W_RSI": "{:.1f}",
-                        "D_RSI": "{:.1f}",
-                        "75m_RSI": "{:.1f}"
-                    }).map(lambda v: "color: #10B981; font-weight: bold;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: bold;" if isinstance(v, (int, float)) and v < 0 else ""), subset=["1D Return (%)"])
-                    .map(lambda v: "background-color: rgba(16, 185, 129, 0.2); color: #10B981; font-weight: bold;" if v == "✅ PASS" else ("color: #94A3B8;" if v == "❌ FAIL" else ""), subset=["Monthly", "Weekly", "Daily", "75-Min"]),
+                    st_styled,
                     use_container_width=True,
                     height=min(500, max(260, len(show_df) * 38))
                 )
@@ -274,7 +348,7 @@ def render_screener_page(theme: str = "dark"):
     # =========================================================================
     with tab_custom:
         st.markdown("#### 🛠️ Custom Condition Screener (Dynamic Rule Builder)")
-        p_col1, p_col2, p_col3 = st.columns([2.0, 1.3, 1.2])
+        p_col1, p_col2, p_col3, p_col4 = st.columns([1.8, 1.2, 1.2, 1.0])
 
         with p_col1:
             preset_names = [
@@ -299,14 +373,42 @@ def render_screener_page(theme: str = "dark"):
             )
 
         with p_col3:
+            cust_date_mode = st.radio(
+                "Scan Date:",
+                ["⚡ Latest Live", "📅 Historical Date"],
+                index=0,
+                horizontal=True,
+                key="scr_cust_date_mode"
+            )
+
+        with p_col4:
             filter_logic = st.radio(
-                "Filter Match Logic:",
-                ["Pass ALL (AND)", "Pass ANY (OR)"],
+                "Match Logic:",
+                ["ALL (AND)", "ANY (OR)"],
                 index=0,
                 horizontal=True,
                 key="scr_logic_select"
             )
             logic_val = "ALL" if "ALL" in filter_logic else "ANY"
+
+        cust_as_of_param = None
+        if "Historical" in cust_date_mode:
+            c_d1, c_d2 = st.columns([1.5, 3.5])
+            with c_d1:
+                c_sel_date = st.date_input(
+                    "📅 Select Scan Date:",
+                    value=datetime(2026, 9, 5).date(),
+                    min_value=datetime(2020, 1, 1).date(),
+                    max_value=datetime.today().date(),
+                    key="scr_cust_as_of_date_input"
+                )
+                cust_as_of_param = c_sel_date.strftime("%Y-%m-%d")
+            with c_d2:
+                st.markdown(f"""
+                <div style="background: rgba(16, 185, 129, 0.08); border-left: 3px solid #10B981; padding: 7px 12px; border-radius: 4px; margin-top: 14px; font-size: 11.5px; color: {styles['text_secondary']};">
+                    <b>🎯 Backtest Mode Active (As-Of: {cust_as_of_param}):</b> Slicing candles up to <b>{cust_as_of_param} EOD</b>. Returns since scan will be included.
+                </div>
+                """, unsafe_allow_html=True)
 
         # Synchronize preset into session state clauses
         if "last_loaded_preset" not in st.session_state or st.session_state["last_loaded_preset"] != selected_preset:
@@ -458,7 +560,7 @@ def render_screener_page(theme: str = "dark"):
             ]
             cfg = ScreenerConfig(name=selected_preset, logic=logic_val, universe=universe_choice, clauses=screener_clauses)
             p_bar = st.progress(0)
-            res_df = run_screen(target_symbols, cfg)
+            res_df = run_screen(target_symbols, cfg, as_of_date=cust_as_of_param)
             p_bar.empty()
             st.session_state["last_screener_results"] = res_df
             st.session_state["last_screener_total_scanned"] = len(target_symbols)
@@ -475,8 +577,8 @@ def render_screener_page(theme: str = "dark"):
             else:
                 m1, m2, m3, m4 = st.columns(4)
                 match_count = len(res_df)
-                gainers_count = len(res_df[res_df["Change_%"] > 0])
-                avg_return = res_df["Change_%"].mean()
+                gainers_count = len(res_df[res_df["Change_%"] > 0]) if "Change_%" in res_df.columns else 0
+                avg_return = res_df["Change_%"].mean() if "Change_%" in res_df.columns else 0.0
                 top_stock = res_df.iloc[0]["Symbol"] if not res_df.empty else "N/A"
 
                 with m1:
@@ -486,15 +588,25 @@ def render_screener_page(theme: str = "dark"):
                 with m3:
                     render_metric_card("Average Return", f"{avg_return:+.2f}%", "Across matched stocks", "green" if avg_return >= 0 else "red", styles)
                 with m4:
-                    render_metric_card("Top Gainer", f"{top_stock}", f"{res_df.iloc[0]['Change_%']:+.2f}%" if not res_df.empty else "", "normal", styles)
+                    render_metric_card("Top Gainer", f"{top_stock}", f"{res_df.iloc[0]['Change_%']:+.2f}%" if (not res_df.empty and 'Change_%' in res_df.columns) else "", "normal", styles)
 
                 display_df = res_df.rename(columns={"Change_%": "1D Return (%)", "LTP": "LTP (₹)", "Clauses_Passed": "Rules Passed"})
+                fmt_custom = {
+                    "LTP (₹)": "₹{:,.2f}",
+                    "1D Return (%)": "{:+.2f}%",
+                    "Return_Since_Scan_%": "{:+.2f}%",
+                    "Latest_Close": "₹{:,.2f}",
+                    "Volume": "{:,}"
+                }
+                color_subsets = [c for c in ["1D Return (%)", "Return_Since_Scan_%"] if c in display_df.columns]
+                st_custom_styled = display_df.style.format(fmt_custom)
+                if color_subsets:
+                    st_custom_styled = st_custom_styled.map(
+                        lambda v: "color: #10B981; font-weight: bold;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: bold;" if isinstance(v, (int, float)) and v < 0 else ""),
+                        subset=color_subsets
+                    )
                 st.dataframe(
-                    display_df.style.format({
-                        "LTP (₹)": "₹{:,.2f}",
-                        "1D Return (%)": "{:+.2f}%",
-                        "Volume": "{:,}"
-                    }).map(lambda v: "color: #10B981; font-weight: bold;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: bold;" if isinstance(v, (int, float)) and v < 0 else ""), subset=["1D Return (%)"]),
+                    st_custom_styled,
                     use_container_width=True,
                     height=min(500, max(240, len(display_df) * 36))
                 )

@@ -303,10 +303,12 @@ def evaluate_stock(
 def run_screen(
     symbols: List[str],
     cfg: ScreenerConfig,
+    as_of_date: Optional[Any] = None,
     data_provider_fn=None
 ) -> pd.DataFrame:
     """
     Executes a screener across a list of symbols.
+    Supports historical date backtesting via `as_of_date`.
     data_provider_fn(symbol, timeframe) returns raw OHLCV DataFrame.
     """
     matches = []
@@ -326,6 +328,21 @@ def run_screen(
 
         if daily_raw is None or daily_raw.empty or len(daily_raw) < 5:
             continue
+
+        if not isinstance(daily_raw.index, pd.DatetimeIndex):
+            daily_raw = daily_raw.copy()
+            daily_raw.index = pd.to_datetime(daily_raw.index)
+
+        full_daily = daily_raw
+        if as_of_date is not None:
+            target_dt = pd.to_datetime(as_of_date)
+            eod_naive = target_dt.replace(hour=23, minute=59, second=59)
+            if daily_raw.index.tz is not None:
+                daily_raw = daily_raw[daily_raw.index <= eod_naive.tz_localize(daily_raw.index.tz)]
+            else:
+                daily_raw = daily_raw[daily_raw.index <= eod_naive]
+            if daily_raw.empty or len(daily_raw) < 5:
+                continue
 
         # Prepare Daily indicators
         tf_dfs["Daily"] = compute_screener_indicators(daily_raw)
@@ -348,10 +365,29 @@ def run_screen(
             else:
                 intra_raw = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=50)
             if intra_raw is not None and not intra_raw.empty:
-                tf_dfs["75-Min"] = compute_screener_indicators(intra_raw)
+                if not isinstance(intra_raw.index, pd.DatetimeIndex):
+                    intra_raw = intra_raw.copy()
+                    intra_raw.index = pd.to_datetime(intra_raw.index)
+                if as_of_date is not None:
+                    target_dt = pd.to_datetime(as_of_date)
+                    eod_naive = target_dt.replace(hour=23, minute=59, second=59)
+                    if intra_raw.index.tz is not None:
+                        intra_raw = intra_raw[intra_raw.index <= eod_naive.tz_localize(intra_raw.index.tz)]
+                    else:
+                        intra_raw = intra_raw[intra_raw.index <= eod_naive]
+                if intra_raw is not None and not intra_raw.empty:
+                    tf_dfs["75-Min"] = compute_screener_indicators(intra_raw)
 
         eval_res = evaluate_stock(sym, tf_dfs, cfg)
         if eval_res is not None:
+            as_of_str = str(daily_raw.index[-1])[:10]
+            eval_res["Scan_Date"] = as_of_str
+            if len(full_daily) > len(daily_raw):
+                future_close = float(full_daily["close"].iloc[-1])
+                curr_p = float(eval_res.get("LTP", 0.0))
+                if curr_p > 0:
+                    eval_res["Return_Since_Scan_%"] = round(((future_close - curr_p) / curr_p) * 100.0, 2)
+                    eval_res["Latest_Close"] = round(future_close, 2)
             matches.append(eval_res)
 
     if not matches:
@@ -367,14 +403,43 @@ def run_screen(
 def evaluate_stock_waterfall(
     symbol: str,
     daily_df: pd.DataFrame,
-    intra_75_df: Optional[pd.DataFrame] = None
+    intra_75_df: Optional[pd.DataFrame] = None,
+    as_of_date: Optional[Any] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Evaluates exact Chartink 'positional-scan-364' rules via a strict Waterfall Model:
     Monthly Pass ➔ Weekly Pass ➔ Daily Pass ➔ 75-Min Pass.
     If any stage fails, the stock cannot progress to subsequent stages.
     If Monthly fails, the stock is completely excluded (returns None).
+    Supports historical date slicing if as_of_date is provided.
     """
+    if daily_df is None or daily_df.empty:
+        return None
+
+    if not isinstance(daily_df.index, pd.DatetimeIndex):
+        daily_df = daily_df.copy()
+        daily_df.index = pd.to_datetime(daily_df.index)
+
+    full_daily = daily_df
+    latest_market_close = float(full_daily["close"].iloc[-1])
+
+    if as_of_date is not None:
+        target_dt = pd.to_datetime(as_of_date)
+        eod_naive = target_dt.replace(hour=23, minute=59, second=59)
+        if daily_df.index.tz is not None:
+            daily_df = daily_df[daily_df.index <= eod_naive.tz_localize(daily_df.index.tz)]
+        else:
+            daily_df = daily_df[daily_df.index <= eod_naive]
+
+        if intra_75_df is not None and not intra_75_df.empty:
+            if not isinstance(intra_75_df.index, pd.DatetimeIndex):
+                intra_75_df = intra_75_df.copy()
+                intra_75_df.index = pd.to_datetime(intra_75_df.index)
+            if intra_75_df.index.tz is not None:
+                intra_75_df = intra_75_df[intra_75_df.index <= eod_naive.tz_localize(intra_75_df.index.tz)]
+            else:
+                intra_75_df = intra_75_df[intra_75_df.index <= eod_naive]
+
     if daily_df is None or daily_df.empty or len(daily_df) < 15:
         return None
 
@@ -386,6 +451,9 @@ def evaluate_stock_waterfall(
     prev_close = float(close[-2]) if len(close) >= 2 else ltp
     change_pct = ((ltp - prev_close) / prev_close * 100.0) if prev_close > 0 else 0.0
     vol = int(daily_df["volume"].iloc[-1]) if "volume" in daily_df.columns else 0
+    as_of_str = str(daily_df.index[-1])[:10]
+    has_forward_data = (len(full_daily) > len(daily_df))
+    fwd_return_pct = round(((latest_market_close - ltp) / ltp) * 100.0, 2) if has_forward_data else 0.0
 
     # ==========================================
     # 1. MONTHLY STAGE (Macro Trend & Hilega Milega)
@@ -531,8 +599,11 @@ def evaluate_stock_waterfall(
 
     return {
         "Symbol": symbol,
+        "Scan Date": as_of_str,
         "LTP": round(ltp, 2),
         "1D Return (%)": round(change_pct, 2),
+        "Return Since Scan (%)": fwd_return_pct if has_forward_data else None,
+        "Latest Price": round(latest_market_close, 2) if has_forward_data else round(ltp, 2),
         "Volume": vol,
         "Stage": stage,
         "Waterfall Stage": stage_labels[stage],
@@ -554,11 +625,13 @@ def evaluate_stock_waterfall(
 
 def run_waterfall_scan(
     symbols: List[str],
+    as_of_date: Optional[Any] = None,
     data_provider_fn=None,
     progress_callback=None
 ) -> Dict[str, Any]:
     """
     Executes the complete Chartink 'positional-scan-364' waterfall screening across symbols.
+    Supports historical date backtesting via `as_of_date`.
     Returns filtered dataframes for each stage.
     """
     results = []
@@ -583,7 +656,7 @@ def run_waterfall_scan(
         else:
             intra_75_df = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
 
-        eval_res = evaluate_stock_waterfall(sym, daily_df, intra_75_df)
+        eval_res = evaluate_stock_waterfall(sym, daily_df, intra_75_df, as_of_date=as_of_date)
         if eval_res is not None:
             results.append(eval_res)
 
@@ -595,10 +668,13 @@ def run_waterfall_scan(
             "stage_3_daily": empty_df,
             "stage_2_weekly": empty_df,
             "stage_1_monthly": empty_df,
-            "counts": {"total": total_scanned, "m_pass": 0, "w_pass": 0, "d_pass": 0, "q4_pass": 0}
+            "counts": {"total": total_scanned, "as_of_date": str(as_of_date) if as_of_date else "Latest Live", "m_pass": 0, "w_pass": 0, "d_pass": 0, "q4_pass": 0}
         }
 
-    df_all = pd.DataFrame(results).sort_values(by=["Stage", "1D Return (%)"], ascending=[False, False])
+    sort_cols = ["Stage", "1D Return (%)"]
+    if "Return Since Scan (%)" in results[0] and results[0]["Return Since Scan (%)"] is not None:
+        sort_cols = ["Stage", "Return Since Scan (%)"]
+    df_all = pd.DataFrame(results).sort_values(by=sort_cols, ascending=[False, False])
     df_s4 = df_all[df_all["Stage"] == 4].copy()
     df_s3 = df_all[df_all["Stage"] >= 3].copy()
     df_s2 = df_all[df_all["Stage"] >= 2].copy()
@@ -606,6 +682,7 @@ def run_waterfall_scan(
 
     counts = {
         "total": total_scanned,
+        "as_of_date": str(as_of_date) if as_of_date else "Latest Live",
         "m_pass": len(df_s1),
         "w_pass": len(df_s2),
         "d_pass": len(df_s3),

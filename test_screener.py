@@ -134,6 +134,35 @@ class TestScreenerEngine(unittest.TestCase):
         self.assertIn("counts", res_dict)
         self.assertEqual(res_dict["counts"]["total"], 2)
 
+    def test_historical_as_of_date_waterfall(self):
+        from screener_engine import evaluate_stock_waterfall, run_waterfall_scan
+        df = create_test_ohlcv(100, 200.0)
+        # Select date halfway through
+        mid_date = df.index[45].strftime("%Y-%m-%d")
+        
+        # Sliced directly or via as_of_date
+        res_hist = evaluate_stock_waterfall("TEST_SYM", df, as_of_date=mid_date)
+        if res_hist is not None:
+            self.assertEqual(res_hist["Scan Date"], mid_date)
+            self.assertIsNotNone(res_hist.get("Return Since Scan (%)"))
+            self.assertEqual(res_hist["LTP"], round(float(df.iloc[45]["close"]), 2))
+
+    def test_historical_as_of_date_screen(self):
+        df = create_test_ohlcv(100, 150.0)
+        mid_date = df.index[50].strftime("%Y-%m-%d")
+        cfg = ScreenerConfig(
+            name="Test Screener",
+            logic="ALL",
+            clauses=[
+                ScreenerClause(timeframe="Daily", lhs="High", operator=">", rhs_type="Indicator", rhs_indicator="Low")
+            ]
+        )
+        res = run_screen(["TEST_SYM"], cfg, as_of_date=mid_date, data_provider_fn=lambda s, tf: df)
+        self.assertFalse(res.empty)
+        self.assertEqual(res.iloc[0]["Scan_Date"], mid_date)
+        self.assertIn("Return_Since_Scan_%", res.columns)
+
 
 if __name__ == "__main__":
     unittest.main()
+
