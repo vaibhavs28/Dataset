@@ -241,8 +241,8 @@ def get_latest_candle_date(symbol: str) -> Optional[str]:
     return res[0] if res and res[0] else None
 
 
-def get_all_symbols(include_indices: bool = True, exchange: Optional[str] = None) -> List[str]:
-    """Returns all unique Equity and Index trading symbols strictly from NSE or specified exchange."""
+def get_all_symbols(include_indices: bool = False, exchange: Optional[str] = None) -> List[str]:
+    """Returns all unique Equity trading symbols strictly from NSE, excluding all indices and ETFs."""
     conn = get_connection()
 
     # Check if instruments table is populated; if fresh/empty, automatically sync from Upstox
@@ -262,7 +262,17 @@ def get_all_symbols(include_indices: bool = True, exchange: Optional[str] = None
     with _lock:
         try:
             if exchange:
-                query = "SELECT DISTINCT trading_symbol FROM instruments WHERE exchange = ? AND trading_symbol NOT LIKE '0%';"
+                query = """
+                    SELECT DISTINCT trading_symbol FROM instruments 
+                    WHERE exchange = ? 
+                      AND instrument_key LIKE '%|INE%'
+                      AND trading_symbol NOT LIKE '0%'
+                      AND trading_symbol NOT LIKE '%ETF%'
+                      AND trading_symbol NOT LIKE '%BEES%'
+                      AND trading_symbol NOT LIKE '%NIFTY%'
+                      AND trading_symbol NOT LIKE '%SENSEX%'
+                      AND trading_symbol NOT LIKE 'INDIA VIX%';
+                """
                 rows = conn.execute(query, [exchange]).fetchall()
             elif include_indices:
                 query = """
@@ -278,8 +288,14 @@ def get_all_symbols(include_indices: bool = True, exchange: Optional[str] = None
                     SELECT DISTINCT trading_symbol 
                     FROM instruments 
                     WHERE exchange = 'NSE_EQ'
+                      AND instrument_key LIKE '%|INE%'
                       AND instrument_type IN ('EQUITY', 'EQ', 'BE', 'SM', 'BZ')
                       AND trading_symbol NOT LIKE '0%'
+                      AND trading_symbol NOT LIKE '%ETF%'
+                      AND trading_symbol NOT LIKE '%BEES%'
+                      AND trading_symbol NOT LIKE '%NIFTY%'
+                      AND trading_symbol NOT LIKE '%SENSEX%'
+                      AND trading_symbol NOT LIKE 'INDIA VIX%'
                     ORDER BY trading_symbol ASC;
                 """
                 rows = conn.execute(query).fetchall()
@@ -291,7 +307,15 @@ def get_all_symbols(include_indices: bool = True, exchange: Optional[str] = None
 
         # Fallback to daily_candles if instruments table is empty
         try:
-            rows = conn.execute("SELECT DISTINCT trading_symbol FROM daily_candles WHERE trading_symbol NOT LIKE '0%';").fetchall()
+            rows = conn.execute("""
+                SELECT DISTINCT trading_symbol FROM daily_candles 
+                WHERE trading_symbol NOT LIKE '0%'
+                  AND trading_symbol NOT LIKE '%ETF%'
+                  AND trading_symbol NOT LIKE '%BEES%'
+                  AND trading_symbol NOT LIKE '%NIFTY%'
+                  AND trading_symbol NOT LIKE '%SENSEX%'
+                  AND trading_symbol NOT LIKE 'INDIA VIX%';
+            """).fetchall()
             if rows:
                 return sorted(list(set(r[0].replace("-EQ", "").replace(".NS", "") for r in rows if r[0])))
         except Exception:

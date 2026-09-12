@@ -860,12 +860,12 @@ def main():
 
     # Multi-Page Router: Only the active page executes, ensuring sub-second response times!
     if selected_page == "📊 Quad-Chart View":
-        db_symbols = database.get_all_symbols()
+        db_symbols = database.get_all_symbols(include_indices=False)
         parquet_symbols = parquet_loader.get_parquet_symbols()
-        popular_indices = ["RELIANCE", "NIFTY", "BANKNIFTY", "TCS", "HDFCBANK", "INFY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
-        all_options = sorted(list(set(popular_indices + db_symbols + parquet_symbols)))
-        # Strictly keep only pure Equities and Indices (filter out all debt/bonds starting with '0')
-        all_options = [s for s in all_options if not s.startswith("0")]
+        popular_equities = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "LT", "BAJFINANCE"]
+        all_options = sorted(list(set(popular_equities + db_symbols + parquet_symbols)))
+        # Strictly keep only pure Equities (filter out indices, ETFs, and debt/bonds)
+        all_options = [s for s in all_options if not s.startswith("0") and "ETF" not in s and "BEES" not in s and "NIFTY" not in s and "SENSEX" not in s and "INDIA VIX" not in s]
 
         if not all_options:
             st.warning("No stocks available in local database or parquet files.")
@@ -1394,11 +1394,11 @@ def main():
         alert_ui.render_alert_page(theme=theme)
 
     elif selected_page == "📈 Trading Terminal":
-        db_symbols = database.get_all_symbols()
+        db_symbols = database.get_all_symbols(include_indices=False)
         parquet_symbols = parquet_loader.get_parquet_symbols()
-        popular_indices = ["RELIANCE", "NIFTY", "BANKNIFTY", "TCS", "HDFCBANK", "INFY", "SENSEX", "FINNIFTY", "MIDCPNIFTY"]
-        all_options = sorted(list(set(popular_indices + db_symbols + parquet_symbols)))
-        all_options = [s for s in all_options if not s.startswith("0")]
+        popular_equities = ["RELIANCE", "TCS", "HDFCBANK", "INFY", "ICICIBANK", "SBIN", "BHARTIARTL", "ITC", "LT", "BAJFINANCE"]
+        all_options = sorted(list(set(popular_equities + db_symbols + parquet_symbols)))
+        all_options = [s for s in all_options if not s.startswith("0") and "ETF" not in s and "BEES" not in s and "NIFTY" not in s and "SENSEX" not in s and "INDIA VIX" not in s]
 
         st.subheader("📈 TradingView Advanced Trading Terminal")
         st.caption("Professional TradingView charting suite with full-screen mode, zoom controls, 1-min to Monthly timeframes, EMAs, SMAs, Bollinger Bands, Supertrend, VWAP, MACD, CPR, and RSI.")
@@ -1407,7 +1407,7 @@ def main():
         t_col1, t_col2, t_col3 = st.columns([2.2, 1.4, 1.4])
         with t_col1:
             term_stock = st.selectbox(
-                "Select Stock (Search 2,500+ NSE symbols):",
+                "Select Stock (Search 3,000+ Pure NSE Equities):",
                 options=all_options if all_options else ["BAJFINANCE", "RELIANCE", "TCS", "INFY", "HDFCBANK", "SBIN"],
                 index=all_options.index(st.session_state.get("term_sym_select", "RELIANCE")) if (all_options and st.session_state.get("term_sym_select", "RELIANCE") in all_options) else 0,
                 key="term_sym_select"

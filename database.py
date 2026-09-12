@@ -165,8 +165,8 @@ def get_instrument_by_symbol(symbol: str, exchange: Optional[str] = None) -> Opt
         return dict(row) if row else None
 
 
-def get_all_symbols(include_indices: bool = True) -> List[str]:
-    """Returns all unique Equity and Index trading symbols strictly from NSE, excluding debt, bonds, and NCDs."""
+def get_all_symbols(include_indices: bool = False) -> List[str]:
+    """Returns all unique pure Equity trading symbols strictly from NSE, excluding all indices and ETFs."""
     try:
         import duckdb_store
         syms = duckdb_store.get_all_symbols(include_indices=include_indices)
@@ -191,8 +191,14 @@ def get_all_symbols(include_indices: bool = True) -> List[str]:
                     SELECT DISTINCT trading_symbol 
                     FROM instruments 
                     WHERE exchange = 'NSE_EQ'
+                      AND instrument_key LIKE '%|INE%'
                       AND instrument_type IN ('EQUITY', 'EQ', 'BE', 'SM', 'BZ')
                       AND trading_symbol NOT LIKE '0%'
+                      AND trading_symbol NOT LIKE '%ETF%'
+                      AND trading_symbol NOT LIKE '%BEES%'
+                      AND trading_symbol NOT LIKE '%NIFTY%'
+                      AND trading_symbol NOT LIKE '%SENSEX%'
+                      AND trading_symbol NOT LIKE 'INDIA VIX%'
                     ORDER BY trading_symbol ASC;
                 """)
             res = [row[0] for row in cursor.fetchall()]

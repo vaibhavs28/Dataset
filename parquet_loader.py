@@ -19,17 +19,28 @@ PARQUET_BY_SYMBOL_DIR = config.DATA_DIR / "by_symbol"
 SYMBOLS_CACHE_FILE = config.DATA_DIR / "parquet_symbols.json"
 
 
+def is_pure_equity_symbol(sym: str) -> bool:
+    s = sym.upper().strip()
+    if s.startswith("0"):
+        return False
+    for bad in ["ETF", "BEES", "NIFTY", "SENSEX", "INDIA VIX", "MIDCPNIFTY", "FINNIFTY"]:
+        if bad in s:
+            return False
+    return True
+
+
 def get_parquet_symbols() -> List[str]:
-    """Returns the list of available symbols in the local parquet dataset."""
+    """Returns the list of available pure Equity symbols in the local parquet dataset (excluding indices and ETFs)."""
     if PARQUET_BY_SYMBOL_DIR.exists():
         files = list(PARQUET_BY_SYMBOL_DIR.glob("*.parquet"))
         if len(files) > 0:
-            return sorted([f.stem for f in files])
+            return sorted([f.stem for f in files if is_pure_equity_symbol(f.stem)])
 
     if SYMBOLS_CACHE_FILE.exists():
         try:
             with open(SYMBOLS_CACHE_FILE, "r") as f:
-                return json.load(f)
+                raw_list = json.load(f)
+                return sorted([s for s in raw_list if is_pure_equity_symbol(s)])
         except Exception:
             pass
 
