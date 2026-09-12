@@ -3278,8 +3278,8 @@ def generate_quad_chart_html(
                             p_color = "#1E293B"
                         pivots_data[p_col] = {"color": p_color, "name": p_cfg.get("name", p_col), "data": series_pts}
 
-        # Strictly require at least 9 completed candles for RSI(9) & Hilega Milega
-        has_rsi_panel = show_rsi and ("RSI" in df_clean.columns) and not df_clean["RSI"].dropna().empty and (len(df_clean) >= 9)
+        # RSI points & Hilega Milega indicator extraction
+        has_rsi_panel = show_rsi and ("RSI" in df_clean.columns)
         rsi_pts, rsi_ema3_pts, rsi_wma21_pts = [], [], []
         if has_rsi_panel:
             for dt, row in df_clean.iterrows():
@@ -3301,7 +3301,7 @@ def generate_quad_chart_html(
             "rsi_ema3": rsi_ema3_pts,
             "rsi_wma21": rsi_wma21_pts,
             "hasRsi": has_rsi_panel,
-            "insufficientCandles": (len(df_clean) < 9),
+            "insufficientCandles": (len(df_clean) < 9 or len(rsi_pts) == 0),
             "candleCount": len(df_clean)
         }
 
@@ -4817,9 +4817,17 @@ def generate_quad_chart_html(
                 }}
 
                 // Solid 50 Blue Line (#7695F9) with Price Badge
+                // Solid 50 Blue Line (#7695F9) with Price Badge
                 rsiSeries.createPriceLine({{ price: 50, color: '#7695F9', lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Solid, axisLabelVisible: true, title: '50' }});
                 rsiSeries.createPriceLine({{ price: 70, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
                 rsiSeries.createPriceLine({{ price: 30, color: '#94A3B8', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed, axisLabelVisible: false, title: '' }});
+
+                // Status message in header if awaiting 9 candles
+                const hmValsHeader = document.getElementById('hm_vals_' + id);
+                if ((!payload.rsi || payload.rsi.length === 0) && hmValsHeader) {{
+                    const cCount = payload.candleCount || 0;
+                    hmValsHeader.innerHTML = `<span style="color:#f59e0b;font-size:10px;font-weight:600;">(Awaiting 9 completed candles: ${{cCount}}/9)</span>`;
+                }}
 
                 // Fluid, non-blocking visible ranges sync between main & RSI charts
                 let isSyncing = false;
@@ -4854,13 +4862,6 @@ def generate_quad_chart_html(
                         isSyncing = false;
                     }});
                 }});
-            }} else if (!payload.hasRsi && rsiContainer && payload.insufficientCandles) {{
-                const cCount = payload.candleCount || 0;
-                rsiContainer.innerHTML = `
-                    <div style="display: flex; align-items: center; justify-content: center; height: 100%; width: 100%; padding: 8px; text-align: center; color: #f59e0b; font-size: 11px; font-weight: 600; background: rgba(245, 158, 11, 0.05); border-top: 1px dashed rgba(245, 158, 11, 0.3);">
-                        ⚠️ Insufficient Data: Requires ≥ 9 completed candles for RSI(9) & Hilega Milega (Currently: ${{cCount}} candle${{cCount === 1 ? '' : 's'}})
-                    </div>
-                `;
             }}
 
             // Pre-index candle & indicator data for instant O(1) crosshair performance
@@ -4976,6 +4977,8 @@ def generate_quad_chart_html(
                         if (hmValsEl) {{
                             hmValsEl.innerHTML = `<span style="color:${{rColor}};font-weight:700;">RSI: ${{rNum}}</span> | <span style="color:#4CAF50;">EMA(3): ${{eNum}}</span> | <span style="color:#FF5252;">WMA(21): ${{wNum}}</span>`;
                         }}
+                    }} else if (hmValsEl) {{
+                        hmValsEl.innerHTML = `<span style="color:#64748B;font-size:10px;">RSI: -- (Awaiting 9 completed candles)</span>`;
                     }}
                 }}
 

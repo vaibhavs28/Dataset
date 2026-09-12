@@ -153,7 +153,7 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:
     else:
         out["Vol_SMA20"] = 1.0
 
-    return out.dropna(subset=["RSI", "EMA_Fast", "EMA_Mid"])
+    return out
 
 
 def generate_strategy_signals(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataFrame:

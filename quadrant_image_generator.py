@@ -166,13 +166,12 @@ def _draw_single_panel(
         if not np.isnan(ema2.iloc[i]):
             ema2_pts.append((bx, price_to_y(float(ema2.iloc[i]))))
 
-        r_v = float(rsi.iloc[i]) if not np.isnan(rsi.iloc[i]) else 50.0
-        re_v = float(rsi_ema3.iloc[i]) if not np.isnan(rsi_ema3.iloc[i]) else 50.0
-        rw_v = float(rsi_wma21.iloc[i]) if not np.isnan(rsi_wma21.iloc[i]) else 50.0
-
-        rsi_pts.append((bx, rsi_to_y(r_v)))
-        re3_pts.append((bx, rsi_to_y(re_v)))
-        rw21_pts.append((bx, rsi_to_y(rw_v)))
+        if not np.isnan(rsi.iloc[i]):
+            rsi_pts.append((bx, rsi_to_y(float(rsi.iloc[i]))))
+        if not np.isnan(rsi_ema3.iloc[i]):
+            re3_pts.append((bx, rsi_to_y(float(rsi_ema3.iloc[i]))))
+        if not np.isnan(rsi_wma21.iloc[i]):
+            rw21_pts.append((bx, rsi_to_y(float(rsi_wma21.iloc[i]))))
 
     # Draw EMAs
     if len(ema1_pts) > 1:
@@ -196,8 +195,8 @@ def _draw_single_panel(
     draw.text((x2 - 35, y_50 - 5), "50", fill="#64748B", font=font_sm)
     draw.text((x2 - 35, y_70 - 5), "70", fill="#EF4444", font=font_sm)
 
-    if len(sub_df) < 9 or rsi.dropna().empty:
-        draw.text((x1 + 20, r_top + r_h // 2 - 6), f"⚠️ Insufficient Candles for RSI(9) & Hilega Milega ({len(sub_df)}/9 bars completed)", fill="#64748B", font=font_sm)
+    if len(rsi_pts) == 0:
+        draw.text((x1 + 20, r_top + r_h // 2 - 6), f"⚠️ Awaiting 9 completed candles for RSI(9) ({len(sub_df)}/9 bars completed)", fill="#64748B", font=font_sm)
     else:
         if len(rsi_pts) > 1:
             draw.line(rsi_pts, fill="#10B981", width=2)  # RSI(9)

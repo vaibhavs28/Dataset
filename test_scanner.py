@@ -51,14 +51,20 @@ class TestScanner(unittest.TestCase):
         df = database.get_candles_df("RELIANCE")
         rsi_series = scanner.calculate_rsi(df["close"], span=14)
         self.assertFalse(rsi_series.empty)
-        # RSI must be bounded between 0 and 100
-        self.assertTrue((rsi_series >= 0).all())
-        self.assertTrue((rsi_series <= 100).all())
+        # Standard indicator: first 14 candles must be NaN (warmup period)
+        self.assertTrue(rsi_series.iloc[:14].isna().all())
+        # Subsequent candles must be bounded between 0 and 100
+        valid_rsi = rsi_series.dropna()
+        self.assertFalse(valid_rsi.empty)
+        self.assertTrue((valid_rsi >= 0).all())
+        self.assertTrue((valid_rsi <= 100).all())
 
         ind_df = scanner.calculate_indicator(df, indicator_type="RSI", period=14)
         self.assertIn("RSI_14", ind_df.columns)
-        self.assertTrue((ind_df["RSI_14"] >= 0).all())
-        self.assertTrue((ind_df["RSI_14"] <= 100).all())
+        valid_ind = ind_df["RSI_14"].dropna()
+        self.assertFalse(valid_ind.empty)
+        self.assertTrue((valid_ind >= 0).all())
+        self.assertTrue((valid_ind <= 100).all())
 
     def test_monthly_rsi_scan(self):
         df = database.get_candles_df("RELIANCE")

@@ -74,52 +74,79 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str = "monthly") -> pd.DataFrame
 
 def calculate_rsi(series: pd.Series, span: int = 9) -> pd.Series:
     """
-    Computes Relative Strength Index (RSI) using exponential moving average with specified span (default: 9).
-    If series has fewer candles than `span` (e.g. only 5 monthly candles), returns NaN
-    because the candle period never completed the required span.
+    Computes standard Wilder's Relative Strength Index (RSI).
+    Matches standard technical analysis / TradingView ta.rsi:
+    - Bars 0 to (span - 1) are strictly NaN because a full span of price changes has not completed.
+    - RSI strictly begins plotting AFTER `span` completed candles (at index `span`).
+    - Uses Wilder's RMA smoothing (alpha = 1 / span).
     """
-    if series.empty or len(series) < 2:
-        return pd.Series(index=series.index, dtype=float)
-
-    # Strictly require at least `span` candles to form a valid RSI calculation
-    if len(series) < span:
+    if series.empty or len(series) <= span:
         return pd.Series(np.nan, index=series.index, dtype=float)
 
     delta = series.diff()
     gain = delta.clip(lower=0.0)
     loss = -delta.clip(upper=0.0)
 
-    avg_gain = gain.ewm(span=span, adjust=False).mean()
-    avg_loss = loss.ewm(span=span, adjust=False).mean()
+    rsi = pd.Series(np.nan, index=series.index, dtype=float)
+    avg_gain = pd.Series(np.nan, index=series.index, dtype=float)
+    avg_loss = pd.Series(np.nan, index=series.index, dtype=float)
 
-    rs = avg_gain / avg_loss.replace(0.0, np.nan)
-    rsi = 100.0 - (100.0 / (1.0 + rs))
-    return rsi.fillna(50.0)
+    # Initial average gain & loss over the first 'span' changes (indices 1 to span)
+    first_gain = gain.iloc[1 : span + 1].mean()
+    first_loss = loss.iloc[1 : span + 1].mean()
+    avg_gain.iloc[span] = first_gain
+    avg_loss.iloc[span] = first_loss
+
+    if first_loss == 0.0:
+        rsi.iloc[span] = 100.0 if first_gain > 0.0 else 50.0
+    else:
+        rs = first_gain / first_loss
+        rsi.iloc[span] = 100.0 - (100.0 / (1.0 + rs))
+
+    # Wilder's smoothing for subsequent bars
+    for i in range(span + 1, len(series)):
+        g = (avg_gain.iloc[i - 1] * (span - 1) + gain.iloc[i]) / span
+        l = (avg_loss.iloc[i - 1] * (span - 1) + loss.iloc[i]) / span
+        avg_gain.iloc[i] = g
+        avg_loss.iloc[i] = l
+        if l == 0.0:
+            rsi.iloc[i] = 100.0 if g > 0.0 else 50.0
+        else:
+            rs = g / l
+            rsi.iloc[i] = 100.0 - (100.0 / (1.0 + rs))
+
+    return rsi
 
 
 def calculate_ema(series: pd.Series, span: int = 3) -> pd.Series:
     """
     Computes Exponential Moving Average (EMA) of a series with specified span.
+    Preserves leading NaNs and starts calculating once valid values appear.
     """
+    if series.empty or series.dropna().empty:
+        return pd.Series(np.nan, index=series.index, dtype=float)
     return series.ewm(span=span, adjust=False).mean()
 
 
 def calculate_wma(series: pd.Series, period: int = 21) -> pd.Series:
     """
     Computes Weighted Moving Average (WMA) with linear weights [1, 2, ..., period].
-    If series has fewer observations than `period`, returns NaN (requires complete period).
+    Matches standard technical analysis / TradingView ta.wma:
+    Requires a full rolling window of `period` valid (non-NaN) values.
+    Returns NaN for any bar where full period is not available.
     """
     if series.empty or len(series.dropna()) < period:
         return pd.Series(np.nan, index=series.index, dtype=float)
 
-    res = pd.Series(index=series.index, dtype=float)
-    n = len(series)
-    for i in range(n):
-        start_idx = max(0, i - period + 1)
-        sub = series.iloc[start_idx : i + 1].values
-        w = np.arange(1, len(sub) + 1)
-        res.iloc[i] = np.dot(sub, w) / w.sum()
-    return res
+    weights = np.arange(1, period + 1)
+    w_sum = weights.sum()
+
+    def _wma(w):
+        if np.isnan(w).any():
+            return np.nan
+        return np.dot(w, weights) / w_sum
+
+    return series.rolling(window=period).apply(_wma, raw=True)
 
 
 def calculate_indicator(df: pd.DataFrame, indicator_type: str = "EMA", period: int = 5) -> pd.DataFrame:
