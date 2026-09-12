@@ -346,13 +346,25 @@ def ensure_symbol_custom_minute_candles(
 
     res = resample_1min_to_custom_minutes(df_1min, interval_minutes)
     if not res.empty:
+        if not isinstance(res.index, pd.DatetimeIndex):
+            res.index = pd.to_datetime(res.index)
+        res_tz = getattr(res.index, "tz", None)
+
         if start_date:
-            res = res[res.index >= pd.to_datetime(start_date).tz_localize("Asia/Kolkata" if res.index.tz else None)]
+            start_ts = pd.to_datetime(start_date)
+            if res_tz is not None and start_ts.tz is None:
+                start_ts = start_ts.tz_localize(res_tz)
+            elif res_tz is None and start_ts.tz is not None:
+                start_ts = start_ts.tz_localize(None)
+            res = res[res.index >= start_ts]
+
         if end_date:
-            end_dt = pd.to_datetime(f"{end_date} 23:59:59")
-            if res.index.tz:
-                end_dt = end_dt.tz_localize("Asia/Kolkata")
-            res = res[res.index <= end_dt]
+            end_ts = pd.to_datetime(f"{end_date} 23:59:59")
+            if res_tz is not None and end_ts.tz is None:
+                end_ts = end_ts.tz_localize(res_tz)
+            elif res_tz is None and end_ts.tz is not None:
+                end_ts = end_ts.tz_localize(None)
+            res = res[res.index <= end_ts]
     return res
 
 

@@ -1644,15 +1644,22 @@ def main():
 
             # Filter term_df by selected date range (if specified)
             if not term_df.empty:
+                if not isinstance(term_df.index, pd.DatetimeIndex):
+                    term_df.index = pd.to_datetime(term_df.index)
+                term_tz = getattr(term_df.index, "tz", None)
                 if filter_start:
                     start_dt = pd.to_datetime(filter_start)
-                    if term_df.index.tz is not None:
-                        start_dt = start_dt.tz_localize(term_df.index.tz)
+                    if term_tz is not None and start_dt.tz is None:
+                        start_dt = start_dt.tz_localize(term_tz)
+                    elif term_tz is None and start_dt.tz is not None:
+                        start_dt = start_dt.tz_localize(None)
                     term_df = term_df[term_df.index >= start_dt]
                 if filter_end:
                     end_dt = pd.to_datetime(f"{filter_end} 23:59:59")
-                    if term_df.index.tz is not None:
-                        end_dt = end_dt.tz_localize(term_df.index.tz)
+                    if term_tz is not None and end_dt.tz is None:
+                        end_dt = end_dt.tz_localize(term_tz)
+                    elif term_tz is None and end_dt.tz is not None:
+                        end_dt = end_dt.tz_localize(None)
                     term_df = term_df[term_df.index <= end_dt]
 
                 # Cap maximum visual candles to keep TradingView chart rendering snappy & avoid browser freeze

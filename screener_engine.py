@@ -348,8 +348,11 @@ def run_screen(
         if as_of_date is not None:
             target_dt = pd.to_datetime(as_of_date)
             eod_naive = target_dt.replace(hour=23, minute=59, second=59)
-            if daily_raw.index.tz is not None:
-                daily_raw = daily_raw[daily_raw.index <= eod_naive.tz_localize(daily_raw.index.tz)]
+            if not isinstance(daily_raw.index, pd.DatetimeIndex):
+                daily_raw.index = pd.to_datetime(daily_raw.index)
+            d_tz = getattr(daily_raw.index, "tz", None)
+            if d_tz is not None:
+                daily_raw = daily_raw[daily_raw.index <= eod_naive.tz_localize(d_tz)]
             else:
                 daily_raw = daily_raw[daily_raw.index <= eod_naive]
             if daily_raw.empty or len(daily_raw) < 5:
@@ -462,8 +465,11 @@ def evaluate_stock_waterfall(
     if as_of_date is not None:
         target_dt = pd.to_datetime(as_of_date)
         eod_naive = target_dt.replace(hour=23, minute=59, second=59)
-        if daily_df.index.tz is not None:
-            daily_df = daily_df[daily_df.index <= eod_naive.tz_localize(daily_df.index.tz)]
+        if not isinstance(daily_df.index, pd.DatetimeIndex):
+            daily_df.index = pd.to_datetime(daily_df.index)
+        d_tz = getattr(daily_df.index, "tz", None)
+        if d_tz is not None:
+            daily_df = daily_df[daily_df.index <= eod_naive.tz_localize(d_tz)]
         else:
             daily_df = daily_df[daily_df.index <= eod_naive]
 
