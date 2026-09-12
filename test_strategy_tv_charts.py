@@ -178,6 +178,28 @@ class TestStrategyTradingViewCharts(unittest.TestCase):
         self.assertIn("Buy & Hold Benchmark", html)
         self.assertIn("Peak Equity", html)
 
+    def test_generate_equity_drawdown_chart_html_float32(self):
+        # Specifically tests that numpy float32 objects do not raise TypeError
+        df_float32 = self.df.copy()
+        df_float32["close"] = df_float32["close"].astype(np.float32)
+        eq_float32 = self.equity_df.copy()
+        eq_float32["equity"] = eq_float32["equity"].astype(np.float32)
+        eq_float32["high_watermark"] = eq_float32["high_watermark"].astype(np.float32)
+        eq_float32["drawdown_pct"] = eq_float32["drawdown_pct"].astype(np.float32)
+
+        html = tradingview_charts.generate_equity_drawdown_chart_html(
+            equity_df=eq_float32,
+            initial_capital=100000.0,
+            final_equity=np.float32(125000.0),
+            symbol="RELIANCE",
+            strategy_name="Hilega Milega",
+            benchmark_df=df_float32,
+            height=450,
+            theme="dark"
+        )
+        self.assertIsInstance(html, str)
+        self.assertIn("Portfolio Equity Curve", html)
+
     def test_calculate_advanced_metrics(self):
         metrics = strategy_ui.calculate_advanced_metrics(self.result, 100000.0, self.df)
         self.assertIn("cagr_pct", metrics)

@@ -730,7 +730,7 @@ def render_strategy_lab_page(theme: str = "dark"):
                         benchmark_df=df_ind,
                         height=460,
                         theme=theme,
-                        chart_id=f"tv_eq_{sel_sym}_{sel_tf}"
+                        chart_id=f"tv_eq_{sel_sym}_{res.timeframe.replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_')}"
                     ),
                     height=480
                 )

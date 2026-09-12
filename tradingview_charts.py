@@ -18,6 +18,21 @@ import numpy as np
 import scanner
 
 
+def _safe_json_dumps(obj) -> str:
+    """Serializes objects to JSON while cleanly converting numpy numeric types (float32, float64, int64) to native Python types."""
+    def _default(o):
+        if isinstance(o, (np.floating, float)):
+            return float(o)
+        if isinstance(o, (np.integer, int)):
+            return int(o)
+        if isinstance(o, (np.bool_, bool)):
+            return bool(o)
+        if isinstance(o, (np.ndarray, list)):
+            return list(o)
+        return str(o)
+    return json.dumps(obj, default=_default)
+
+
 def prepare_chart_data(df: pd.DataFrame, is_intraday: bool = False) -> tuple:
     """
     Transforms a DataFrame into clean JSON-serializable structures for Lightweight Charts.
@@ -7427,14 +7442,14 @@ def generate_strategy_backtest_chart_html(
     net_pnl = sum(t.pnl_rupees for t in (trades or []))
 
     # Serialize JSON for injection
-    candles_json = json.dumps(candles)
-    volumes_json = json.dumps(volumes)
-    indicators_json = json.dumps(indicators_data)
-    markers_json = json.dumps(trade_markers)
-    trades_lookup_json = json.dumps(trade_lookup)
-    rsi_json = json.dumps(rsi_pts)
-    rsi_ema3_json = json.dumps(rsi_ema3_pts)
-    rsi_wma21_json = json.dumps(rsi_wma21_pts)
+    candles_json = _safe_json_dumps(candles)
+    volumes_json = _safe_json_dumps(volumes)
+    indicators_json = _safe_json_dumps(indicators_data)
+    markers_json = _safe_json_dumps(trade_markers)
+    trades_lookup_json = _safe_json_dumps(trade_lookup)
+    rsi_json = _safe_json_dumps(rsi_pts)
+    rsi_ema3_json = _safe_json_dumps(rsi_ema3_pts)
+    rsi_wma21_json = _safe_json_dumps(rsi_wma21_pts)
 
     header_h = 42
     avail_h = height - header_h
@@ -8000,19 +8015,25 @@ def generate_equity_drawdown_chart_html(
     eq_clean.sort_index(inplace=True)
     eq_clean = eq_clean[~eq_clean.index.duplicated(keep="last")]
 
+    is_intraday = any(dt.hour != 0 or dt.minute != 0 for dt in eq_clean.index[:30])
+
     equity_pts = []
     hwm_pts = []
     dd_pts = []
 
     for dt, row in eq_clean.iterrows():
-        t_val = dt.strftime("%Y-%m-%d")
+        if is_intraday:
+            dt_ist = dt.tz_localize("Asia/Kolkata") if dt.tzinfo is None else dt.tz_convert("Asia/Kolkata")
+            t_val = int(dt_ist.timestamp())
+        else:
+            t_val = dt.strftime("%Y-%m-%d")
         eq = round(float(row.get("equity", initial_capital)), 2)
         hwm = round(float(row.get("high_watermark", eq)), 2)
         dd = round(-abs(float(row.get("drawdown_pct", 0.0))), 2)
 
-        equity_pts.append({"time": t_val, "value": eq})
-        hwm_pts.append({"time": t_val, "value": hwm})
-        dd_pts.append({"time": t_val, "value": dd})
+        equity_pts.append({"time": t_val, "value": float(eq)})
+        hwm_pts.append({"time": t_val, "value": float(hwm)})
+        dd_pts.append({"time": t_val, "value": float(dd)})
 
     # Benchmark Points (if provided)
     bench_pts = []
@@ -8021,22 +8042,28 @@ def generate_equity_drawdown_chart_html(
         if not isinstance(b_clean.index, pd.DatetimeIndex):
             b_clean.index = pd.to_datetime(b_clean.index)
         b_clean.sort_index(inplace=True)
-        first_close = b_clean["close"].dropna().iloc[0] if not b_clean["close"].dropna().empty else 1.0
+        b_clean = b_clean[~b_clean.index.duplicated(keep="last")]
+        first_close_val = b_clean["close"].dropna().iloc[0] if not b_clean["close"].dropna().empty else 1.0
+        first_close = float(first_close_val)
         for dt, row in b_clean.iterrows():
-            t_val = dt.strftime("%Y-%m-%d")
+            if is_intraday:
+                dt_ist = dt.tz_localize("Asia/Kolkata") if dt.tzinfo is None else dt.tz_convert("Asia/Kolkata")
+                t_val = int(dt_ist.timestamp())
+            else:
+                t_val = dt.strftime("%Y-%m-%d")
             c = row.get("close")
             if not pd.isna(c) and first_close > 0:
-                b_val = round(initial_capital * (float(c) / first_close), 2)
-                bench_pts.append({"time": t_val, "value": b_val})
+                b_val = round(float(initial_capital) * (float(c) / first_close), 2)
+                bench_pts.append({"time": t_val, "value": float(b_val)})
 
-    net_return_pct = ((final_equity - initial_capital) / initial_capital * 100.0) if initial_capital > 0 else 0.0
-    net_return_rupees = final_equity - initial_capital
+    net_return_pct = ((float(final_equity) - float(initial_capital)) / float(initial_capital) * 100.0) if float(initial_capital) > 0 else 0.0
+    net_return_rupees = float(final_equity) - float(initial_capital)
     max_dd_val = min(p["value"] for p in dd_pts) if dd_pts else 0.0
 
-    eq_json = json.dumps(equity_pts)
-    hwm_json = json.dumps(hwm_pts)
-    dd_json = json.dumps(dd_pts)
-    bench_json = json.dumps(bench_pts)
+    eq_json = _safe_json_dumps(equity_pts)
+    hwm_json = _safe_json_dumps(hwm_pts)
+    dd_json = _safe_json_dumps(dd_pts)
+    bench_json = _safe_json_dumps(bench_pts)
 
     header_h = 40
     avail_h = height - header_h
