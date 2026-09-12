@@ -485,32 +485,55 @@ def get_resampled_candles(
 
     symbol_parquet = config.DATA_DIR / "by_symbol" / f"{safe_sym}.parquet"
 
-    # Decide data source: local symbol parquet file, stocks table, or candles_1m table
+    has_parquet = symbol_parquet.exists()
+    has_stocks = False
+    try:
+        with _lock:
+            chk = conn.execute("SELECT 1 FROM stocks WHERE ticker = ? LIMIT 1;", [clean_sym]).fetchone()
+            if chk:
+                has_stocks = True
+    except Exception:
+        has_stocks = False
+
     ts_col = "timestamp"
-    if symbol_parquet.exists():
+    params = []
+
+    if has_parquet and has_stocks:
+        from_source = f"""(
+            SELECT datetime::TIMESTAMP WITH TIME ZONE AS timestamp, open, high, low, close, volume 
+            FROM stocks WHERE ticker = ?
+            UNION ALL
+            SELECT timestamp, open, high, low, close, volume 
+            FROM read_parquet('{str(symbol_parquet)}')
+            WHERE timestamp >= '2022-01-01'
+        )"""
+        params.append(clean_sym)
+        where_clause = "WHERE 1=1"
+    elif has_parquet:
         from_source = f"read_parquet('{str(symbol_parquet)}')"
         where_clause = "WHERE 1=1"
-        params = []
+    elif has_stocks:
+        from_source = "stocks"
+        ts_col = "datetime"
+        where_clause = "WHERE ticker = ?"
+        params.append(clean_sym)
     else:
-        has_stocks = False
+        has_candles_1m = False
         try:
             with _lock:
-                chk = conn.execute("SELECT count(*) FROM stocks WHERE ticker = ? LIMIT 1;", [clean_sym]).fetchone()
-                if chk and chk[0] > 0:
-                    has_stocks = True
+                chk_1m = conn.execute("SELECT 1 FROM information_schema.tables WHERE table_name = 'candles_1m';").fetchone()
+                if chk_1m:
+                    has_candles_1m = True
         except Exception:
-            has_stocks = False
+            has_candles_1m = False
 
-        if has_stocks:
-            from_source = "stocks"
-            ts_col = "datetime"
-            where_clause = "WHERE ticker = ?"
-            params = [clean_sym]
-        else:
+        if has_candles_1m:
             from_source = "candles_1m"
             ts_col = "timestamp"
             where_clause = "WHERE symbol = ?"
-            params = [clean_sym]
+            params.append(clean_sym)
+        else:
+            return pd.DataFrame()
 
     query = f"""
         SELECT 

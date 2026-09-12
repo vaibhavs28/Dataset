@@ -300,7 +300,7 @@ def resample_1min_to_custom_minutes(df_1min: pd.DataFrame, interval_minutes: int
 def ensure_symbol_custom_minute_candles(
     symbol: str, 
     interval_minutes: int, 
-    min_bars: int = 200,
+    min_bars: int = 1,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ) -> pd.DataFrame:
@@ -371,7 +371,7 @@ def is_genuine_75m_df(df: pd.DataFrame) -> bool:
 
 def ensure_symbol_75m_candles(
     symbol: str, 
-    min_bars: int = 10,
+    min_bars: int = 1,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ) -> pd.DataFrame:
@@ -403,7 +403,7 @@ def ensure_symbol_75m_candles(
     try:
         import duckdb_store
         df_resampled = duckdb_store.get_resampled_candles(sym, interval_minutes=75, limit=5000, min_date=start_date, max_date=end_date)
-        if not df_resampled.empty and is_genuine_75m_df(df_resampled):
+        if not df_resampled.empty:
             return df_resampled
     except Exception as e:
         logger.warning(f"Local parquet resample note for {sym}: {e}")

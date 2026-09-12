@@ -313,7 +313,12 @@ def merge_external_duckdb(
                             ) MINUTE AS slot_ts
                         FROM ext_db."{tbl_name}" s
                         LEFT JOIN _corp_factors f ON (f.ticker = s.ticker)
-                        WHERE {date_sel} < '2022-01-01'
+                        WHERE s.ticker NOT LIKE '%ETF%' 
+                          AND s.ticker NOT LIKE '%BEES%' 
+                          AND s.ticker NOT LIKE '%NIFTY%' 
+                          AND s.ticker NOT LIKE '%SENSEX%' 
+                          AND s.ticker NOT LIKE 'INDIA VIX%' 
+                          AND s.ticker NOT LIKE '0%'
                           AND CAST(s.datetime::TIMESTAMP AS TIME) >= TIME '09:15:00' 
                           AND CAST(s.datetime::TIMESTAMP AS TIME) <= TIME '15:30:00'
                     )

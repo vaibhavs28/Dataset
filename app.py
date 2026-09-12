@@ -1636,7 +1636,7 @@ def main():
                     )
 
                 if term_df.empty:
-                    st.info(f"1-minute Parquet history not yet cached for {term_stock}. Displaying daily candles.")
+                    st.info(f"ℹ️ {display_tf} intraday data not yet cached in the database for {term_stock}. Displaying daily candles.")
                     term_df = term_candles.tail(200)
                     is_intra = False
                 else:
