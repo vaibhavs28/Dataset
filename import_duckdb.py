@@ -87,11 +87,139 @@ def merge_external_duckdb(file_path: str, replace_existing: bool = True) -> Dict
             row_count = tbl_info["row_count"]
             logger.info(f"Processing table '{tbl_name}' ({row_count:,} rows, columns: {cols})...")
 
+            # 0. Specialized handler for authentic 1-minute 'stocks' table (ticker, datetime, date, open, high, low, close, volume)
+            if "ticker" in cols and "datetime" in cols:
+                dest_table = "stocks"
+                logger.info(f"Detected 1-minute equity table '{tbl_name}' with {row_count:,} rows. Merging into {dest_table}...")
+
+                t0 = time.time()
+                # A. Copy / Merge 1-minute data table
+                dest_conn.execute(f"""
+                    CREATE TABLE IF NOT EXISTS stocks (
+                        ticker VARCHAR,
+                        date DATE,
+                        time VARCHAR,
+                        datetime TIMESTAMP,
+                        open DOUBLE,
+                        high DOUBLE,
+                        low DOUBLE,
+                        close DOUBLE,
+                        volume BIGINT
+                    );
+                """)
+                dest_conn.execute(f"""
+                    INSERT INTO stocks
+                    SELECT * FROM ext_db."{tbl_name}";
+                """)
+                logger.info(f"✅ Copied {row_count:,} 1-min bars into 'stocks' in {time.time()-t0:.2f}s")
+
+                # B. Create index on stocks (ticker, datetime) for sub-5ms queries
+                logger.info("Creating index on stocks(ticker, datetime)...")
+                t_idx = time.time()
+                try:
+                    dest_conn.execute("CREATE INDEX IF NOT EXISTS idx_stocks_ticker_dt ON stocks (ticker, datetime);")
+                    logger.info(f"✅ Index created in {time.time()-t_idx:.2f}s")
+                except Exception as e_idx:
+                    logger.warning(f"Index creation note: {e_idx}")
+
+                # C. Resample pre-2020 daily bars into daily_candles
+                logger.info("Resampling pre-2020 daily candles from 1-min data into daily_candles...")
+                t_daily = time.time()
+                dest_conn.execute("""
+                    INSERT INTO daily_candles (
+                        instrument_key, trading_symbol, date, open, high, low, close, volume, open_interest
+                    )
+                    SELECT
+                        'NSE_EQ|' || ticker AS instrument_key,
+                        ticker AS trading_symbol,
+                        CAST(date AS VARCHAR) AS date,
+                        arg_min(open, datetime) AS open,
+                        MAX(high) AS high,
+                        MIN(low) AS low,
+                        arg_max(close, datetime) AS close,
+                        CAST(SUM(volume) AS BIGINT) AS volume,
+                        0 AS open_interest
+                    FROM ext_db."stocks"
+                    WHERE date < '2020-01-01'
+                    GROUP BY ticker, date
+                    ON CONFLICT (instrument_key, date) DO UPDATE SET
+                        trading_symbol = EXCLUDED.trading_symbol,
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        open_interest = EXCLUDED.open_interest;
+                """)
+                logger.info(f"✅ Pre-2020 daily candles resampled and merged in {time.time()-t_daily:.2f}s")
+
+                # D. Resample pre-2020 75-minute candles into intraday_candles
+                logger.info("Resampling pre-2020 authentic 75-minute candles into intraday_candles...")
+                t_75 = time.time()
+                dest_conn.execute("""
+                    INSERT INTO intraday_candles (
+                        instrument_key, trading_symbol, timeframe, timestamp, open, high, low, close, volume
+                    )
+                    WITH session_bars AS (
+                        SELECT 
+                            ticker,
+                            date,
+                            datetime AS dt,
+                            open,
+                            high,
+                            low,
+                            close,
+                            volume,
+                            CAST(date AS TIMESTAMP) + INTERVAL (
+                                CASE 
+                                    WHEN CAST(datetime AS TIME) < TIME '10:30:00' THEN 555
+                                    WHEN CAST(datetime AS TIME) < TIME '11:45:00' THEN 630
+                                    WHEN CAST(datetime AS TIME) < TIME '13:00:00' THEN 705
+                                    WHEN CAST(datetime AS TIME) < TIME '14:15:00' THEN 780
+                                    ELSE 855
+                                END
+                            ) MINUTE AS slot_ts
+                        FROM ext_db."stocks"
+                        WHERE date < '2020-01-01'
+                          AND CAST(datetime AS TIME) >= TIME '09:15:00' 
+                          AND CAST(datetime AS TIME) <= TIME '15:30:00'
+                    )
+                    SELECT
+                        'NSE_EQ|' || ticker AS instrument_key,
+                        ticker AS trading_symbol,
+                        '75m' AS timeframe,
+                        slot_ts AS timestamp,
+                        arg_min(open, dt) AS open,
+                        MAX(high) AS high,
+                        MIN(low) AS low,
+                        arg_max(close, dt) AS close,
+                        CAST(SUM(volume) AS BIGINT) AS volume
+                    FROM session_bars
+                    GROUP BY ticker, slot_ts
+                    ON CONFLICT (instrument_key, timeframe, timestamp) DO UPDATE SET
+                        trading_symbol = EXCLUDED.trading_symbol,
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume;
+                """)
+                logger.info(f"✅ Pre-2020 75-minute candles resampled and merged in {time.time()-t_75:.2f}s")
+
+                results[tbl_name] = {
+                    "target": "stocks, daily_candles, intraday_candles",
+                    "status": "fully_merged_and_resampled",
+                    "rows": row_count,
+                    "time": round(time.time() - t0, 2)
+                }
+                continue
+
             # 1. Check if table is daily candles
             if ("date" in cols or "timestamp" in cols) and ("close" in cols) and ("timeframe" not in cols and "1m" not in tbl_name.lower()):
                 dest_table = "daily_candles"
                 date_col = "date" if "date" in cols else "timestamp"
-                sym_col = "trading_symbol" if "trading_symbol" in cols else ("symbol" if "symbol" in cols else None)
+                sym_col = "trading_symbol" if "trading_symbol" in cols else ("symbol" if "symbol" in cols else ("ticker" if "ticker" in cols else None))
+
                 ikey_col = "instrument_key" if "instrument_key" in cols else None
                 oi_col = "open_interest" if "open_interest" in cols else ("oi" if "oi" in cols else "0")
 

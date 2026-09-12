@@ -436,19 +436,36 @@ def get_resampled_candles(
 
     symbol_parquet = config.DATA_DIR / "by_symbol" / f"{safe_sym}.parquet"
 
-    # Decide data source: local symbol parquet file or candles_1m table
+    # Decide data source: local symbol parquet file, stocks table, or candles_1m table
+    ts_col = "timestamp"
     if symbol_parquet.exists():
         from_source = f"read_parquet('{str(symbol_parquet)}')"
         where_clause = "WHERE 1=1"
         params = []
     else:
-        from_source = "candles_1m"
-        where_clause = "WHERE symbol = ?"
-        params = [clean_sym]
+        has_stocks = False
+        try:
+            with _lock:
+                chk = conn.execute("SELECT count(*) FROM stocks WHERE ticker = ? LIMIT 1;", [clean_sym]).fetchone()
+                if chk and chk[0] > 0:
+                    has_stocks = True
+        except Exception:
+            has_stocks = False
+
+        if has_stocks:
+            from_source = "stocks"
+            ts_col = "datetime"
+            where_clause = "WHERE ticker = ?"
+            params = [clean_sym]
+        else:
+            from_source = "candles_1m"
+            ts_col = "timestamp"
+            where_clause = "WHERE symbol = ?"
+            params = [clean_sym]
 
     query = f"""
         SELECT 
-            time_bucket(INTERVAL '{interval_minutes} minutes', timestamp) AS bucket_time,
+            time_bucket(INTERVAL '{interval_minutes} minutes', {ts_col}) AS bucket_time,
             first(open) AS open,
             max(high) AS high,
             min(low) AS low,
@@ -459,8 +476,9 @@ def get_resampled_candles(
     """
 
     if min_date:
-        query += " AND timestamp >= ?::TIMESTAMP"
+        query += f" AND {ts_col} >= ?::TIMESTAMP"
         params.append(min_date)
+
 
     query += f"""
         GROUP BY 1

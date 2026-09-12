@@ -73,9 +73,10 @@ class TestSync75mIntraday(unittest.TestCase):
 
     def test_duckdb_upsert_intraday_candles(self):
         """Verify duckdb_store.upsert_intraday_candles commits and reads correctly."""
+        unique_sym = "TEST_DUCK_STOCK"
         records = [{
-            "instrument_key": self.test_key,
-            "trading_symbol": self.test_symbol,
+            "instrument_key": "NSE_EQ|TESTDUCK123",
+            "trading_symbol": unique_sym,
             "timeframe": "75m",
             "timestamp": "2026-09-11 09:15:00",
             "open": 500.0,
@@ -86,10 +87,11 @@ class TestSync75mIntraday(unittest.TestCase):
         }]
         duckdb_store.upsert_intraday_candles(records)
 
-        df = duckdb_store.get_intraday_candles(self.test_symbol, timeframe="75m")
+        df = duckdb_store.get_intraday_candles(unique_sym, timeframe="75m")
         self.assertFalse(df.empty)
         last_row = df.iloc[-1]
         self.assertEqual(last_row["close"], 505.0)
+
 
 
 if __name__ == "__main__":
