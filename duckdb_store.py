@@ -484,8 +484,68 @@ def get_resampled_candles(
     conn = get_connection()
 
     symbol_parquet = config.DATA_DIR / "by_symbol" / f"{safe_sym}.parquet"
-
     has_parquet = symbol_parquet.exists()
+
+    if has_parquet:
+        # Fast, lock-free path: standalone symbol parquet exists.
+        # Use an in-memory DuckDB connection to completely avoid any OS file lock contention on market_data.duckdb!
+        try:
+            conn = duckdb.connect()
+            ts_col = "timestamp"
+            from_source = f"read_parquet('{str(symbol_parquet)}')"
+            where_clause = "WHERE 1=1"
+            params = []
+
+            query = f"""
+                SELECT 
+                    time_bucket(INTERVAL '{interval_minutes} minutes', {ts_col}) AS bucket_time,
+                    first(open) AS open,
+                    max(high) AS high,
+                    min(low) AS low,
+                    last(close) AS close,
+                    sum(volume) AS volume
+                FROM {from_source}
+                {where_clause}
+            """
+
+            if min_date:
+                query += f" AND {ts_col} >= ?::TIMESTAMPTZ"
+                min_ts = f"{min_date} 00:00:00+05:30" if len(str(min_date)) == 10 else str(min_date)
+                params.append(min_ts)
+
+            if max_date:
+                query += f" AND {ts_col} <= ?::TIMESTAMPTZ"
+                end_ts = f"{max_date} 23:59:59+05:30" if len(str(max_date)) == 10 else str(max_date)
+                params.append(end_ts)
+
+            query += f"""
+                GROUP BY 1
+                ORDER BY bucket_time DESC
+            """
+            if not (min_date or max_date):
+                query += f" LIMIT {limit}"
+            query += ";"
+
+            df = conn.execute(query, params).df()
+            if not df.empty:
+                df.sort_values("bucket_time", ascending=True, inplace=True)
+                df["bucket_time"] = pd.to_datetime(df["bucket_time"])
+                if df["bucket_time"].dt.tz is None:
+                    df["bucket_time"] = df["bucket_time"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+                else:
+                    df["bucket_time"] = df["bucket_time"].dt.tz_convert("Asia/Kolkata")
+                df.set_index("bucket_time", inplace=True)
+                return df
+        except Exception as e:
+            logger.error(f"Error resampling from parquet for {symbol} ({interval_minutes}m): {e}", exc_info=True)
+
+    # Fallback to market_data.duckdb database connection for stocks or candles_1m tables
+    try:
+        conn = get_connection()
+    except Exception as e:
+        logger.error(f"Error connecting to DuckDB database for {symbol}: {e}")
+        return pd.DataFrame()
+
     has_stocks = False
     try:
         with _lock:
@@ -498,21 +558,7 @@ def get_resampled_candles(
     ts_col = "timestamp"
     params = []
 
-    if has_parquet and has_stocks:
-        from_source = f"""(
-            SELECT datetime::TIMESTAMP WITH TIME ZONE AS timestamp, open, high, low, close, volume 
-            FROM stocks WHERE ticker = ?
-            UNION ALL
-            SELECT timestamp, open, high, low, close, volume 
-            FROM read_parquet('{str(symbol_parquet)}')
-            WHERE timestamp >= '2022-01-01'
-        )"""
-        params.append(clean_sym)
-        where_clause = "WHERE 1=1"
-    elif has_parquet:
-        from_source = f"read_parquet('{str(symbol_parquet)}')"
-        where_clause = "WHERE 1=1"
-    elif has_stocks:
+    if has_stocks:
         from_source = "stocks"
         ts_col = "datetime"
         where_clause = "WHERE ticker = ?"
@@ -548,12 +594,13 @@ def get_resampled_candles(
     """
 
     if min_date:
-        query += f" AND {ts_col} >= ?::TIMESTAMP"
-        params.append(str(min_date))
+        query += f" AND {ts_col} >= ?::TIMESTAMPTZ"
+        min_ts = f"{min_date} 00:00:00+05:30" if len(str(min_date)) == 10 else str(min_date)
+        params.append(min_ts)
 
     if max_date:
-        query += f" AND {ts_col} <= ?::TIMESTAMP"
-        end_ts = f"{max_date} 23:59:59" if len(str(max_date)) == 10 else str(max_date)
+        query += f" AND {ts_col} <= ?::TIMESTAMPTZ"
+        end_ts = f"{max_date} 23:59:59+05:30" if len(str(max_date)) == 10 else str(max_date)
         params.append(end_ts)
 
     query += f"""
@@ -568,7 +615,7 @@ def get_resampled_candles(
         with _lock:
             df = conn.execute(query, params).df()
     except Exception as e:
-        logger.error(f"Error resampling candles for {symbol} ({interval_minutes}m): {e}")
+        logger.error(f"Error resampling candles from DB for {symbol} ({interval_minutes}m): {e}", exc_info=True)
         return pd.DataFrame()
 
     if df.empty:

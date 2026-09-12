@@ -322,7 +322,7 @@ def ensure_symbol_custom_minute_candles(
     except Exception as e:
         logger.warning(f"DuckDB fast resampling note for {symbol} ({interval_minutes}m): {e}")
 
-    df_1min = load_symbol_1min(symbol, limit=10000)
+    df_1min = load_symbol_1min(symbol, limit=None if (start_date or end_date) else 10000, start_date=start_date, end_date=end_date)
     if df_1min.empty or len(df_1min) < 375:
         # Fallback to fetching 1-min from Upstox
         inst_key = instruments.resolve_instrument_key(symbol) or f"NSE_EQ|{symbol}"
@@ -492,8 +492,13 @@ def import_batch_to_database(symbols: List[str], progress_callback=None) -> int:
     return count
 
 
-def load_symbol_1min(symbol: str, limit: int = 5000) -> pd.DataFrame:
-    """Reads the most recent 1-minute OHLCV candles for a symbol from local parquet files."""
+def load_symbol_1min(
+    symbol: str, 
+    limit: Optional[int] = 5000, 
+    start_date: Optional[str] = None, 
+    end_date: Optional[str] = None
+) -> pd.DataFrame:
+    """Reads 1-minute OHLCV candles for a symbol from local parquet files, supporting date filters."""
     sym = symbol.upper().strip()
     safe_sym = sym.replace("/", "_").replace("\\", "_")
     symbol_file = PARQUET_BY_SYMBOL_DIR / f"{safe_sym}.parquet"
@@ -529,7 +534,16 @@ def load_symbol_1min(symbol: str, limit: int = 5000) -> pd.DataFrame:
     df.sort_values(by="timestamp", inplace=True)
     df = df[~df["timestamp"].duplicated(keep="last")]
     df.set_index("timestamp", inplace=True)
-    return df.tail(limit)
+
+    if start_date:
+        df = df[df.index >= pd.to_datetime(start_date).tz_localize("Asia/Kolkata")]
+    if end_date:
+        end_dt = pd.to_datetime(f"{end_date} 23:59:59").tz_localize("Asia/Kolkata")
+        df = df[df.index <= end_dt]
+
+    if limit and limit > 0 and len(df) > limit:
+        return df.tail(limit)
+    return df
 
 
 def get_live_engine_status() -> dict:

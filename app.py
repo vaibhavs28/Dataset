@@ -1654,8 +1654,12 @@ def main():
                     if term_df.index.tz is not None:
                         end_dt = end_dt.tz_localize(term_df.index.tz)
                     term_df = term_df[term_df.index <= end_dt]
-                elif len(term_df) > 2500 and not is_intra:
-                    term_df = term_df.tail(2500)
+
+                # Cap maximum visual candles to keep TradingView chart rendering snappy & avoid browser freeze
+                MAX_TERMINAL_BARS = 3000
+                if len(term_df) > MAX_TERMINAL_BARS:
+                    st.caption(f"⚡ Showing latest **{MAX_TERMINAL_BARS:,}** {display_tf} candles from selected date range ({len(term_df):,} total bars available) for instant responsiveness.")
+                    term_df = term_df.tail(MAX_TERMINAL_BARS)
 
             clean_chart_id = re.sub(r'[^a-zA-Z0-9_]', '_', f"adv_term_{term_stock}_{display_tf}")
             term_chart_html = tradingview_charts.generate_advanced_terminal_html(
