@@ -105,6 +105,7 @@ def merge_external_duckdb(
         dest_conn.execute(f"ATTACH '{str(p)}' AS ext_db (READ_ONLY);")
 
         for tbl_name, tbl_info in info["tables"].items():
+            t0 = time.time()
             cols = [c.lower() for c in tbl_info["columns"]]
             row_count = tbl_info["row_count"]
             logger.info(f"Processing table '{tbl_name}' ({row_count:,} rows, columns: {cols})...")
