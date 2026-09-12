@@ -7253,13 +7253,15 @@ def generate_strategy_backtest_chart_html(
     height: int = 620,
     theme: str = "dark",
     is_intraday: bool = False,
-    chart_id: str = "tv_strat_chart"
+    chart_id: str = "tv_strat_chart",
+    show_volume: bool = False
 ) -> str:
     """
     Renders a TradingView Lightweight Chart with Trade Execution Markers (arrowUp Buy, arrowDown Exit)
-    overlaid directly on candlesticks, with indicators, volume, and trade hover inspection cards.
+    overlaid directly on candlesticks, with indicators, volume (hidden by default), and trade hover inspection cards.
     """
     is_light = (str(theme).lower() == "light")
+    show_volume_js = "true" if show_volume else "false"
     bg_init = "#ffffff" if is_light else "#131722"
     txt_init = "#787B86"
 
@@ -7548,6 +7550,11 @@ def generate_strategy_backtest_chart_html(
             background: {"#cbd5e1" if is_light else "#3b4253"};
             color: {"#0f172a" if is_light else "#ffffff"};
         }}
+        .btn.active {{
+            background: #2563EB;
+            color: #ffffff;
+            border-color: #1d4ed8;
+        }}
         .btn-fs {{
             background: #3B82F6;
             color: #ffffff;
@@ -7632,7 +7639,8 @@ def generate_strategy_backtest_chart_html(
                 <button class="btn" onclick="zoomPreset('6M')">6M</button>
                 <button class="btn" onclick="zoomPreset('1Y')">1Y</button>
                 <button class="btn" onclick="zoomPreset('ALL')">All</button>
-                <button class="btn" onclick="toggleIndicators()">Indicators</button>
+                <button class="btn active" id="{chart_id}_ind_btn" onclick="toggleIndicators()">Indicators</button>
+                <button class="btn {"active" if show_volume else ""}" id="{chart_id}_vol_btn" onclick="toggleVolume()">Volume</button>
                 <button class="btn btn-fs" id="{chart_id}_fs_btn" onclick="toggleFullscreen()">⛶ Fullscreen</button>
             </div>
         </div>
@@ -7670,6 +7678,7 @@ def generate_strategy_backtest_chart_html(
         const rsiEma3Data = {rsi_ema3_json};
         const rsiWma21Data = {rsi_wma21_json};
         const hasRsiPane = {"true" if has_rsi else "false"};
+        const showVolumeInit = {show_volume_js};
 
         // 1. Initialize Main Lightweight Chart
         const mainContainer = document.getElementById("{chart_id}_main");
@@ -7688,7 +7697,7 @@ def generate_strategy_backtest_chart_html(
             }},
             rightPriceScale: {{
                 borderColor: themeColors.border,
-                scaleMargins: {{ top: 0.08, bottom: 0.20 }}
+                scaleMargins: showVolumeInit ? {{ top: 0.08, bottom: 0.20 }} : {{ top: 0.08, bottom: 0.08 }}
             }},
             timeScale: {{
                 borderColor: themeColors.border,
@@ -7718,11 +7727,12 @@ def generate_strategy_backtest_chart_html(
             candleSeries.setMarkers(tradeMarkers);
         }}
 
-        // 4. Add Volume Series
+        // 4. Add Volume Series (Hidden by default in Strategy Lab)
         const volumeSeries = chart.addHistogramSeries({{
             priceFormat: {{ type: 'volume' }},
             priceScaleId: '',
-            scaleMargins: {{ top: 0.82, bottom: 0 }}
+            scaleMargins: {{ top: 0.82, bottom: 0 }},
+            visible: showVolumeInit
         }});
         volumeSeries.setData(volumesData);
 
@@ -7866,9 +7876,31 @@ def generate_strategy_backtest_chart_html(
             for (const [k, s] of Object.entries(indSeriesMap)) {{
                 s.applyOptions({{ visible: indicatorsVisible }});
             }}
+            const btn = document.getElementById("{chart_id}_ind_btn");
+            if (btn) {{
+                btn.classList.toggle("active", indicatorsVisible);
+            }}
         }};
 
-        // 10. Seamless Fullscreen API
+        // 10. Toggle Volume Visibility (Hidden by default)
+        let volumeVisible = showVolumeInit;
+        window.toggleVolume = function() {{
+            volumeVisible = !volumeVisible;
+            if (volumeSeries) {{
+                volumeSeries.applyOptions({{ visible: volumeVisible }});
+                chart.applyOptions({{
+                    rightPriceScale: {{
+                        scaleMargins: volumeVisible ? {{ top: 0.08, bottom: 0.20 }} : {{ top: 0.08, bottom: 0.08 }}
+                    }}
+                }});
+            }}
+            const btn = document.getElementById("{chart_id}_vol_btn");
+            if (btn) {{
+                btn.classList.toggle("active", volumeVisible);
+            }}
+        }};
+
+        // 11. Seamless Fullscreen API
         const wrapper = document.getElementById("{chart_id}_wrapper");
         const fsBtn = document.getElementById("{chart_id}_fs_btn");
 

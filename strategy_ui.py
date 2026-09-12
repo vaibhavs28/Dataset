@@ -753,7 +753,8 @@ def render_strategy_lab_page(theme: str = "dark"):
                         height=640,
                         theme=theme,
                         is_intraday=is_intra,
-                        chart_id=f"tv_strat_{sel_sym}_{sel_tf}"
+                        chart_id=f"tv_strat_{sel_sym}_{sel_tf}",
+                        show_volume=False
                     ),
                     height=660
                 )

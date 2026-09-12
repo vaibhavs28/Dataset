@@ -136,6 +136,20 @@ class TestStrategyTradingViewCharts(unittest.TestCase):
         self.assertIn("arrowUp", html)
         self.assertIn("arrowDown", html)
         self.assertIn("RELIANCE", html)
+        # Volume should be hidden by default
+        self.assertIn("const showVolumeInit = false;", html)
+        self.assertIn("toggleVolume()", html)
+
+        # When show_volume=True is explicitly requested
+        html_vol = tradingview_charts.generate_strategy_backtest_chart_html(
+            df=self.df,
+            trades=self.trades,
+            symbol="RELIANCE",
+            strategy_name="⚡ Hilega Milega Momentum",
+            timeframe="Daily",
+            show_volume=True
+        )
+        self.assertIn("const showVolumeInit = true;", html_vol)
 
     def test_generate_strategy_chart_empty_data(self):
         html = tradingview_charts.generate_strategy_backtest_chart_html(
