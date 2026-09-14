@@ -305,7 +305,9 @@ def render_crypto_page(theme: str = "dark"):
                 height=740,
                 is_intraday=is_intra,
                 chart_id=clean_chart_id,
-                theme=theme
+                theme=theme,
+                is_crypto=True,
+                crypto_resolution=res_code
             )
             st.components.v1.html(term_chart_html, height=760)
 

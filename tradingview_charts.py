@@ -1893,7 +1893,9 @@ def generate_advanced_terminal_html(
     height: int = 720,
     is_intraday: bool = False,
     chart_id: str = "tv_adv_terminal",
-    theme: str = "light"
+    theme: str = "light",
+    is_crypto: bool = False,
+    crypto_resolution: str = "15m"
 ) -> str:
     """
     Renders an Advanced Desktop-Grade TradingView Terminal using Lightweight Charts v4.
@@ -1909,6 +1911,7 @@ def generate_advanced_terminal_html(
     - Synchronized time scales across all panes
     - Full right-axis price badges and crosshair readings
     - Left Drawing Toolbar (Trendlines, Horizontal lines, Rays, Boxes, Fib, Brush, Text)
+    - Real-Time WebSocket Streaming for Crypto (Delta Exchange 24/7)
     """
     import scanner
 
@@ -1923,6 +1926,11 @@ def generate_advanced_terminal_html(
     show_rsi = indicators.get("rsi", True)
     show_macd = indicators.get("macd", False)
     show_stoch = indicators.get("stoch", False)
+
+    is_crypto = bool(is_crypto or ("DELTA:" in str(symbol).upper()) or ("BTC" in str(symbol).upper()) or ("ETH" in str(symbol).upper()) or str(symbol).upper().endswith("USD"))
+    clean_symbol = str(symbol).replace("DELTA:", "").replace("NSE:", "").strip()
+    clean_crypto_symbol = "BTCUSD" if "BTC" in clean_symbol.upper() else ("ETHUSD" if "ETH" in clean_symbol.upper() else clean_symbol.upper())
+    curr_sym = "$" if is_crypto else "₹"
 
     is_light = (str(theme).lower() == "light")
     bg_init = "#ffffff" if is_light else "#131722"
@@ -2009,11 +2017,18 @@ def generate_advanced_terminal_html(
     stoch_k_pts, stoch_d_pts = [], []
 
     for dt, row in df_calc.iterrows():
-        if is_intraday:
-            dt_ist = dt.tz_localize("Asia/Kolkata") if dt.tzinfo is None else dt.tz_convert("Asia/Kolkata")
-            t_val = int(dt_ist.timestamp())
+        if is_crypto:
+            if is_intraday:
+                dt_utc = dt if dt.tzinfo is not None else dt.tz_localize("UTC")
+                t_val = int(dt_utc.timestamp())
+            else:
+                t_val = dt.strftime("%Y-%m-%d")
         else:
-            t_val = dt.strftime("%Y-%m-%d")
+            if is_intraday:
+                dt_ist = dt.tz_localize("Asia/Kolkata") if dt.tzinfo is None else dt.tz_convert("Asia/Kolkata")
+                t_val = int(dt_ist.timestamp())
+            else:
+                t_val = dt.strftime("%Y-%m-%d")
 
         o = float(row.get("open", 0))
         h = float(row.get("high", 0))
@@ -2518,9 +2533,10 @@ def generate_advanced_terminal_html(
         <div class="tv-top-bar">
             <div class="tv-top-left">
                 <div class="sym-badge">
-                    <span class="live-dot"></span>
-                    <span>NSE:{symbol.upper()}</span>
+                    <span class="live-dot" style="{'background:#10B981; animation:pulse-live 1.5s infinite;' if is_crypto else ''}"></span>
+                    <span>{'DELTA:' if is_crypto else 'NSE:'}{clean_symbol.upper()}</span>
                 </div>
+                {'<span id="live_status_badge_' + safe_id + '" style="font-size:10px; padding:2px 7px; border-radius:3px; background:rgba(16,185,129,0.2); color:#10B981; font-weight:600; margin-left:4px;">🟢 LIVE 24/7</span>' if is_crypto else ''}
                 <div class="tf-pill">{timeframe_name}</div>
                 <div id="legend_{safe_id}" class="ohlc-display">
                     <span class="ohlc-label">O: <span id="leg_o_{safe_id}" class="ohlc-val">--</span></span>
@@ -3120,11 +3136,11 @@ def generate_advanced_terminal_html(
                 const isUp = closeVal >= o;
                 const cColor = isUp ? "#089981" : "#F23645";
 
-                if (legO) legO.textContent = "₹" + o.toFixed(2);
-                if (legH) legH.textContent = "₹" + h.toFixed(2);
-                if (legL) legL.textContent = "₹" + l.toFixed(2);
+                if (legO) legO.textContent = "{curr_sym}" + o.toFixed(2);
+                if (legH) legH.textContent = "{curr_sym}" + h.toFixed(2);
+                if (legL) legL.textContent = "{curr_sym}" + l.toFixed(2);
                 if (legC) {{
-                    legC.textContent = "₹" + closeVal.toFixed(2);
+                    legC.textContent = "{curr_sym}" + closeVal.toFixed(2);
                     legC.style.color = cColor;
                 }}
                 if (legChg) {{
@@ -3134,25 +3150,25 @@ def generate_advanced_terminal_html(
 
                 if (volumeSeries) {{
                     const vData = param.seriesData.get(volumeSeries);
-                    if (vData && legV) legV.textContent = Number(vData.value).toLocaleString('en-IN');
+                    if (vData && legV) legV.textContent = Number(vData.value).toLocaleString("{'en-US' if is_crypto else 'en-IN'}");
                 }}
 
                 // Update Floating Tooltip
                 let tStr = "";
                 if (typeof param.time === "number") {{
                     const d = new Date(param.time * 1000);
-                    tStr = d.toLocaleDateString('en-IN', {{ timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' }}) + ' ' +
-                           d.toLocaleTimeString('en-IN', {{ timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: false }});
+                    tStr = d.toLocaleDateString("{'en-US' if is_crypto else 'en-IN'}", {{ timeZone: "{'UTC' if is_crypto else 'Asia/Kolkata'}", day: '2-digit', month: 'short', year: 'numeric' }}) + ' ' +
+                           d.toLocaleTimeString("{'en-US' if is_crypto else 'en-IN'}", {{ timeZone: "{'UTC' if is_crypto else 'Asia/Kolkata'}", hour: '2-digit', minute: '2-digit', hour12: false }}) + "{' UTC' if is_crypto else ''}";
                 }} else {{
                     tStr = String(param.time);
                 }}
 
                 tooltip.innerHTML = `
                     <div class="tip-header">${{tStr}}</div>
-                    <div class="tip-row"><span class="tip-key">Open</span><span class="tip-val">₹${{o.toFixed(2)}}</span></div>
-                    <div class="tip-row"><span class="tip-key">High</span><span class="tip-val">₹${{h.toFixed(2)}}</span></div>
-                    <div class="tip-row"><span class="tip-key">Low</span><span class="tip-val">₹${{l.toFixed(2)}}</span></div>
-                    <div class="tip-row"><span class="tip-key">Close</span><span class="tip-val" style="color:${{cColor}}">₹${{closeVal.toFixed(2)}}</span></div>
+                    <div class="tip-row"><span class="tip-key">Open</span><span class="tip-val">{curr_sym}${{o.toFixed(2)}}</span></div>
+                    <div class="tip-row"><span class="tip-key">High</span><span class="tip-val">{curr_sym}${{h.toFixed(2)}}</span></div>
+                    <div class="tip-row"><span class="tip-key">Low</span><span class="tip-val">{curr_sym}${{l.toFixed(2)}}</span></div>
+                    <div class="tip-row"><span class="tip-key">Close</span><span class="tip-val" style="color:${{cColor}}">{curr_sym}${{closeVal.toFixed(2)}}</span></div>
                     <div class="tip-row"><span class="tip-key">Change</span><span class="tip-val" style="color:${{cColor}}">${{diff >= 0 ? '+' : ''}}${{pct.toFixed(2)}}%</span></div>
                 `;
                 tooltip.style.display = "block";
@@ -3189,6 +3205,164 @@ def generate_advanced_terminal_html(
             mainContainer.addEventListener("wheel", e => {{
                 e.stopPropagation();
             }}, {{ passive: false }});
+
+            // -----------------------------------------------------------------
+            // Real-Time Delta Exchange WebSocket Streaming (24/7 Live Candles)
+            // -----------------------------------------------------------------
+            const isCryptoChart = {'true' if is_crypto else 'false'};
+            const liveCryptoSymbol = '{clean_crypto_symbol}';
+            const liveCryptoRes = '{crypto_resolution}';
+            const isCryptoIntraday = {'true' if is_intraday else 'false'};
+            const currSymbol = '{curr_sym}';
+
+            if (isCryptoChart) {{
+                const wsEndpoints = [
+                    'wss://socket.india.delta.exchange',
+                    'wss://socket.delta.exchange'
+                ];
+                let wsEndpointIdx = 0;
+                let wsConn = null;
+                let wsReconnectTimer = null;
+                let lastLiveClose = null;
+
+                function updateCryptoBadge(connected, text) {{
+                    const b = document.getElementById('live_status_badge_{safe_id}');
+                    if (!b) return;
+                    if (connected) {{
+                        b.style.background = 'rgba(16, 185, 129, 0.2)';
+                        b.style.color = '#10B981';
+                        b.textContent = text || '🟢 LIVE STREAMING';
+                    }} else {{
+                        b.style.background = 'rgba(239, 68, 68, 0.2)';
+                        b.style.color = '#EF4444';
+                        b.textContent = text || '🔴 RECONNECTING...';
+                    }}
+                }}
+
+                function initCryptoWebSocket() {{
+                    if (wsConn) {{
+                        try {{ wsConn.close(); }} catch(e) {{}}
+                    }}
+                    const currentEndpoint = wsEndpoints[wsEndpointIdx % wsEndpoints.length];
+                    try {{
+                        wsConn = new WebSocket(currentEndpoint);
+                    }} catch(e) {{
+                        updateCryptoBadge(false, '🔴 WS ERROR');
+                        scheduleCryptoWsReconnect();
+                        return;
+                    }}
+
+                    wsConn.onopen = function() {{
+                        updateCryptoBadge(true, '🟢 LIVE STREAMING');
+                        const subMsg = {{
+                            type: 'subscribe',
+                            payload: {{
+                                channels: [
+                                    {{ name: 'candlestick_' + liveCryptoRes, symbols: [liveCryptoSymbol] }},
+                                    {{ name: 'v2/ticker', symbols: [liveCryptoSymbol] }}
+                                ]
+                            }}
+                        }};
+                        try {{
+                            wsConn.send(JSON.stringify(subMsg));
+                        }} catch(err) {{
+                            console.warn('WS Subscription failed to send:', err);
+                        }}
+                    }};
+
+                    wsConn.onmessage = function(event) {{
+                        try {{
+                            const msg = JSON.parse(event.data);
+                            if (!msg) return;
+
+                            // 1. Candlestick live update
+                            if (msg.type === ('candlestick_' + liveCryptoRes) && msg.symbol === liveCryptoSymbol) {{
+                                const rawTimeSec = Math.floor((msg.candle_start_time || 0) / 1000000);
+                                if (rawTimeSec <= 0) return;
+
+                                let barTime;
+                                if (isCryptoIntraday) {{
+                                    barTime = rawTimeSec;
+                                }} else {{
+                                    const d = new Date(rawTimeSec * 1000);
+                                    barTime = d.toISOString().split('T')[0];
+                                }}
+
+                                const cBar = {{
+                                    time: barTime,
+                                    open: parseFloat(msg.open),
+                                    high: parseFloat(msg.high),
+                                    low: parseFloat(msg.low),
+                                    close: parseFloat(msg.close)
+                                }};
+
+                                candleSeries.update(cBar);
+
+                                if (volumeSeries && msg.volume !== undefined) {{
+                                    const volVal = parseFloat(msg.volume) || 0;
+                                    volumeSeries.update({{
+                                        time: barTime,
+                                        value: volVal,
+                                        color: cBar.close >= cBar.open ? 'rgba(8, 153, 129, 0.45)' : 'rgba(242, 54, 69, 0.45)'
+                                    }});
+                                }}
+
+                                // Update top header live values
+                                if (legC) {{
+                                    legC.textContent = currSymbol + cBar.close.toLocaleString('en-US', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+                                    if (lastLiveClose !== null && cBar.close !== lastLiveClose) {{
+                                        legC.style.color = cBar.close >= lastLiveClose ? '#10B981' : '#EF4444';
+                                    }}
+                                }}
+                                if (legO) legO.textContent = currSymbol + cBar.open.toLocaleString('en-US', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+                                if (legH) legH.textContent = currSymbol + cBar.high.toLocaleString('en-US', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+                                if (legL) legL.textContent = currSymbol + cBar.low.toLocaleString('en-US', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+                                if (legChg && cBar.open > 0) {{
+                                    const diff = cBar.close - cBar.open;
+                                    const pct = (diff / cBar.open) * 100;
+                                    legChg.textContent = (diff >= 0 ? '+' : '') + pct.toFixed(2) + '%';
+                                    legChg.style.color = diff >= 0 ? '#10B981' : '#EF4444';
+                                }}
+                                if (volumeSeries && legV && msg.volume !== undefined) {{
+                                    legV.textContent = Number(msg.volume).toLocaleString('en-US');
+                                }}
+                                lastLiveClose = cBar.close;
+                            }}
+                            // 2. Ticker real-time updates
+                            else if (msg.type === 'v2/ticker' && msg.symbol === liveCryptoSymbol) {{
+                                const markP = parseFloat(msg.mark_price || msg.close || 0);
+                                if (markP > 0 && legC) {{
+                                    legC.textContent = currSymbol + markP.toLocaleString('en-US', {{ minimumFractionDigits: 2, maximumFractionDigits: 2 }});
+                                    if (lastLiveClose !== null && markP !== lastLiveClose) {{
+                                        legC.style.color = markP >= lastLiveClose ? '#10B981' : '#EF4444';
+                                    }}
+                                    lastLiveClose = markP;
+                                }}
+                            }}
+                        }} catch(parseErr) {{}}
+                    }};
+
+                    wsConn.onerror = function() {{
+                        updateCryptoBadge(false, '🔴 WS ERROR');
+                        try {{ wsConn.close(); }} catch(e) {{}}
+                    }};
+
+                    wsConn.onclose = function() {{
+                        updateCryptoBadge(false, '🔴 RECONNECTING');
+                        wsEndpointIdx++;
+                        scheduleCryptoWsReconnect();
+                    }};
+                }}
+
+                function scheduleCryptoWsReconnect() {{
+                    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+                    wsReconnectTimer = setTimeout(function() {{
+                        initCryptoWebSocket();
+                    }}, 3000);
+                }}
+
+                initCryptoWebSocket();
+            }}
 
             function handleResize() {{
                 const mainBox = mainContainer.getBoundingClientRect();
