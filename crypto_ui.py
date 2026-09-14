@@ -209,15 +209,23 @@ def render_crypto_page(theme: str = "dark"):
 
             # Render Lightweight Charts HTML
             is_intra = (active_tf in ["1m", "5m", "15m", "1h", "4h"])
+            crypto_emas = {
+                "EMA_20": {"color": "#3B82F6", "name": "EMA 20", "lineWidth": 1.8},
+                "EMA_50": {"color": "#F59E0B", "name": "EMA 50", "lineWidth": 1.8},
+                "EMA_200": {"color": "#EF4444", "name": "EMA 200", "lineWidth": 2.0},
+            }
             html_content = generate_lightweight_chart_html(
-                df_ind,
+                df=df_ind,
                 symbol=crypto_symbol,
-                timeframe=active_tf,
+                timeframe_name=active_tf,
+                ema_dict=crypto_emas,
                 is_intraday=is_intra,
                 theme=theme,
-                chart_height=600
+                height=600,
+                chart_id=f"crypto_{crypto_symbol}_{active_tf}"
             )
             st.components.v1.html(html_content, height=640, scrolling=False)
+
 
     # Historical Data Table & Inspection Expander
     with st.expander(f"📋 **Inspect Historical Candles & Export CSV ({crypto_symbol})**", expanded=False):

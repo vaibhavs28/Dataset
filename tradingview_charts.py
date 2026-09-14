@@ -87,8 +87,8 @@ def prepare_chart_data(df: pd.DataFrame, is_intraday: bool = False) -> tuple:
 def generate_lightweight_chart_html(
     df: pd.DataFrame,
     symbol: str,
-    timeframe_name: str,
-    ema_dict: dict,
+    timeframe_name: str = "Daily",
+    ema_dict: dict = None,
     pivot_dict: dict = None,
     show_rsi: bool = True,
     show_volume: bool = True,
@@ -96,15 +96,28 @@ def generate_lightweight_chart_html(
     height: int = 450,
     is_intraday: bool = False,
     chart_id: str = "tv_chart",
-    theme: str = "light"
+    theme: str = "light",
+    **kwargs
 ) -> str:
     """
     Renders an HTML snippet with TradingView Lightweight Charts.
     Supports both Dark and Light themes with real-time in-canvas toggle.
     """
+    if "timeframe" in kwargs:
+        timeframe_name = kwargs.pop("timeframe")
+    if "chart_height" in kwargs:
+        height = kwargs.pop("chart_height")
+    if ema_dict is None:
+        ema_dict = {
+            "EMA_20": "#38BDF8",
+            "EMA_50": "#F59E0B",
+            "EMA_200": "#EF4444"
+        }
+
     is_light = (str(theme).lower() == "light")
     bg_init = "#ffffff" if is_light else "#131722"
     txt_init = "#787B86"
+
 
     if df.empty:
         return f"""<div style="height:{height}px; background:{bg_init}; color:{txt_init}; display:flex; align-items:center; justify-content:center; font-family:sans-serif; border-radius:8px; border:1px solid {'#e0e3eb' if is_light else '#2A2E39'};">No data available for {symbol}</div>"""
