@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 DELTA_BASE_URLS = [
     "https://api.india.delta.exchange",
     "https://api.delta.exchange",
-    "https://india.deltaex.org",
 ]
+
 
 # Resolution mapping
 TIMEFRAME_TO_DELTA_RES = {
@@ -94,14 +94,30 @@ def fetch_delta_candles(
     symbol = symbol.upper().strip()
     res_code = TIMEFRAME_TO_DELTA_RES.get(resolution, resolution)
 
+    sec_per_bar = {
+        "1m": 60, "3m": 180, "5m": 300, "15m": 900, "30m": 1800,
+        "1h": 3600, "2h": 7200, "4h": 14400, "6h": 21600,
+        "1d": 86400, "1w": 604800
+    }.get(res_code, 900)
+
+    now_ts = int(time.time())
+    if end is None:
+        end_ts = now_ts
+    else:
+        end_ts = int(end)
+
+    if start is None:
+        bar_count = min(max(limit, 300), 2000)
+        start_ts = end_ts - (sec_per_bar * bar_count)
+    else:
+        start_ts = int(start)
+
     params: Dict[str, Any] = {
         "symbol": symbol,
-        "resolution": res_code
+        "resolution": res_code,
+        "start": start_ts,
+        "end": end_ts
     }
-    if start:
-        params["start"] = int(start)
-    if end:
-        params["end"] = int(end)
 
     data, err = _make_delta_request("/v2/history/candles", params=params)
 

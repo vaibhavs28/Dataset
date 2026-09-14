@@ -240,6 +240,8 @@ def render_crypto_page(theme: str = "dark"):
 
     if term_candles.empty:
         st.warning(f"No candle data available for {crypto_symbol} ({term_tf}). Click '🔄 Sync Live' above to fetch data from Delta Exchange.")
+        if c_note:
+            st.caption(f"ℹ️ Delta Connection: {c_note}")
     else:
         term_df = term_candles.copy()
         if not isinstance(term_df.index, pd.DatetimeIndex):
