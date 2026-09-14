@@ -1052,7 +1052,7 @@ def main():
             with col_sync_btn:
                 st.write("")
                 st.write("")
-                force_sync = st.button("🔄 Sync Live", key="btn_quad_sync_live", use_container_width=True, help="Force sync live market ticks for this stock")
+                force_sync = st.button("🔄 Sync 75m Live", key="btn_quad_sync_live", use_container_width=True, help="Force sync live 75-minute candle for this stock from Upstox")
 
             with col_engine:
                 chart_engine = st.radio("Chart Engine", ["TradingView", "Plotly"], horizontal=True, index=0)
@@ -1068,22 +1068,17 @@ def main():
             # 1. Instantly load cached multi-timeframe candles from ultra-fast DuckDB (sub-20ms)
             daily_candles = database.get_candles_df(sel_stock)
 
-            # 2. Only if the user explicitly clicks 'Sync Live' button, perform on-demand sync
+            # 2. Quad Chart rule: Charts 1, 2, 3 (Monthly, Weekly, Daily) use EOD; only 75-min updates live!
             if force_sync:
                 if not is_live_hours:
                     st.info(f"ℹ️ Indian equity markets are currently closed (Mon-Fri 09:15 - 15:30 IST). Showing latest recorded session data.")
                 else:
-                    with st.spinner(f"⚡ Syncing live market data for {sel_stock}..."):
+                    with st.spinner(f"⚡ Syncing live 75-min market candle for {sel_stock}..."):
                         try:
-                            import batch_downloader
-                            res = batch_downloader.sync_live_market_batch(symbols=[sel_stock])
-                            if not res.get("synced"):
-                                latest_d = database.get_latest_candle_date(sel_stock)
-                                downloader.sync_symbol_history(sel_stock, from_date=latest_d or "2022-01-01", to_date=today_str)
-                            daily_candles = database.get_candles_df(sel_stock)
-                            st.success(f"✓ Synced latest market data for {sel_stock}")
+                            downloader.sync_live_market_candles(sel_stock)
+                            st.success(f"✓ Synced latest 75m intraday candle for {sel_stock}")
                         except Exception as e:
-                            st.warning(f"Live sync note: {e}")
+                            st.warning(f"75m live sync note: {e}")
 
             # 3. Only if stock has zero data in local database (new unseeded stock), fetch history once
             if daily_candles.empty:
@@ -1097,8 +1092,16 @@ def main():
                 if len(daily_candles) < 50:
                     st.info(f"ℹ️ **Newly Listed / Short-History Stock:** **{sel_stock}** has **{len(daily_candles)} trading sessions** on NSE (debuted on {daily_candles.index.min().strftime('%d %b %Y')}). Displaying all available session candles. (Long-term 200-period EMAs require 200 sessions to calculate).")
 
-                # 1. Monthly DataFrame
-                m_df = scanner.resample_ohlcv(daily_candles, "monthly")
+                # Quad chart rule: Charts 1, 2, 3 strictly use settled End-of-Day (EOD) data
+                if is_live_hours and not daily_candles.empty:
+                    eod_candles = daily_candles[daily_candles.index < today_str]
+                    if eod_candles.empty:
+                        eod_candles = daily_candles
+                else:
+                    eod_candles = daily_candles
+
+                # 1. Monthly DataFrame (Pure EOD)
+                m_df = scanner.resample_ohlcv(eod_candles, "monthly")
                 m_df["EMA_5"] = m_df["close"].ewm(span=5, adjust=False).mean()
                 m_df["EMA_20"] = m_df["close"].ewm(span=20, adjust=False).mean()
                 m_df["AVWAP_MAR2020"] = scanner.calculate_anchored_vwap(m_df, "2020-03-01")
@@ -1107,8 +1110,8 @@ def main():
                 m_df["RSI_EMA3"] = scanner.calculate_ema(m_df["RSI"], span=3)
                 m_df["RSI_WMA21"] = scanner.calculate_wma(m_df["RSI"], period=21)
 
-                # 2. Weekly DataFrame
-                w_df = scanner.resample_ohlcv(daily_candles, "weekly")
+                # 2. Weekly DataFrame (Pure EOD)
+                w_df = scanner.resample_ohlcv(eod_candles, "weekly")
                 w_df["EMA_20"] = w_df["close"].ewm(span=20, adjust=False).mean()
                 w_df["EMA_50"] = w_df["close"].ewm(span=50, adjust=False).mean()
                 w_df["EMA_200"] = w_df["close"].ewm(span=200, adjust=False).mean()
@@ -1116,8 +1119,8 @@ def main():
                 w_df["RSI_EMA3"] = scanner.calculate_ema(w_df["RSI"], span=3)
                 w_df["RSI_WMA21"] = scanner.calculate_wma(w_df["RSI"], period=21)
 
-                # 3. Daily DataFrame
-                d_df = daily_candles.copy()
+                # 3. Daily DataFrame (Pure EOD)
+                d_df = eod_candles.copy()
                 d_df["EMA_20"] = d_df["close"].ewm(span=20, adjust=False).mean()
                 d_df["EMA_50"] = d_df["close"].ewm(span=50, adjust=False).mean()
                 d_df["EMA_200"] = d_df["close"].ewm(span=200, adjust=False).mean()
@@ -1125,7 +1128,7 @@ def main():
                 d_df["RSI_EMA3"] = scanner.calculate_ema(d_df["RSI"], span=3)
                 d_df["RSI_WMA21"] = scanner.calculate_wma(d_df["RSI"], period=21)
 
-                # 4. Q4 DataFrame (Minutes, Days, Weeks, or Months)
+                # 4. Q4 DataFrame (Only 75-Min Updates Live!)
                 if tf_type == "minute":
                     if target_mins == 75:
                         intra_df = parquet_loader.ensure_symbol_75m_candles(sel_stock, min_bars=100)
@@ -1133,19 +1136,19 @@ def main():
                         intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=100)
                 elif tf_type == "day":
                     if target_days == 1:
-                        intra_df = daily_candles.copy()
+                        intra_df = eod_candles.copy()
                     else:
-                        intra_df = scanner.resample_ohlcv(daily_candles, f"{target_days}D")
+                        intra_df = scanner.resample_ohlcv(eod_candles, f"{target_days}D")
                 elif tf_type == "week":
                     if target_weeks == 1:
-                        intra_df = w_df.copy() if (w_df is not None and not w_df.empty) else scanner.resample_ohlcv(daily_candles, "weekly")
+                        intra_df = w_df.copy() if (w_df is not None and not w_df.empty) else scanner.resample_ohlcv(eod_candles, "weekly")
                     else:
-                        intra_df = scanner.resample_ohlcv(daily_candles, f"{target_weeks}W")
+                        intra_df = scanner.resample_ohlcv(eod_candles, f"{target_weeks}W")
                 elif tf_type == "month":
                     if target_months == 1:
-                        intra_df = m_df.copy() if (m_df is not None and not m_df.empty) else scanner.resample_ohlcv(daily_candles, "monthly")
+                        intra_df = m_df.copy() if (m_df is not None and not m_df.empty) else scanner.resample_ohlcv(eod_candles, "monthly")
                     else:
-                        intra_df = scanner.resample_ohlcv(daily_candles, f"{target_months}M")
+                        intra_df = scanner.resample_ohlcv(eod_candles, f"{target_months}M")
                 else:
                     intra_df = pd.DataFrame()
 
@@ -1551,19 +1554,20 @@ def main():
         for i, csym in enumerate(chip_symbols):
             chip_cols[i].button(csym, key=f"chip_{csym}", use_container_width=True, on_click=_set_term_sym, args=(csym,))
 
-        # 1. Instantly load cached candles for term_stock from ultra-fast DuckDB (sub-20ms)
+        # Trading Terminal requirement: ALWAYS update live market data for term_stock across all timeframes
+        if is_live_hours:
+            try:
+                downloader.sync_live_market_candles(term_stock)
+            except Exception as e:
+                logger.debug(f"Live market candle sync note: {e}")
+        elif term_force_sync:
+            with st.spinner(f"⚡ Syncing live market candles for {term_stock}..."):
+                downloader.sync_live_market_candles(term_stock)
+
+        # 1. Load latest candles for term_stock (now containing live forming daily & 75m bars)
         term_candles = database.get_candles_df(term_stock)
 
-        # 2. Sync live ticks only if user explicitly requested via 'Sync Live' button
-        if term_force_sync:
-            if not is_live_hours:
-                st.info(f"ℹ️ Indian equity markets are currently closed (Mon-Fri 09:15 - 15:30 IST). Showing latest recorded session data.")
-            else:
-                with st.spinner(f"⚡ Syncing live market candles for {term_stock}..."):
-                    downloader.sync_live_market_candles(term_stock)
-                    term_candles = database.get_candles_df(term_stock)
-
-        # 3. First-time setup fallback if stock has zero cached candles
+        # 2. First-time setup fallback if stock has zero cached candles
         if term_candles.empty:
             if term_stock in parquet_symbols:
                 with st.spinner(f"Loading {term_stock} from Parquet dataset..."):
@@ -1592,6 +1596,11 @@ def main():
             m_c3.metric("52-Week Low", f"₹{lo_52:,.2f}")
             m_c4.metric("Volume", f"{int(term_candles['volume'].iloc[-1]):,} shares")
             m_c5.metric("Active Timeframe", f"{display_tf}")
+
+            if is_live_hours:
+                st.caption(f"🟢 **Live Market Feed Active:** Real-time ticks continuously synced for **{clean_sym}**. All timeframes (1m to Monthly) reflect live market pricing.")
+            else:
+                st.caption(f"⚪ **Market Closed (IST):** Displaying latest recorded session data for **{clean_sym}**.")
 
             # Resample based on chosen timeframe
             is_intra = False
