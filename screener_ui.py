@@ -105,9 +105,10 @@ def render_screener_page(theme: str = "dark"):
     </div>
     """, unsafe_allow_html=True)
 
-    tab_waterfall, tab_custom = st.tabs([
+    tab_waterfall, tab_custom, tab_crypto = st.tabs([
         "🌊 Chartink Positional Waterfall Scan (positional-scan-364)",
-        "🛠️ Custom Condition Screener (Dynamic Rule Builder)"
+        "🛠️ Custom Condition Screener (Dynamic Rule Builder)",
+        "🪙 Crypto Screener (Delta Exchange BTC & ETH)"
     ])
 
     # =========================================================================
@@ -742,3 +743,198 @@ def render_screener_page(theme: str = "dark"):
                     use_container_width=True,
                     height=min(500, max(240, len(display_df) * 36))
                 )
+
+    # =========================================================================
+    # TAB 3: CRYPTO SCREENER (DELTA EXCHANGE BTC & ETH)
+    # =========================================================================
+    with tab_crypto:
+        st.markdown(f"""
+        <div style="background: rgba(245, 158, 11, 0.08); border-left: 4px solid #F59E0B; padding: 12px 16px; border-radius: 6px; margin-bottom: 14px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <b style="color: #F59E0B; font-size: 14px;">🪙 Delta Exchange Crypto Screener — BTCUSD &amp; ETHUSD</b>
+                <span style="font-size: 12px; color: #10B981; font-weight: bold;">🟢 24/7 LIVE MARKET</span>
+            </div>
+            <div style="font-size: 12.5px; color: {styles['text_secondary']}; margin-top: 6px; line-height: 1.5;">
+                • <b>Separate Crypto Database:</b> Operating independently on <code>data/crypto_market.duckdb</code>.<br/>
+                • <b>Universe:</b> Delta Exchange Perpetuals (<b>BTCUSD</b> and <b>ETHUSD</b>).<br/>
+                • <b>Multi-Timeframe Engine:</b> Screens 20/50/200 EMAs, RSI(14), and SuperTrend across Daily, 4h, 1h, and 15m.
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        cr_col1, cr_col2, cr_col3 = st.columns([2.2, 1.2, 1.0])
+        with cr_col1:
+            crypto_preset = st.selectbox(
+                "Select Crypto Screener Strategy:",
+                [
+                    "🚀 Strong Bullish Trend (Daily Close > 20 EMA & RSI > 50)",
+                    "🌊 Multi-Timeframe Alignment (Daily & 4h & 1h Above 20 EMA)",
+                    "⚡ Golden Cross (50 EMA > 200 EMA on Daily)",
+                    "🎯 20 EMA Pullback Setup (Daily Close near 20 EMA & RSI > 45)",
+                    "🏹 SuperTrend Bullish (Daily Supertrend Positive)",
+                    "🔻 Oversold Dip Hunter (RSI < 40 on Daily or 4h)",
+                    "📊 Full Multi-Timeframe Status Table (All Metrics)"
+                ],
+                index=0,
+                key="crypto_screener_preset_select"
+            )
+
+        with cr_col2:
+            st.write("")
+            st.write("")
+            refresh_crypto_screen = st.button("🔄 Refresh Crypto Scan", type="primary", use_container_width=True, key="btn_refresh_crypto_screen")
+
+        with cr_col3:
+            st.write("")
+            st.write("")
+            if st.button("⚡ Sync Delta Data", use_container_width=True, key="btn_sync_delta_from_screener"):
+                import delta_exchange_client
+                with st.spinner("Syncing latest BTC & ETH candles from Delta Exchange..."):
+                    delta_exchange_client.sync_all_delta_crypto_history()
+                st.success("Delta Exchange candles updated!")
+                st.rerun()
+
+        # Perform Crypto Screening Evaluation
+        import crypto_store
+        import scanner
+
+        crypto_symbols = ["BTCUSD", "ETHUSD"]
+        results_crypto = []
+
+        for c_sym in crypto_symbols:
+            t_info = crypto_store.get_crypto_ticker(c_sym) or {}
+            df_d = crypto_store.get_crypto_candles(c_sym, "1d", limit=100)
+            df_4h = crypto_store.get_crypto_candles(c_sym, "4h", limit=100)
+            df_1h = crypto_store.get_crypto_candles(c_sym, "1h", limit=100)
+
+            last_p = float(t_info.get("last_price", 0.0) or (df_d.iloc[-1]["close"] if not df_d.empty else 0.0))
+            chg_24 = float(t_info.get("change_24h", 0.0) or 0.0)
+
+            # Daily indicators
+            d_rsi = 50.0
+            d_20ema = last_p
+            d_50ema = last_p
+            d_200ema = last_p
+            d_st_bull = True
+            if not df_d.empty:
+                c_d = df_d["close"]
+                d_rsi = float(scanner.calculate_rsi(c_d, 14).iloc[-1])
+                d_20ema = float(scanner.calculate_ema(c_d, 20).iloc[-1])
+                d_50ema = float(scanner.calculate_ema(c_d, 50).iloc[-1])
+                d_200ema = float(scanner.calculate_ema(c_d, 200).iloc[-1])
+                st_d = scanner.calculate_supertrend(df_d, 10, 3.0)
+                if "Trend_Direction" in st_d.columns:
+                    d_st_bull = bool(st_d["Trend_Direction"].iloc[-1] == 1)
+
+            # 4h indicators
+            h4_rsi = 50.0
+            h4_20ema = last_p
+            if not df_4h.empty:
+                c_4h = df_4h["close"]
+                h4_rsi = float(scanner.calculate_rsi(c_4h, 14).iloc[-1])
+                h4_20ema = float(scanner.calculate_ema(c_4h, 20).iloc[-1])
+
+            # 1h indicators
+            h1_rsi = 50.0
+            h1_20ema = last_p
+            if not df_1h.empty:
+                c_1h = df_1h["close"]
+                h1_rsi = float(scanner.calculate_rsi(c_1h, 14).iloc[-1])
+                h1_20ema = float(scanner.calculate_ema(c_1h, 20).iloc[-1])
+
+            # Evaluate strategy
+            passes = False
+            if "Strong Bullish" in crypto_preset:
+                passes = (last_p > d_20ema and d_rsi > 50)
+            elif "Multi-Timeframe" in crypto_preset:
+                passes = (last_p > d_20ema and last_p > h4_20ema and last_p > h1_20ema)
+            elif "Golden Cross" in crypto_preset:
+                passes = (d_50ema >= d_200ema)
+            elif "Pullback" in crypto_preset:
+                passes = (abs(last_p - d_20ema) / max(d_20ema, 1) < 0.02 and d_rsi >= 45)
+            elif "SuperTrend" in crypto_preset:
+                passes = d_st_bull
+            elif "Oversold" in crypto_preset:
+                passes = (d_rsi < 40 or h4_rsi < 40)
+            else:
+                passes = True
+
+            results_crypto.append({
+                "Symbol": c_sym,
+                "Asset": "Bitcoin" if "BTC" in c_sym else "Ethereum",
+                "LTP ($)": last_p,
+                "24h Change (%)": chg_24,
+                "Screening Result": "✅ QUALIFIED" if passes else "❌ FAILED",
+                "Daily RSI": round(d_rsi, 1),
+                "Daily > 20 EMA": "✅ YES" if last_p >= d_20ema else "❌ NO",
+                "4h RSI": round(h4_rsi, 1),
+                "4h > 20 EMA": "✅ YES" if last_p >= h4_20ema else "❌ NO",
+                "1h RSI": round(h1_rsi, 1),
+                "1h > 20 EMA": "✅ YES" if last_p >= h1_20ema else "❌ NO",
+                "SuperTrend": "🟢 Bullish" if d_st_bull else "🔴 Bearish",
+                "Golden Cross (50>200)": "🚀 YES" if d_50ema >= d_200ema else "⚠️ NO"
+            })
+
+        df_cr_results = pd.DataFrame(results_crypto)
+
+        # Metric Cards
+        qualified_count = len(df_cr_results[df_cr_results["Screening Result"] == "✅ QUALIFIED"])
+        cm1, cm2, cm3, cm4 = st.columns(4)
+        with cm1:
+            render_metric_card("Qualified Coins", f"{qualified_count} / {len(df_cr_results)}", crypto_preset[:25] + "...", "green" if qualified_count > 0 else "red", styles)
+        with cm2:
+            btc_row = df_cr_results[df_cr_results["Symbol"] == "BTCUSD"].iloc[0] if not df_cr_results.empty else {}
+            render_metric_card("BTCUSD Price", f"${btc_row.get('LTP ($)', 0):,.2f}", f"24h: {btc_row.get('24h Change (%)', 0):+.2f}%", "normal", styles)
+        with cm3:
+            eth_row = df_cr_results[df_cr_results["Symbol"] == "ETHUSD"].iloc[0] if not df_cr_results.empty else {}
+            render_metric_card("ETHUSD Price", f"${eth_row.get('LTP ($)', 0):,.2f}", f"24h: {eth_row.get('24h Change (%)', 0):+.2f}%", "normal", styles)
+        with cm4:
+            render_metric_card("Market Status", "🟢 24/7/365 OPEN", "Delta Exchange", "green", styles)
+
+        st.markdown("---")
+        st.markdown(f"#### 📊 Crypto Screener Results — `{crypto_preset}`")
+
+        fmt_cr = {
+            "LTP ($)": "${:,.2f}",
+            "24h Change (%)": "{:+.2f}%",
+            "Daily RSI": "{:.1f}",
+            "4h RSI": "{:.1f}",
+            "1h RSI": "{:.1f}"
+        }
+
+        st_cr_styled = df_cr_results.style.format(fmt_cr).map(
+            lambda v: "background-color: rgba(16, 185, 129, 0.2); color: #10B981; font-weight: bold;" if v == "✅ QUALIFIED"
+            else ("background-color: rgba(239, 68, 68, 0.2); color: #EF4444; font-weight: bold;" if v == "❌ FAILED" else ""),
+            subset=["Screening Result"]
+        ).map(
+            lambda v: "color: #10B981; font-weight: bold;" if isinstance(v, (int, float)) and v > 0
+            else ("color: #EF4444; font-weight: bold;" if isinstance(v, (int, float)) and v < 0 else ""),
+            subset=["24h Change (%)"]
+        )
+
+        st.dataframe(st_cr_styled, use_container_width=True, height=180)
+
+        # Quick Launch into Crypto Terminal
+        cq1, cq2, cq3 = st.columns([1.5, 1.5, 2.0])
+        with cq1:
+            sel_cr_launch = st.selectbox("Select Coin to Trade / View:", ["BTCUSD", "ETHUSD"], key="crypto_screen_launch_sym")
+        with cq2:
+            st.write("")
+            st.write("")
+            if st.button("🚀 Open in 🪙 Crypto Terminal", type="primary", use_container_width=True, key="btn_open_crypto_term_from_screen"):
+                st.session_state["crypto_active_symbol"] = sel_cr_launch
+                st.session_state["app_active_nav_page"] = "🪙 Crypto Terminal"
+                st.rerun()
+        with cq3:
+            st.write("")
+            st.write("")
+            csv_cr = df_cr_results.to_csv(index=False).encode("utf-8")
+            st.download_button(
+                label="📥 Export Crypto Scan CSV",
+                data=csv_cr,
+                file_name=f"crypto_screener_{datetime.today().strftime('%Y%m%d')}.csv",
+                mime="text/csv",
+                use_container_width=True,
+                key="btn_dl_crypto_screen_csv"
+            )
+

@@ -551,6 +551,7 @@ def main():
         [
             "📊 Quad-Chart View",
             "🔍 Chartink Screener",
+            "🪙 Crypto Terminal",
             "🔔 Alert Station",
             "📈 Trading Terminal",
             "🗺️ Market Heatmap",
@@ -1304,6 +1305,10 @@ def main():
 
     elif selected_page == "🔍 Chartink Screener":
         screener_ui.render_screener_page(theme=theme)
+
+    elif selected_page == "🪙 Crypto Terminal":
+        import crypto_ui
+        crypto_ui.render_crypto_page(theme=theme)
 
     elif selected_page == "🔔 Alert Station":
         alert_ui.render_alert_page(theme=theme)
