@@ -167,6 +167,8 @@ def render_screener_page(theme: str = "dark"):
         as_of_param = None
         as_of_time_param = None
         if "Historical" in wf_date_mode:
+            if "pending_wf_as_of_date" in st.session_state:
+                st.session_state["wf_as_of_date_input"] = st.session_state.pop("pending_wf_as_of_date")
             hist_c1, hist_c2, hist_c3 = st.columns([1.5, 1.4, 2.1])
             with hist_c1:
                 # Default to 5 Sept 2026 or previous trading day
@@ -209,23 +211,23 @@ def render_screener_page(theme: str = "dark"):
             q_cols = st.columns(5)
             with q_cols[0]:
                 if st.button("📅 05 Sep 2026", key="q_btn_5sep", use_container_width=True):
-                    st.session_state["wf_as_of_date_input"] = datetime(2026, 9, 5).date()
+                    st.session_state["pending_wf_as_of_date"] = datetime(2026, 9, 5).date()
                     st.rerun()
             with q_cols[1]:
                 if st.button("📅 01 Sep 2026", key="q_btn_1sep", use_container_width=True):
-                    st.session_state["wf_as_of_date_input"] = datetime(2026, 9, 1).date()
+                    st.session_state["pending_wf_as_of_date"] = datetime(2026, 9, 1).date()
                     st.rerun()
             with q_cols[2]:
                 if st.button("📅 14 Aug 2026", key="q_btn_14aug", use_container_width=True):
-                    st.session_state["wf_as_of_date_input"] = datetime(2026, 8, 14).date()
+                    st.session_state["pending_wf_as_of_date"] = datetime(2026, 8, 14).date()
                     st.rerun()
             with q_cols[3]:
                 if st.button("📅 01 Aug 2026", key="q_btn_1aug", use_container_width=True):
-                    st.session_state["wf_as_of_date_input"] = datetime(2026, 8, 1).date()
+                    st.session_state["pending_wf_as_of_date"] = datetime(2026, 8, 1).date()
                     st.rerun()
             with q_cols[4]:
                 if st.button("📅 01 Jul 2026", key="q_btn_1jul", use_container_width=True):
-                    st.session_state["wf_as_of_date_input"] = datetime(2026, 7, 1).date()
+                    st.session_state["pending_wf_as_of_date"] = datetime(2026, 7, 1).date()
                     st.rerun()
 
         w_btn_col1, w_btn_col2 = st.columns([3.5, 1.5])
@@ -366,6 +368,13 @@ def render_screener_page(theme: str = "dark"):
     # =========================================================================
     with tab_custom:
         st.markdown("#### 🛠️ Custom Condition Screener (Dynamic Rule Builder)")
+
+        # Safely apply pending widget state updates BEFORE widgets are instantiated
+        if "pending_preset_select" in st.session_state:
+            st.session_state["scr_preset_select"] = st.session_state.pop("pending_preset_select")
+        if "pending_logic_select" in st.session_state:
+            st.session_state["scr_logic_select"] = st.session_state.pop("pending_logic_select")
+
         p_col1, p_col2, p_col3, p_col4 = st.columns([1.8, 1.2, 1.2, 1.0])
 
         with p_col1:
@@ -507,11 +516,11 @@ def render_screener_page(theme: str = "dark"):
                                     for c in ocr_data["clauses"]
                                 ]
                                 st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
-                                st.session_state["scr_preset_select"] = "🛠️ Custom Screener Builder"
+                                st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
                                 if ocr_data["logic"] == "ANY":
-                                    st.session_state["scr_logic_select"] = "ANY (OR)"
+                                    st.session_state["pending_logic_select"] = "ANY (OR)"
                                 else:
-                                    st.session_state["scr_logic_select"] = "ALL (AND)"
+                                    st.session_state["pending_logic_select"] = "ALL (AND)"
                                 st.session_state["auto_trigger_custom_scan"] = True
                                 st.rerun()
 
@@ -530,11 +539,11 @@ def render_screener_page(theme: str = "dark"):
                                     for c in ocr_data["clauses"]
                                 ]
                                 st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
-                                st.session_state["scr_preset_select"] = "🛠️ Custom Screener Builder"
+                                st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
                                 if ocr_data["logic"] == "ANY":
-                                    st.session_state["scr_logic_select"] = "ANY (OR)"
+                                    st.session_state["pending_logic_select"] = "ANY (OR)"
                                 else:
-                                    st.session_state["scr_logic_select"] = "ALL (AND)"
+                                    st.session_state["pending_logic_select"] = "ALL (AND)"
                                 st.rerun()
 
                     elif ocr_data.get("error"):
@@ -581,7 +590,7 @@ def render_screener_page(theme: str = "dark"):
                                 for c in parsed_clauses
                             ]
                             st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
-                            st.session_state["scr_preset_select"] = "🛠️ Custom Screener Builder"
+                            st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
                             st.success(f"✅ Successfully converted {len(parsed_clauses)} Chartink rules!")
                             st.rerun()
 
