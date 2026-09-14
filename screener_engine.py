@@ -52,6 +52,7 @@ INDICATOR_OPTIONS = [
     "RSI_9",
     "RSI_EMA3",
     "RSI_WMA21",
+    "EMA_5",
     "EMA_9",
     "EMA_13",
     "EMA_20",
@@ -60,6 +61,7 @@ INDICATOR_OPTIONS = [
     "EMA_200",
     "SMA_20",
     "SMA_50",
+    "SMA_200",
     "SuperTrend",
     "MACD_Line",
     "MACD_Signal",
@@ -116,6 +118,7 @@ def compute_screener_indicators(df: pd.DataFrame) -> pd.DataFrame:
     out["RSI_WMA21"] = scanner.calculate_wma(out["RSI_9"], period=21)
 
     # EMAs
+    out["EMA_5"] = scanner.calculate_ema(close, span=5)
     out["EMA_9"] = scanner.calculate_ema(close, span=9)
     out["EMA_13"] = scanner.calculate_ema(close, span=13)
     out["EMA_20"] = scanner.calculate_ema(close, span=20)
@@ -126,6 +129,7 @@ def compute_screener_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # SMAs
     out["SMA_20"] = close.rolling(window=20, min_periods=1).mean()
     out["SMA_50"] = close.rolling(window=50, min_periods=1).mean()
+    out["SMA_200"] = close.rolling(window=200, min_periods=1).mean()
 
     # SuperTrend (10, 3.0)
     st_df = scanner.calculate_supertrend(out, period=10, multiplier=3.0)
@@ -850,86 +854,205 @@ def get_screener_preset(preset_name: str) -> ScreenerConfig:
 
 def parse_chartink_query(query: str) -> List[ScreenerClause]:
     """
-    Parses a plain-text Chartink query or condition line into a list of ScreenerClauses.
-    Example inputs:
+    Parses a plain-text Chartink query, screenshot OCR text, or condition string into a list of ScreenerClauses.
+    Supports:
       - 'Daily Close > Daily 20 EMA'
+      - '[ Latest ] Close Greater than [ Latest ] 20 EMA'
+      - '[ Latest ] Volume Greater than [ Latest ] 20 SMA Volume * 1.5'
+      - 'Open <= 20 EMA and Close >= 20 EMA'
       - 'Daily RSI(14) > 60'
       - 'Weekly Close crossed above Weekly 200 EMA'
     """
     clauses = []
     lines = [l.strip() for l in query.splitlines() if l.strip()]
 
+    # Normalize split if line contains ' and ' between two complete conditions
+    expanded_lines = []
     for line in lines:
+        # Check if line contains ' and ' between statements (e.g. Open <= 20 EMA and Close >= 20 EMA)
+        sub_parts = re.split(r"\s+\band\b\s+", line, flags=re.IGNORECASE)
+        # Only split if both parts look like expressions (have an operator or comparison)
+        if len(sub_parts) > 1 and all(re.search(r"(>|<|=|above|below|greater|less)", p, re.I) for p in sub_parts):
+            expanded_lines.extend(sub_parts)
+        else:
+            expanded_lines.append(line)
+
+    for line in expanded_lines:
+        # Strip brackets around tokens e.g. [ Latest ] -> Latest
+        cleaned_line = re.sub(r"[\[\(]\s*([a-zA-Z0-9\s\-\_]+)\s*[\]\)]", r" \1 ", line)
+        cleaned_line = re.sub(r"\s+", " ", cleaned_line).strip().rstrip(".;,")
+
         tf = "Daily"
-        if re.search(r"\bweekly\b", line, re.IGNORECASE):
+        if re.search(r"\bweekly\b", cleaned_line, re.IGNORECASE):
             tf = "Weekly"
-        elif re.search(r"\bmonthly\b", line, re.IGNORECASE):
+        elif re.search(r"\bmonthly\b", cleaned_line, re.IGNORECASE):
             tf = "Monthly"
-        elif re.search(r"\b75\b", line, re.IGNORECASE) or re.search(r"\bintraday\b", line, re.IGNORECASE):
+        elif re.search(r"\b75\b|\b75m\b|\bintraday\b|\bhourly\b|\bhour\b", cleaned_line, re.IGNORECASE):
             tf = "75-Min"
 
-        # Split line by operator
-        op_pattern = r"(crossed\s+above|crosses\s+above|crossed\s+below|crosses\s+below|>=|<=|>|<|==)"
-        m_op = re.search(op_pattern, line, re.IGNORECASE)
+        # Check for multiplier at end (e.g. '* 1.5' or 'number 2' or '* 2')
+        multiplier = 1.0
+        mult_match = re.search(r"(\*|multiplied\s+by|x)\s*([\d\.]+)\s*$", cleaned_line, re.IGNORECASE)
+        if mult_match:
+            try:
+                multiplier = float(mult_match.group(2))
+                cleaned_line = cleaned_line[:mult_match.start()].strip()
+            except ValueError:
+                pass
+
+        # Split line by operator (longest match first)
+        op_pattern = (
+            r"(crossed\s+above|crosses\s+above|crossed\s+over|"
+            r"crossed\s+below|crosses\s+below|crossed\s+under|"
+            r"greater\s+than\s+or\s+equal\s+to|greater\s+than\s+equal|>=|=>|"
+            r"less\s+than\s+or\s+equal\s+to|less\s+than\s+equal|<=|=<|"
+            r"greater\s+than|higher\s+than|above|>|"
+            r"less\s+than|lower\s+than|below|<|"
+            r"equal\s+to|equals|==|=)"
+        )
+        m_op = re.search(op_pattern, cleaned_line, re.IGNORECASE)
         if m_op:
             op_raw = m_op.group(1).lower()
-            if "above" in op_raw:
-                op = "crossed_above"
-            elif "below" in op_raw:
-                op = "crossed_below"
+            if "crossed" in op_raw or "crosses" in op_raw:
+                op = "crossed_above" if "above" in op_raw or "over" in op_raw else "crossed_below"
+            elif "greater" in op_raw and ("equal" in op_raw or "=" in op_raw):
+                op = ">="
+            elif "less" in op_raw and ("equal" in op_raw or "=" in op_raw):
+                op = "<="
+            elif ">=" in op_raw or "=>" in op_raw:
+                op = ">="
+            elif "<=" in op_raw or "=<" in op_raw:
+                op = "<="
+            elif "greater" in op_raw or "above" in op_raw or "higher" in op_raw or ">" in op_raw:
+                op = ">"
+            elif "less" in op_raw or "below" in op_raw or "lower" in op_raw or "<" in op_raw:
+                op = "<"
+            elif "equal" in op_raw or "==" in op_raw or "=" in op_raw:
+                op = "=="
             else:
-                op = op_raw
-            lhs_part = line[:m_op.start()].strip()
-            rhs_part = line[m_op.end():].strip()
+                op = ">"
+
+            lhs_part = cleaned_line[:m_op.start()].strip()
+            rhs_part = cleaned_line[m_op.end():].strip()
         else:
             op = ">"
-            lhs_part = line
+            lhs_part = cleaned_line
             rhs_part = ""
 
         def _detect_ind(text: str, default: str = "Close") -> str:
             t = text.lower()
+            # 52-Week High / Low
+            if "52" in t and ("high" in t or "hi" in t):
+                return "52_Week_High"
+            if "52" in t and ("low" in t or "lo" in t):
+                return "52_Week_Low"
+
+            # Previous Day High / Low / Close
+            if "prev" in t or "1 day ago" in t or "-1 day" in t:
+                if "high" in t:
+                    return "Prev_Day_High"
+                if "low" in t:
+                    return "Prev_Day_Low"
+                if "close" in t:
+                    return "Prev_Day_Close"
+
+            # SuperTrend
+            if "supertrend" in t or "super_trend" in t:
+                return "SuperTrend"
+
+            # MACD
+            if "macd" in t:
+                if "signal" in t:
+                    return "MACD_Signal"
+                if "hist" in t:
+                    return "MACD_Hist"
+                return "MACD_Line"
+
+            # Volume and Vol SMA
+            if "volume" in t:
+                if "sma" in t or "ma" in t:
+                    return "Vol_SMA_20"
+                return "Volume"
+
+            # RSI and variations
+            if "rsi" in t:
+                if "ema" in t or "3" in t and "rsi" in t:
+                    return "RSI_EMA3"
+                if "wma" in t or "21" in t and "rsi" in t:
+                    return "RSI_WMA21"
+                if "9" in t:
+                    return "RSI_9"
+                return "RSI_14"
+
+            # EMAs (5, 9, 13, 20, 26, 50, 200)
+            if "ema" in t:
+                m_ema = re.search(r"(\d+)\s*ema|ema\s*\(?\s*(\d+)", t)
+                if m_ema:
+                    p = int(m_ema.group(1) or m_ema.group(2))
+                    if p <= 7:
+                        return "EMA_5"
+                    elif p <= 11:
+                        return "EMA_9"
+                    elif p <= 16:
+                        return "EMA_13"
+                    elif p <= 23:
+                        return "EMA_20"
+                    elif p <= 35:
+                        return "EMA_26"
+                    elif p <= 100:
+                        return "EMA_50"
+                    else:
+                        return "EMA_200"
+                return "EMA_20"
+
+            # SMAs (20, 50, 200)
+            if "sma" in t:
+                m_sma = re.search(r"(\d+)\s*sma|sma\s*\(?\s*(\d+)", t)
+                if m_sma:
+                    p = int(m_sma.group(1) or m_sma.group(2))
+                    if p <= 35:
+                        return "SMA_20"
+                    elif p <= 100:
+                        return "SMA_50"
+                    else:
+                        return "SMA_200"
+                return "SMA_20"
+
+            # Standard price items
             if "close" in t:
                 return "Close"
             elif "open" in t:
                 return "Open"
-            elif "high" in t and "52" not in t:
+            elif "high" in t:
                 return "High"
             elif "low" in t:
                 return "Low"
-            elif "volume" in t:
-                return "Volume"
-            elif "52" in t and "high" in t:
-                return "52_Week_High"
-            elif "52" in t and "low" in t:
-                return "52_Week_Low"
-            elif "supertrend" in t:
-                return "SuperTrend"
-            elif "rsi" in t:
-                if "9" in t:
-                    return "RSI_9"
-                return "RSI_14"
-            elif "ema" in t:
-                m_ema = re.search(r"(\d+)\s*ema|ema\s*(\d+)", t)
-                if m_ema:
-                    p = m_ema.group(1) or m_ema.group(2)
-                    return f"EMA_{p}"
-                return "EMA_20"
-            elif "sma" in t:
-                m_sma = re.search(r"(\d+)\s*sma|sma\s*(\d+)", t)
-                if m_sma:
-                    p = m_sma.group(1) or m_sma.group(2)
-                    return f"SMA_{p}"
-                return "SMA_20"
+
             return default
 
         lhs = _detect_ind(lhs_part, default="Close")
 
         # Detect RHS: number or indicator
-        num_match = re.match(r"^[\d\.]+$", rhs_part.strip())
+        rhs_clean = rhs_part.strip().rstrip(".;,")
+        num_match = re.match(r"^[\d\.]+$", rhs_clean)
         if num_match:
-            clauses.append(ScreenerClause(timeframe=tf, lhs=lhs, operator=op, rhs_type="Number", rhs_value=float(rhs_part.strip())))
+            clauses.append(ScreenerClause(
+                timeframe=tf,
+                lhs=lhs,
+                operator=op,
+                rhs_type="Number",
+                rhs_value=float(rhs_clean),
+                multiplier=multiplier
+            ))
         else:
-            rhs_ind = _detect_ind(rhs_part, default="EMA_20")
-            clauses.append(ScreenerClause(timeframe=tf, lhs=lhs, operator=op, rhs_type="Indicator", rhs_indicator=rhs_ind))
+            rhs_ind = _detect_ind(rhs_clean, default="EMA_20")
+            clauses.append(ScreenerClause(
+                timeframe=tf,
+                lhs=lhs,
+                operator=op,
+                rhs_type="Indicator",
+                rhs_indicator=rhs_ind,
+                multiplier=multiplier
+            ))
 
     return clauses

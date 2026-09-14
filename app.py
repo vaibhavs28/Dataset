@@ -550,7 +550,6 @@ def main():
         "Select Page",
         [
             "📊 Quad-Chart View",
-            "🚀 Alignment Scanner",
             "🔍 Chartink Screener",
             "🔔 Alert Station",
             "📈 Trading Terminal",
@@ -1302,95 +1301,6 @@ def main():
                         else:
                             st.info(f"No data available for timeframe {intra_tf_label}.")
 
-
-    elif selected_page == "🚀 Alignment Scanner":
-        st.subheader("🚀 Multi-Timeframe EMA Alignment Scanner")
-        st.markdown("""
-        <div class="rule-card">
-            <b>Strategy Rules Enforced:</b><br/>
-            • <b>Universe:</b> Pure NSE Equities only (all Indices &amp; BSE stocks strictly excluded)<br/>
-            • <b>Monthly (Macro):</b> Price Close &gt; 5 EMA &nbsp;AND&nbsp; 5 EMA &gt; 20 EMA<br/>
-            • <b>Hilega Milega (NK Sir):</b> RSI(9) &ge; 50 (Blue Line) &nbsp;AND&nbsp; EMA 3 (Green) &ge; WMA 21 (Red)<br/>
-            • <b>Weekly (Trend):</b> Price Close &gt; 20 EMA &nbsp;AND&nbsp; 20 EMA &gt; 50 EMA &gt; 200 EMA<br/>
-            • <b>Daily (Setup):</b> Price Close &gt; 20 EMA &nbsp;AND&nbsp; 20 EMA &gt; 50 EMA &gt; 200 EMA<br/>
-            • <b>75-Min (Trigger):</b> Price Close &gt; 20 EMA &nbsp;AND&nbsp; 5 EMA &gt; 20 EMA
-        </div>
-        """, unsafe_allow_html=True)
-
-        col_sf1, col_sf2 = st.columns([3, 1])
-        with col_sf1:
-            stage_filter = st.selectbox(
-                "Filter Alignment Stage",
-                options=[
-                    "All",
-                    "Stage 3 (Full Alignment Only)",
-                    "Stage 2+ (M+W Aligned)",
-                    "Stage 1+ (Monthly Pass)",
-                    "Stage 3 + Hilega Milega Bullish (RSI>=50 & EMA3>=WMA21)",
-                    "Hilega Milega Bullish Only (RSI>=50 & EMA3>=WMA21)"
-                ],
-                index=0
-            )
-        with col_sf2:
-            st.write("")
-            st.write("")
-            if st.button("🔄 Re-Run Alignment Scan", type="primary", use_container_width=True):
-                st.cache_data.clear()
-                st.rerun()
-
-        with st.spinner("Scanning alignment across stocks in local database..."):
-            df_align = get_cached_alignment_scan(stage_filter)
-
-        if df_align.empty:
-            st.info("No stocks match the selected filter, or the local database is empty.")
-            st.caption("Tip: Use 'Seed 5-Year Demo Data' or 'Start Upstox Download' in the sidebar.")
-        else:
-            # Metric Summary Cards
-            s3_count = len(df_align[df_align["Score"] == 3])
-            s2_count = len(df_align[df_align["Score"] == 2])
-            rsi_pass_count = len(df_align[df_align["Monthly_RSI_Match"] == "✅ PASS"]) if "Monthly_RSI_Match" in df_align.columns else 0
-
-            m1, m2, m3, m4 = st.columns(4)
-            m1.metric("Stage 3: Full Alignment 🚀", s3_count)
-            m2.metric("Stage 2: M + W Aligned 🟢", s2_count)
-            m3.metric("Monthly RSI Match (50 & EMA3>WMA21) ⚡", rsi_pass_count)
-            m4.metric("Total Scanned", len(df_align))
-
-            display_cols = [
-                "Symbol", "Price", "Stage",
-                "Monthly Match", "Monthly_RSI_Match",
-                "M_RSI", "M_RSI_EMA3", "M_RSI_WMA21",
-                "M_RSI>=50", "M_EMA3>=WMA21",
-                "Weekly Match", "Daily Match", "75m Match",
-                "Daily_RSI", "75m_RSI",
-                "M_Close>5EMA", "M_5>20EMA",
-                "W_Close>20EMA", "W_20>50EMA", "W_50>200EMA",
-                "D_Close>20EMA", "D_20>50EMA", "D_50>200EMA"
-            ]
-            
-            sub_df = df_align[[c for c in display_cols if c in df_align.columns]]
-
-            # Enforce exactly 2 decimal places on all float columns in Alignment Scanner
-            float_cols = sub_df.select_dtypes(include=["float", "float64"]).columns.tolist()
-            format_dict = {col: "{:.2f}" for col in float_cols}
-
-            st.dataframe(
-                sub_df.style.format(format_dict).map(
-                    lambda v: "background-color: #064E3B; color: #34D399; font-weight: bold;" if v == "✅ PASS" or v == "✅"
-                    else ("background-color: #7F1D1D; color: #F87171;" if v == "❌ FAIL" or v == "❌" else "")
-                ),
-                use_container_width=True,
-                height=480
-            )
-
-            # Export to CSV with all floats rounded to 2 decimal places
-            csv_data = df_align.round(2).to_csv(index=False).encode("utf-8")
-            st.download_button(
-                label="📥 Export Alignment Scan to CSV",
-                data=csv_data,
-                file_name=f"alignment_scan_{datetime.today().strftime('%Y%m%d')}.csv",
-                mime="text/csv"
-            )
 
     elif selected_page == "🔍 Chartink Screener":
         screener_ui.render_screener_page(theme=theme)

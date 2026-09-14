@@ -26,6 +26,7 @@ from screener_engine import (
     get_screener_preset,
     parse_chartink_query,
 )
+from chartink_ocr import parse_chartink_screenshot
 
 
 def _get_theme_styles(theme: str) -> dict:
@@ -458,8 +459,97 @@ def render_screener_page(theme: str = "dark"):
                 for c in preset_cfg.clauses
             ]
 
-        # Chartink Link & Query Importer Expander
-        with st.expander("📋 **Chartink Query / Link Importer (Paste & Convert)**", expanded=False):
+        # 1. Chartink Scanner Screenshot-to-Scanner Uploader (OCR Vision Engine)
+        with st.expander("📸 **Upload Chartink Scanner Screenshot (Auto-Create Scanner)**", expanded=True):
+            st.markdown(f"""
+            <div style="background: rgba(59, 130, 246, 0.08); border-left: 4px solid #3B82F6; padding: 10px 14px; border-radius: 6px; margin-bottom: 12px; font-size: 13px; color: {styles['text_secondary']};">
+                📸 <b>Screenshot-to-Scanner:</b> Upload any screenshot of a Chartink scanner (PNG, JPG, WEBP).
+                The AI OCR engine will automatically extract every timeframe, indicator, and operator, populate the rules, and execute the scan!
+            </div>
+            """, unsafe_allow_html=True)
+
+            scr_col1, scr_col2 = st.columns([1.5, 2.5])
+            with scr_col1:
+                uploaded_scr = st.file_uploader(
+                    "Upload Scanner Screenshot (PNG, JPG, WEBP):",
+                    type=["png", "jpg", "jpeg", "webp"],
+                    key="chartink_scanner_screenshot_uploader",
+                    help="Upload a screenshot of the Chartink filter rules (e.g. from Chartink.com)"
+                )
+                if uploaded_scr is not None:
+                    st.image(uploaded_scr, caption="Uploaded Chartink Screenshot", use_container_width=True)
+
+            with scr_col2:
+                if uploaded_scr is not None:
+                    with st.spinner("🤖 Scanning and extracting Chartink conditions via OCR..."):
+                        ocr_data = parse_chartink_screenshot(uploaded_scr)
+
+                    if ocr_data["success"] and ocr_data["clauses"]:
+                        st.success(f"🎉 Successfully extracted **{len(ocr_data['clauses'])} condition(s)** with **{ocr_data['logic']}** match logic!")
+                        st.markdown("**Detected Scanner Rules from Screenshot:**")
+                        for idx, rule_txt in enumerate(ocr_data["cleaned_lines"], 1):
+                            st.markdown(f"• `Rule #{idx}:` **{rule_txt}**")
+
+                        btn_ocr_1, btn_ocr_2 = st.columns(2)
+                        with btn_ocr_1:
+                            if st.button("⚡ Create & Run Scanner Now", type="primary", use_container_width=True, key="btn_create_and_run_ocr"):
+                                st.session_state["screener_clauses"] = [
+                                    {
+                                        "timeframe": c.timeframe,
+                                        "lhs": c.lhs,
+                                        "operator": c.operator,
+                                        "rhs_type": c.rhs_type,
+                                        "rhs_indicator": c.rhs_indicator,
+                                        "rhs_value": c.rhs_value,
+                                        "multiplier": c.multiplier
+                                    }
+                                    for c in ocr_data["clauses"]
+                                ]
+                                st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
+                                st.session_state["scr_preset_select"] = "🛠️ Custom Screener Builder"
+                                if ocr_data["logic"] == "ANY":
+                                    st.session_state["scr_logic_select"] = "ANY (OR)"
+                                else:
+                                    st.session_state["scr_logic_select"] = "ALL (AND)"
+                                st.session_state["auto_trigger_custom_scan"] = True
+                                st.rerun()
+
+                        with btn_ocr_2:
+                            if st.button("📝 Load into Rule Builder (Edit)", type="secondary", use_container_width=True, key="btn_load_ocr_builder"):
+                                st.session_state["screener_clauses"] = [
+                                    {
+                                        "timeframe": c.timeframe,
+                                        "lhs": c.lhs,
+                                        "operator": c.operator,
+                                        "rhs_type": c.rhs_type,
+                                        "rhs_indicator": c.rhs_indicator,
+                                        "rhs_value": c.rhs_value,
+                                        "multiplier": c.multiplier
+                                    }
+                                    for c in ocr_data["clauses"]
+                                ]
+                                st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
+                                st.session_state["scr_preset_select"] = "🛠️ Custom Screener Builder"
+                                if ocr_data["logic"] == "ANY":
+                                    st.session_state["scr_logic_select"] = "ANY (OR)"
+                                else:
+                                    st.session_state["scr_logic_select"] = "ALL (AND)"
+                                st.rerun()
+
+                    elif ocr_data.get("error"):
+                        st.error(f"⚠️ {ocr_data['error']}")
+                    else:
+                        st.warning("Could not identify specific conditions from the screenshot. Please check the image clarity or paste the query text below.")
+                else:
+                    st.info("""
+                    **Quick Steps:**
+                    1. Capture a screenshot of any Chartink scanner filters (e.g. `Cmd + Shift + 4` on Mac or Snipping Tool).
+                    2. Upload or drag & drop the image into the box on the left.
+                    3. Click **'Create & Run Scanner Now'** to scan across 3,000+ NSE equities immediately!
+                    """)
+
+        # 2. Chartink Link & Text Query Importer Expander
+        with st.expander("📋 **Chartink Text Query / Link Importer (Paste & Convert)**", expanded=False):
             st.caption("Paste any Chartink condition string or URL below to automatically load its rules into the filter builder.")
             c_query_col, c_btn_col = st.columns([3.5, 1.0])
             with c_query_col:
@@ -489,6 +579,8 @@ def render_screener_page(theme: str = "dark"):
                                 }
                                 for c in parsed_clauses
                             ]
+                            st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
+                            st.session_state["scr_preset_select"] = "🛠️ Custom Screener Builder"
                             st.success(f"✅ Successfully converted {len(parsed_clauses)} Chartink rules!")
                             st.rerun()
 
@@ -575,7 +667,8 @@ def render_screener_page(theme: str = "dark"):
         with scan_col:
             run_custom_scan = st.button("🔍 Run Custom Screener Scan", type="primary", use_container_width=True, key="scr_run_custom_scan_btn")
 
-        if run_custom_scan:
+        auto_run = st.session_state.pop("auto_trigger_custom_scan", False)
+        if run_custom_scan or auto_run:
             target_symbols = get_target_equities(universe_choice)
             screener_clauses = [
                 ScreenerClause(
