@@ -879,6 +879,38 @@ def calculate_bollinger_bands(series: pd.Series, period: int = 20, num_std: floa
     }, index=series.index)
 
 
+def calculate_ema_bb_band(
+    df: pd.DataFrame,
+    length: int = 5,
+    source_col: str = "close",
+    smoothing_length: int = 5,
+    bb_std: float = 0.55
+) -> pd.DataFrame:
+    """
+    Computes TradingView EMA with SMA + Bollinger Bands smoothing.
+    Matches TradingView built-in EMA settings:
+      - Length (base EMA): default 5
+      - Source: default 'close'
+      - Smoothing: SMA, Length: 5
+      - BB StdDev: 0.55
+    Returns DataFrame with columns ['EMA_Band_Basis', 'EMA_Band_Upper', 'EMA_Band_Lower'].
+    """
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["EMA_Band_Basis", "EMA_Band_Upper", "EMA_Band_Lower"])
+    
+    src = df[source_col] if source_col in df.columns else df["close"]
+    ema = src.ewm(span=length, adjust=False).mean()
+    basis = ema.rolling(window=smoothing_length, min_periods=1).mean()
+    std = ema.rolling(window=smoothing_length, min_periods=1).std(ddof=0).fillna(0.0)
+    dev = bb_std * std
+    return pd.DataFrame({
+        "EMA_Band_Basis": basis,
+        "EMA_Band_Upper": basis + dev,
+        "EMA_Band_Lower": basis - dev
+    }, index=df.index)
+
+
+
 def calculate_macd(series: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> pd.DataFrame:
     """
     Computes MACD Line, Signal Line, and Histogram.

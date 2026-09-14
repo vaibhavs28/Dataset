@@ -89,6 +89,22 @@ class TestCryptoSystem(unittest.TestCase):
         self.assertTrue(success_t)
         self.assertIn("last_price", ticker)
 
+    def test_ema_bb_band_calculation(self):
+        prices = [79000, 79200, 79150, 79400, 79600, 79500, 79300, 79100, 79450, 79800]
+        df = pd.DataFrame({"close": prices})
+        bands = scanner.calculate_ema_bb_band(df, length=5, smoothing_length=5, bb_std=0.55)
+        self.assertEqual(len(bands), len(df))
+        self.assertIn("EMA_Band_Upper", bands.columns)
+        self.assertIn("EMA_Band_Lower", bands.columns)
+        self.assertIn("EMA_Band_Basis", bands.columns)
+        for i in range(len(bands)):
+            self.assertGreaterEqual(bands["EMA_Band_Upper"].iloc[i], bands["EMA_Band_Lower"].iloc[i])
+            self.assertAlmostEqual(
+                bands["EMA_Band_Basis"].iloc[i],
+                (bands["EMA_Band_Upper"].iloc[i] + bands["EMA_Band_Lower"].iloc[i]) / 2.0,
+                places=5
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

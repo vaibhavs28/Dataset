@@ -171,7 +171,8 @@ def render_crypto_page(theme: str = "dark"):
         ind_c1, ind_c2, ind_c3, ind_c4, ind_c5 = st.columns(5)
         with ind_c1:
             st.markdown("**Moving Averages**")
-            term_ema = st.checkbox("EMAs (9, 20, 50, 200)", value=True, key="crypto_ema_chk")
+            term_ema_band = st.checkbox("🟣 EMA 5 BB Band", value=True, key="crypto_ema_band_chk", help="TradingView EMA (5) with SMA (5) + 0.55 BB StdDev smoothing ribbon")
+            term_ema = st.checkbox("EMAs (9, 20, 50, 200)", value=False, key="crypto_ema_chk")
             term_sma = st.checkbox("SMAs (20, 50, 200)", value=False, key="crypto_sma_chk")
         with ind_c2:
             st.markdown("**Volatility & Trend**")
@@ -180,15 +181,29 @@ def render_crypto_page(theme: str = "dark"):
         with ind_c3:
             st.markdown("**Intraday & Levels**")
             term_vwap = st.checkbox("VWAP (Intraday)", value=True, key="crypto_vwap_chk")
-            term_piv = st.checkbox("CPR / Weekly Pivots", value=True, key="crypto_piv_chk")
+            term_piv = st.checkbox("CPR / Weekly Pivots", value=False, key="crypto_piv_chk")
         with ind_c4:
             st.markdown("**Oscillators**")
-            term_rsi = st.checkbox("RSI Panel (14)", value=True, key="crypto_rsi_chk")
-            term_macd = st.checkbox("MACD Panel (12, 26, 9)", value=True, key="crypto_macd_chk")
+            term_rsi = st.checkbox("RSI Panel (14)", value=False, key="crypto_rsi_chk")
+            term_macd = st.checkbox("MACD Panel (12, 26, 9)", value=False, key="crypto_macd_chk")
         with ind_c5:
             st.markdown("**Volume & Momentum**")
             term_vol = st.checkbox("Volume + 20 MA", value=True, key="crypto_vol_chk")
             term_stoch = st.checkbox("Stochastic (14, 3, 3)", value=False, key="crypto_stoch_chk")
+
+        if term_ema_band:
+            with st.expander("⚙️ EMA Band Inputs (TradingView Settings)", expanded=False):
+                eb_c1, eb_c2, eb_c3, eb_c4 = st.columns(4)
+                with eb_c1:
+                    eb_len = st.number_input("EMA Length", min_value=1, max_value=200, value=5, step=1, key="eb_len_input")
+                with eb_c2:
+                    eb_src = st.selectbox("Source", ["Close", "Open", "High", "Low"], index=0, key="eb_src_input")
+                with eb_c3:
+                    eb_smooth_len = st.number_input("Smoothing Length (SMA)", min_value=1, max_value=200, value=5, step=1, key="eb_smooth_len_input")
+                with eb_c4:
+                    eb_std = st.number_input("BB StdDev", min_value=0.01, max_value=10.0, value=0.55, step=0.05, format="%.2f", key="eb_std_input")
+        else:
+            eb_len, eb_src, eb_smooth_len, eb_std = 5, "Close", 5, 0.55
 
     # Map timeframe to Delta resolution
     res_code = delta_exchange_client.TIMEFRAME_TO_DELTA_RES.get(term_tf, "15m")
@@ -300,7 +315,14 @@ def render_crypto_page(theme: str = "dark"):
                     "volume": term_vol,
                     "rsi": term_rsi,
                     "macd": term_macd,
-                    "stoch": term_stoch
+                    "stoch": term_stoch,
+                    "ema_band": term_ema_band,
+                    "ema_band_config": {
+                        "length": eb_len,
+                        "source": eb_src,
+                        "smoothing_length": eb_smooth_len,
+                        "bb_std": eb_std
+                    }
                 },
                 height=740,
                 is_intraday=is_intra,

@@ -1926,6 +1926,12 @@ def generate_advanced_terminal_html(
     show_rsi = indicators.get("rsi", True)
     show_macd = indicators.get("macd", False)
     show_stoch = indicators.get("stoch", False)
+    show_ema_band = indicators.get("ema_band", is_crypto)
+    ema_band_cfg = indicators.get("ema_band_config", {}) or {}
+    eb_len = int(ema_band_cfg.get("length", 5))
+    eb_smooth_len = int(ema_band_cfg.get("smoothing_length", 5))
+    eb_std = float(ema_band_cfg.get("bb_std", 0.55))
+    eb_src = str(ema_band_cfg.get("source", "close")).lower().strip()
 
     is_crypto = bool(is_crypto or ("DELTA:" in str(symbol).upper()) or ("BTC" in str(symbol).upper()) or ("ETH" in str(symbol).upper()) or str(symbol).upper().endswith("USD"))
     clean_symbol = str(symbol).replace("DELTA:", "").replace("NSE:", "").strip()
@@ -1998,6 +2004,20 @@ def generate_advanced_terminal_html(
             df_calc["Stoch_K"] = stoch_res["Stoch_K"]
             df_calc["Stoch_D"] = stoch_res["Stoch_D"]
 
+    if show_ema_band:
+        if "EMA_Band_Upper" not in df_calc.columns or "EMA_Band_Lower" not in df_calc.columns:
+            band_res = scanner.calculate_ema_bb_band(
+                df_calc,
+                length=eb_len,
+                source_col=eb_src,
+                smoothing_length=eb_smooth_len,
+                bb_std=eb_std
+            )
+            df_calc["EMA_Band_Basis"] = band_res["EMA_Band_Basis"]
+            df_calc["EMA_Band_Upper"] = band_res["EMA_Band_Upper"]
+            df_calc["EMA_Band_Lower"] = band_res["EMA_Band_Lower"]
+
+
     if show_volume and "volume" in df_calc.columns:
         if "Volume_MA20" not in df_calc.columns:
             df_calc["Volume_MA20"] = df_calc["volume"].rolling(window=20, min_periods=1).mean()
@@ -2015,6 +2035,7 @@ def generate_advanced_terminal_html(
     rsi_pts, rsi_ema3_pts, rsi_wma21_pts = [], [], []
     macd_pts, signal_pts, hist_pts = [], [], []
     stoch_k_pts, stoch_d_pts = [], []
+    ema_band_upper, ema_band_lower, ema_band_fill = [], [], []
 
     for dt, row in df_calc.iterrows():
         if is_crypto:
@@ -2098,6 +2119,13 @@ def generate_advanced_terminal_html(
                 stoch_k_pts.append({"time": t_val, "value": round(float(row["Stoch_K"]), 2)})
                 stoch_d_pts.append({"time": t_val, "value": round(float(row.get("Stoch_D", 50)), 2)})
 
+            if show_ema_band and "EMA_Band_Upper" in row and not pd.isna(row["EMA_Band_Upper"]):
+                u_val = round(float(row["EMA_Band_Upper"]), 2)
+                l_val = round(float(row["EMA_Band_Lower"]), 2)
+                ema_band_upper.append({"time": t_val, "value": u_val})
+                ema_band_lower.append({"time": t_val, "value": l_val})
+                ema_band_fill.append({"time": t_val, "upper": u_val, "lower": l_val})
+
     safe_id = re.sub(r'[^a-zA-Z0-9_]', '_', str(chart_id))
 
     # Calculate pane heights
@@ -2123,6 +2151,9 @@ def generate_advanced_terminal_html(
     rsi_wma21_json = json.dumps(rsi_wma21_pts)
     macd_json = json.dumps({"macd": macd_pts, "signal": signal_pts, "hist": hist_pts})
     stoch_json = json.dumps({"k": stoch_k_pts, "d": stoch_d_pts})
+    ema_band_upper_json = json.dumps(ema_band_upper)
+    ema_band_lower_json = json.dumps(ema_band_lower)
+    ema_band_fill_json = json.dumps(ema_band_fill)
 
     html_code = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2592,6 +2623,7 @@ def generate_advanced_terminal_html(
                 <!-- Main Price Pane -->
                 <div class="pane-main" id="main_pane_{safe_id}">
                     <canvas id="draw_canvas_{safe_id}" class="draw-canvas"></canvas>
+                    <canvas id="ema_band_canvas_{safe_id}" class="draw-canvas" style="z-index: 4; pointer-events: none;"></canvas>
                     <div id="main_chart_{safe_id}" style="width:100%; height:100%;"></div>
                 </div>
 
@@ -2613,7 +2645,7 @@ def generate_advanced_terminal_html(
                 <button class="range-btn" data-range="1Y" type="button">1Y</button>
                 <button class="range-btn active" data-range="ALL" type="button">ALL</button>
             </div>
-            <div class="tz-note">UTC+5:30 (IST) • Real-Time Upstox Feed</div>
+            <div class="tz-note">{'UTC (24/7) • Real-Time Delta Feed' if is_crypto else 'UTC+5:30 (IST) • Real-Time Upstox Feed'}</div>
         </div>
 
         <!-- Tooltip -->
@@ -2642,6 +2674,9 @@ def generate_advanced_terminal_html(
             const rsiWma21 = {rsi_wma21_json};
             const macd = {macd_json};
             const stoch = {stoch_json};
+            const emaBandUpper = {ema_band_upper_json};
+            const emaBandLower = {ema_band_lower_json};
+            const emaBandFill = {ema_band_fill_json};
 
             // Main Chart Setup
             const mainOptions = {{
@@ -2756,6 +2791,73 @@ def generate_advanced_terminal_html(
                 bbUp.setData(bb.upper);
                 bbMid.setData(bb.middle);
                 bbLow.setData(bb.lower);
+            }}
+
+            // Custom 5 EMA (SMA 5 + 0.55 BB) Band Overlay
+            let emaBandUpSeries = null;
+            let emaBandLowSeries = null;
+            if (emaBandUpper && emaBandUpper.length > 0) {{
+                emaBandUpSeries = mainChart.addLineSeries({{
+                    color: '#B5A4DB',
+                    lineWidth: 1.2,
+                    lastValueVisible: false,
+                    priceLineVisible: false
+                }});
+                emaBandUpSeries.setData(emaBandUpper);
+            }}
+            if (emaBandLower && emaBandLower.length > 0) {{
+                emaBandLowSeries = mainChart.addLineSeries({{
+                    color: '#B5A4DB',
+                    lineWidth: 1.2,
+                    lastValueVisible: false,
+                    priceLineVisible: false
+                }});
+                emaBandLowSeries.setData(emaBandLower);
+            }}
+
+            function drawEmaBandRibbon() {{
+                const canvas = document.getElementById("ema_band_canvas_{safe_id}");
+                if (!canvas || !candleSeries || !emaBandFill || emaBandFill.length === 0) return;
+                const rect = mainContainer.getBoundingClientRect();
+                if (canvas.width !== rect.width || canvas.height !== rect.height) {{
+                    canvas.width = rect.width;
+                    canvas.height = rect.height;
+                }}
+                const ctx = canvas.getContext("2d");
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                const timeScale = mainChart.timeScale();
+                const pts = [];
+                for (let i = 0; i < emaBandFill.length; i++) {{
+                    const item = emaBandFill[i];
+                    const x = timeScale.timeToCoordinate(item.time);
+                    if (x === null || x < -60 || x > canvas.width + 60) continue;
+                    const yUp = candleSeries.priceToCoordinate(item.upper);
+                    const yLow = candleSeries.priceToCoordinate(item.lower);
+                    if (yUp !== null && yLow !== null) {{
+                        pts.push({{ x: x, yUp: yUp, yLow: yLow }});
+                    }}
+                }}
+                if (pts.length < 2) return;
+
+                ctx.beginPath();
+                ctx.moveTo(pts[0].x, pts[0].yUp);
+                for (let i = 1; i < pts.length; i++) {{
+                    ctx.lineTo(pts[i].x, pts[i].yUp);
+                }}
+                for (let i = pts.length - 1; i >= 0; i--) {{
+                    ctx.lineTo(pts[i].x, pts[i].yLow);
+                }}
+                ctx.closePath();
+                ctx.fillStyle = "rgba(199, 186, 228, 0.62)";
+                ctx.fill();
+            }}
+
+            if (emaBandFill && emaBandFill.length > 0) {{
+                mainChart.timeScale().subscribeVisibleLogicalRangeChange(drawEmaBandRibbon);
+                mainChart.timeScale().subscribeVisibleTimeRangeChange(drawEmaBandRibbon);
+                setTimeout(drawEmaBandRibbon, 60);
+                setTimeout(drawEmaBandRibbon, 250);
             }}
 
             // Supertrend Overlay
@@ -3327,6 +3429,9 @@ def generate_advanced_terminal_html(
                                     legV.textContent = Number(msg.volume).toLocaleString('en-US');
                                 }}
                                 lastLiveClose = cBar.close;
+                                if (typeof drawEmaBandRibbon === 'function') {{
+                                    drawEmaBandRibbon();
+                                }}
                             }}
                             // 2. Ticker real-time updates
                             else if (msg.type === 'v2/ticker' && msg.symbol === liveCryptoSymbol) {{
@@ -3378,6 +3483,9 @@ def generate_advanced_terminal_html(
                 if (stochChart && stochElem) {{
                     const sBox = stochElem.getBoundingClientRect();
                     stochChart.resize(sBox.width, sBox.height);
+                }}
+                if (typeof drawEmaBandRibbon === 'function') {{
+                    drawEmaBandRibbon();
                 }}
             }}
 
