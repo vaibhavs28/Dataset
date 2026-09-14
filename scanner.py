@@ -596,21 +596,18 @@ def run_vectorized_multiframe_scan(stage_filter: str = "All") -> pd.DataFrame:
     valid_nse_equities = set(database.get_alignment_scanner_symbols())
 
     import duckdb_store
-    conn = duckdb_store.get_connection()
-    cur = conn.cursor()
-
-    # 1. Names map
     names_map = {}
-    try:
-        with duckdb_store._lock:
+
+    # 1. Names map and bulk query all timeframes via non-blocking DuckDB read connection
+    with duckdb_store.get_read_connection() as conn:
+        cur = conn.cursor()
+        try:
             rows = cur.execute("SELECT trading_symbol, name FROM instruments WHERE trading_symbol IS NOT NULL;").fetchall()
             names_map = {r[0].replace("-EQ", "").replace(".NS", ""): r[1] for r in rows if r[0]}
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # 2. Query all timeframes in bulk via DuckDB
-    try:
-        with duckdb_store._lock:
+        try:
             df_m = cur.execute("""
                 SELECT trading_symbol, month_date, close FROM (
                     SELECT trading_symbol, date_trunc('month', CAST(date AS DATE)) as month_date,
@@ -650,9 +647,9 @@ def run_vectorized_multiframe_scan(stage_filter: str = "All") -> pd.DataFrame:
                 ) WHERE rn <= 60
                 ORDER BY trading_symbol, timestamp ASC;
             """).df()
-    except Exception as e:
-        logger.error(f"Error in vectorized scan batch query: {e}")
-        return pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error in vectorized scan batch query: {e}")
+            return pd.DataFrame()
 
     if df_d.empty or df_m.empty or df_w.empty:
         return pd.DataFrame()
@@ -817,11 +814,9 @@ def run_multiframe_alignment_scan(symbols: Optional[List[str]] = None, stage_fil
     valid_nse_equities = set(database.get_alignment_scanner_symbols())
 
     import duckdb_store
-    conn = duckdb_store.get_connection()
-
     names_map = {}
     try:
-        with duckdb_store._lock:
+        with duckdb_store.get_read_connection() as conn:
             rows = conn.execute("SELECT trading_symbol, name FROM instruments WHERE trading_symbol IS NOT NULL;").fetchall()
             names_map = {r[0].replace("-EQ", "").replace(".NS", ""): r[1] for r in rows if r[0]}
     except Exception as e:

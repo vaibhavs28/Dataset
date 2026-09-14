@@ -738,8 +738,7 @@ def calculate_market_heatmap_data() -> pd.DataFrame:
     # 1. Try DuckDB first (primary high-speed store)
     try:
         import duckdb_store
-        conn = duckdb_store.get_connection()
-        with duckdb_store._lock:
+        with duckdb_store.get_read_connection() as conn:
             inst_df = conn.execute(
                 "SELECT trading_symbol, name, instrument_type, exchange FROM instruments WHERE exchange = 'NSE_EQ';"
             ).df()

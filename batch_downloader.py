@@ -82,24 +82,24 @@ def sync_live_market_batch(
     using the high-speed 500-symbol batch API.
     Saves directly to DuckDB in a single batch insert.
     """
-    conn = duckdb_store.get_connection()
     t0 = time.time()
 
-    # 1. Resolve symbols and instrument keys from DuckDB
-    if not symbols:
-        inst_rows = conn.execute("""
-            SELECT trading_symbol, instrument_key
-            FROM instruments
-            WHERE exchange IN ('NSE_EQ', 'NSE_INDEX')
-        """).fetchall()
-    else:
-        clean_list = [s.upper().strip().replace("-EQ", "").replace(".NS", "") for s in symbols]
-        placeholders = ",".join(["?"] * len(clean_list))
-        inst_rows = conn.execute(f"""
-            SELECT trading_symbol, instrument_key
-            FROM instruments
-            WHERE trading_symbol IN ({placeholders})
-        """, clean_list).fetchall()
+    # 1. Resolve symbols and instrument keys from DuckDB using short-lived read connection
+    with duckdb_store.get_read_connection() as conn:
+        if not symbols:
+            inst_rows = conn.execute("""
+                SELECT trading_symbol, instrument_key
+                FROM instruments
+                WHERE exchange IN ('NSE_EQ', 'NSE_INDEX')
+            """).fetchall()
+        else:
+            clean_list = [s.upper().strip().replace("-EQ", "").replace(".NS", "") for s in symbols]
+            placeholders = ",".join(["?"] * len(clean_list))
+            inst_rows = conn.execute(f"""
+                SELECT trading_symbol, instrument_key
+                FROM instruments
+                WHERE trading_symbol IN ({placeholders})
+            """, clean_list).fetchall()
 
     if not inst_rows:
         logger.warning("No instruments found for live batch sync.")

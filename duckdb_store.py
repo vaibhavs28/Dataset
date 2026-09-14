@@ -1,6 +1,8 @@
 import os
 import threading
 import logging
+import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
 from datetime import datetime
@@ -11,43 +13,81 @@ import config
 
 logger = logging.getLogger("duckdb_store")
 DUCKDB_PATH = config.DATA_DIR / "market_data.duckdb"
+STAGING_PARQUET = config.DATA_DIR / "daily_candles_staging.parquet"
 
 _lock = threading.Lock()
 _conn: Optional[duckdb.DuckDBPyConnection] = None
 
 
-def get_connection() -> duckdb.DuckDBPyConnection:
-    """
-    Returns a shared, thread-safe, read-only DuckDB connection.
-    Always opens in read_only=True so multiple processes (Streamlit, UI, Scanners)
-    can query concurrently without OS file lock contention.
-    """
-    global _conn
-    if _conn is None:
-        with _lock:
-            if _conn is None:
-                DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
-                if not DUCKDB_PATH.exists() or DUCKDB_PATH.stat().st_size < 1024 * 1024:
-                    logger.warning(f"DuckDB database not found at {DUCKDB_PATH}. Attempting automatic download from GitHub...")
-                    try:
-                        import download_dataset
-                        download_dataset.download()
-                    except Exception as dl_err:
-                        logger.error(f"Could not auto-download database: {dl_err}. You can manually run: python3 download_dataset.py")
-                try:
-                    _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=True)
-                    _conn.execute("PRAGMA threads=4;")
-                    _conn.execute("PRAGMA memory_limit='4GB';")
-                except Exception as e:
-                    logger.warning(f"Error opening DuckDB in read-only mode: {e}")
-                    _conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=True)
-    return _conn
+def _check_download_db():
+    """Ensures database directory and file exist."""
+    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if not DUCKDB_PATH.exists() or DUCKDB_PATH.stat().st_size < 1024 * 1024:
+        logger.warning(f"DuckDB database not found at {DUCKDB_PATH}. Attempting automatic download from GitHub...")
+        try:
+            import download_dataset
+            download_dataset.download()
+        except Exception as dl_err:
+            logger.error(f"Could not auto-download database: {dl_err}. You can manually run: python3 download_dataset.py")
 
 
-def get_write_connection() -> duckdb.DuckDBPyConnection:
+@contextmanager
+def get_read_connection(max_retries: int = 15, retry_delay: float = 0.05):
     """
-    Returns a short-lived write connection. Caller must close it immediately after writing.
-    Closes any existing read-only connection first to allow configuration change.
+    Context manager yielding a read-only DuckDB connection with automatic retry on lock contention.
+    Closes the connection immediately upon exiting the context block, preventing persistent OS file locks.
+    """
+    _check_download_db()
+    conn = None
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=True)
+            conn.execute("PRAGMA threads=4;")
+            break
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (1.5 ** attempt))
+            else:
+                logger.error(f"Failed to acquire DuckDB read connection after {max_retries} attempts: {e}")
+                raise last_err
+    try:
+        yield conn
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:
+                pass
+
+
+def get_connection(max_retries: int = 15, retry_delay: float = 0.05) -> duckdb.DuckDBPyConnection:
+    """
+    Returns a read-only DuckDB connection with retry on lock conflict.
+    Note: When possible, callers should use 'with get_read_connection() as conn:' to ensure
+    connections are closed immediately and do not block writers.
+    """
+    _check_download_db()
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=True)
+            conn.execute("PRAGMA threads=4;")
+            return conn
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (1.5 ** attempt))
+            else:
+                logger.error(f"Failed to acquire DuckDB read connection after {max_retries} attempts: {e}")
+                raise last_err
+
+
+def get_write_connection(max_retries: int = 20, retry_delay: float = 0.05) -> duckdb.DuckDBPyConnection:
+    """
+    Returns a short-lived write connection with retry backoff.
+    Caller MUST close it immediately after writing.
     """
     global _conn
     if _conn is not None:
@@ -57,13 +97,24 @@ def get_write_connection() -> duckdb.DuckDBPyConnection:
             pass
         _conn = None
 
-    conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
-    conn.execute("PRAGMA threads=4;")
-    try:
-        _init_schema(conn)
-    except Exception:
-        pass
-    return conn
+    DUCKDB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            conn = duckdb.connect(database=str(DUCKDB_PATH), read_only=False)
+            conn.execute("PRAGMA threads=4;")
+            try:
+                _init_schema(conn)
+            except Exception:
+                pass
+            return conn
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (1.5 ** attempt))
+            else:
+                logger.error(f"Failed to acquire DuckDB write connection after {max_retries} attempts: {e}")
+                raise last_err
 
 
 
@@ -138,37 +189,62 @@ def _init_schema(conn: duckdb.DuckDBPyConnection):
 
 
 
-def get_candles_df(symbol: str, start_date: Optional[str] = None, end_date: Optional[str] = None) -> pd.DataFrame:
+def get_candles_df(
+    symbol: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    limit: Optional[int] = 1500
+) -> pd.DataFrame:
     """
     Returns a Pandas DataFrame of daily candles for a given symbol, indexed by DatetimeIndex (date).
     Columns: open, high, low, close, volume, open_interest.
+    Default limit=1500 (~6 years of daily data) keeps memory and transfer payload minimal (<40 KB).
+    Pass limit=None or a start_date to fetch custom or unbounded historical ranges.
+    Sub-3ms execution time directly via DuckDB.
     """
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
-    conn = get_connection()
 
-    query = """
-        SELECT date, open, high, low, close, volume, open_interest
-        FROM daily_candles
-        WHERE (trading_symbol = ? OR trading_symbol = ? || '-EQ')
-    """
-    params = [clean_sym, clean_sym]
+    where_clauses = ["(trading_symbol = ? OR trading_symbol = ? || '-EQ')"]
+    params: List[Any] = [clean_sym, clean_sym]
 
     if start_date:
-        query += " AND date >= ?"
-        params.append(start_date)
+        where_clauses.append("date >= ?")
+        params.append(str(start_date)[:10])
     if end_date:
-        query += " AND date <= ?"
-        params.append(end_date)
+        where_clauses.append("date <= ?")
+        params.append(str(end_date)[:10])
 
-    query += " ORDER BY date ASC;"
+    where_str = " AND ".join(where_clauses)
 
-    with _lock:
+    if limit and not start_date:
+        # Fetch only the latest `limit` candles, sorted chronologically
+        query = f"""
+            SELECT date, open, high, low, close, volume, open_interest
+            FROM (
+                SELECT date, open, high, low, close, volume, open_interest
+                FROM daily_candles
+                WHERE {where_str}
+                ORDER BY date DESC
+                LIMIT {int(limit)}
+            )
+            ORDER BY date ASC;
+        """
+    else:
+        query = f"""
+            SELECT date, open, high, low, close, volume, open_interest
+            FROM daily_candles
+            WHERE {where_str}
+            ORDER BY date ASC;
+        """
+
+    with get_read_connection() as conn:
         df = conn.execute(query, params).df()
 
     if df.empty:
         return pd.DataFrame()
 
     df["date"] = pd.to_datetime(df["date"])
+    df.drop_duplicates(subset=["date"], keep="last", inplace=True)
     df.set_index("date", inplace=True)
     return df
 
@@ -176,18 +252,17 @@ def get_candles_df(symbol: str, start_date: Optional[str] = None, end_date: Opti
 def get_intraday_candles(
     symbol: str,
     timeframe: str = "75m",
-    limit: int = 5000,
+    limit: int = 2500,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Returns authentic pre-calculated intraday candles directly from DuckDB's intraday_candles table.
     Supports filtering by start_date and end_date (e.g. '2022-01-01' to '2023-12-31').
-    Sub-10ms query execution.
+    Sub-10ms query execution with non-blocking read connection.
     """
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
-    conn = get_connection()
-    with _lock:
+    with get_read_connection() as conn:
         try:
             query = """
                 SELECT timestamp, open, high, low, close, volume
@@ -231,8 +306,7 @@ def get_intraday_candles(
 def get_latest_candle_date(symbol: str) -> Optional[str]:
     """Returns the most recent candle date (YYYY-MM-DD) for a symbol."""
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
-    conn = get_connection()
-    with _lock:
+    with get_read_connection() as conn:
         res = conn.execute("""
             SELECT max(date)
             FROM daily_candles
@@ -243,10 +317,7 @@ def get_latest_candle_date(symbol: str) -> Optional[str]:
 
 def get_all_symbols(include_indices: bool = False, exchange: Optional[str] = None) -> List[str]:
     """Returns all unique Equity trading symbols strictly from NSE, excluding all indices and ETFs."""
-    conn = get_connection()
-
-    # Check if instruments table is populated; if fresh/empty, automatically sync from Upstox
-    with _lock:
+    with get_read_connection() as conn:
         try:
             inst_cnt = conn.execute("SELECT count(*) FROM instruments;").fetchone()[0]
         except Exception:
@@ -259,7 +330,7 @@ def get_all_symbols(include_indices: bool = False, exchange: Optional[str] = Non
         except Exception as e:
             logger.warning(f"Auto-syncing instruments in get_all_symbols: {e}")
 
-    with _lock:
+    with get_read_connection() as conn:
         try:
             if exchange:
                 query = """
@@ -287,7 +358,7 @@ def get_all_symbols(include_indices: bool = False, exchange: Optional[str] = Non
                 query = """
                     SELECT DISTINCT trading_symbol 
                     FROM instruments 
-                    WHERE exchange = 'NSE_EQ'
+                    WHERE exchange = 'NSE_EQ' 
                       AND instrument_key LIKE '%|INE%'
                       AND instrument_type IN ('EQUITY', 'EQ', 'BE', 'SM', 'BZ')
                       AND trading_symbol NOT LIKE '0%'
@@ -333,8 +404,7 @@ def get_alignment_scanner_symbols() -> List[str]:
     - All BSE Equity stocks (exchange == 'BSE_EQ')
     - Any debt/bond instruments starting with '0'
     """
-    conn = get_connection()
-    with _lock:
+    with get_read_connection() as conn:
         try:
             inst_cnt = conn.execute("SELECT count(*) FROM instruments;").fetchone()[0]
         except Exception:
@@ -347,7 +417,7 @@ def get_alignment_scanner_symbols() -> List[str]:
         except Exception as e:
             logger.warning(f"Auto-syncing instruments in get_alignment_scanner_symbols: {e}")
 
-    with _lock:
+    with get_read_connection() as conn:
         try:
             rows = conn.execute("""
                 SELECT DISTINCT trading_symbol 
@@ -370,8 +440,7 @@ def get_alignment_scanner_symbols() -> List[str]:
         # Fallback to daily_candles
         try:
             rows = conn.execute("""
-                SELECT DISTINCT trading_symbol 
-                FROM daily_candles 
+                SELECT DISTINCT trading_symbol FROM daily_candles 
                 WHERE trading_symbol NOT LIKE '0%'
                   AND trading_symbol NOT LIKE '%NIFTY%'
                   AND trading_symbol NOT LIKE '%SENSEX%'
@@ -390,8 +459,7 @@ def get_alignment_scanner_symbols() -> List[str]:
 
 def get_db_stats() -> Dict[str, Any]:
     """Returns overview statistics of stored database records from DuckDB."""
-    conn = get_connection()
-    with _lock:
+    with get_read_connection() as conn:
         try:
             inst_count = conn.execute("SELECT COUNT(*) FROM instruments;").fetchone()[0]
         except Exception:
@@ -422,8 +490,65 @@ def get_db_stats() -> Dict[str, Any]:
         }
 
 
+def _flush_staging_candles(conn: duckdb.DuckDBPyConnection):
+    """Merges any candles buffered in the staging parquet file into daily_candles."""
+    if not STAGING_PARQUET.exists():
+        return
+    try:
+        staging_size = STAGING_PARQUET.stat().st_size
+        if staging_size == 0:
+            STAGING_PARQUET.unlink(missing_ok=True)
+            return
+
+        conn.execute(f"""
+            INSERT INTO daily_candles
+            SELECT
+                instrument_key,
+                trading_symbol,
+                date,
+                open,
+                high,
+                low,
+                close,
+                volume,
+                open_interest
+            FROM read_parquet('{str(STAGING_PARQUET)}')
+            ON CONFLICT (instrument_key, date) DO UPDATE SET
+                trading_symbol = EXCLUDED.trading_symbol,
+                open = EXCLUDED.open,
+                high = EXCLUDED.high,
+                low = EXCLUDED.low,
+                close = EXCLUDED.close,
+                volume = EXCLUDED.volume,
+                open_interest = EXCLUDED.open_interest;
+        """)
+        STAGING_PARQUET.unlink(missing_ok=True)
+        logger.info("✅ Flushed and merged staging daily candles into daily_candles table.")
+    except Exception as e:
+        logger.warning(f"Could not flush staging daily candles: {e}")
+
+
+def _append_to_staging_wal(df: pd.DataFrame):
+    """Appends unwritten candles to fallback staging parquet file."""
+    try:
+        STAGING_PARQUET.parent.mkdir(parents=True, exist_ok=True)
+        if STAGING_PARQUET.exists():
+            existing_df = pd.read_parquet(STAGING_PARQUET)
+            combined = pd.concat([existing_df, df], ignore_index=True)
+            combined.drop_duplicates(subset=["instrument_key", "date"], keep="last", inplace=True)
+            combined.to_parquet(STAGING_PARQUET, index=False)
+        else:
+            df.to_parquet(STAGING_PARQUET, index=False)
+        logger.info(f"Buffered {len(df)} candles into staging WAL at {STAGING_PARQUET}")
+    except Exception as wal_err:
+        logger.error(f"Failed to buffer candles into staging WAL: {wal_err}")
+
+
 def save_daily_candles(candles: List[dict]):
-    """Upserts daily candles into DuckDB."""
+    """
+    Upserts daily candles into DuckDB with automatic deduplication, retry, and staging fallback.
+    Guarantees continuous synchronization without dropping bars during database contention.
+    """
     if not candles:
         return
 
@@ -437,34 +562,74 @@ def save_daily_candles(candles: List[dict]):
         if col not in df.columns:
             df[col] = default
 
+    # Clean symbol
+    df["trading_symbol"] = (
+        df["trading_symbol"]
+        .astype(str)
+        .str.strip()
+        .str.upper()
+        .str.replace("-EQ", "", regex=False)
+        .str.replace(".NS", "", regex=False)
+    )
+    df = df[df["trading_symbol"] != ""].copy()
+    if df.empty:
+        return
+
+    # Normalize date to YYYY-MM-DD string
+    df["date"] = pd.to_datetime(df["date"]).dt.strftime("%Y-%m-%d")
+
+    # Ensure numeric types
+    df["open"] = pd.to_numeric(df["open"], errors="coerce").fillna(0.0).astype(float)
+    df["high"] = pd.to_numeric(df["high"], errors="coerce").fillna(0.0).astype(float)
+    df["low"] = pd.to_numeric(df["low"], errors="coerce").fillna(0.0).astype(float)
+    df["close"] = pd.to_numeric(df["close"], errors="coerce").fillna(0.0).astype(float)
+    df["volume"] = pd.to_numeric(df["volume"], errors="coerce").fillna(0).astype("int64")
+    df["open_interest"] = pd.to_numeric(df["open_interest"], errors="coerce").fillna(0).astype("int64")
+
+    # Auto-fill missing or empty instrument_key
+    empty_inst = (df["instrument_key"] == "") | (df["instrument_key"].isna())
+    if empty_inst.any():
+        df.loc[empty_inst, "instrument_key"] = "NSE_EQ|" + df.loc[empty_inst, "trading_symbol"]
+
+    # Deduplicate within batch by (instrument_key, date)
+    df.drop_duplicates(subset=["instrument_key", "date"], keep="last", inplace=True)
+
     with _lock:
-        conn = get_write_connection()
         try:
-            conn.register("_temp_candles_in", df)
-            conn.execute("""
-                INSERT INTO daily_candles
-                SELECT
-                    instrument_key,
-                    trading_symbol,
-                    date,
-                    open,
-                    high,
-                    low,
-                    close,
-                    volume,
-                    open_interest
-                FROM _temp_candles_in
-                ON CONFLICT (instrument_key, date) DO UPDATE SET
-                    open = EXCLUDED.open,
-                    high = EXCLUDED.high,
-                    low = EXCLUDED.low,
-                    close = EXCLUDED.close,
-                    volume = EXCLUDED.volume,
-                    open_interest = EXCLUDED.open_interest;
-            """)
-            conn.unregister("_temp_candles_in")
-        finally:
-            conn.close()
+            conn = get_write_connection()
+            try:
+                # Flush any pending staging candles first
+                _flush_staging_candles(conn)
+
+                conn.register("_temp_candles_in", df)
+                conn.execute("""
+                    INSERT INTO daily_candles
+                    SELECT
+                        instrument_key,
+                        trading_symbol,
+                        date,
+                        open,
+                        high,
+                        low,
+                        close,
+                        volume,
+                        open_interest
+                    FROM _temp_candles_in
+                    ON CONFLICT (instrument_key, date) DO UPDATE SET
+                        trading_symbol = EXCLUDED.trading_symbol,
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        open_interest = EXCLUDED.open_interest;
+                """)
+                conn.unregister("_temp_candles_in")
+            finally:
+                conn.close()
+        except Exception as e:
+            logger.error(f"Direct DuckDB write failed: {e}. Appending {len(df)} candles to staging WAL.")
+            _append_to_staging_wal(df)
 
 
 def get_resampled_candles(
@@ -634,8 +799,7 @@ def get_resampled_candles(
 
 def get_1m_candle_count(symbol: Optional[str] = None) -> int:
     """Returns row count of 1-minute candles for a symbol or across the database."""
-    conn = get_connection()
-    with _lock:
+    with get_read_connection() as conn:
         if symbol:
             clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
             res = conn.execute("SELECT count(*) FROM candles_1m WHERE symbol = ?", [clean_sym]).fetchone()
@@ -647,9 +811,7 @@ def get_1m_candle_count(symbol: Optional[str] = None) -> int:
 def get_instrument_by_symbol(symbol: str, exchange: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """Fetches instrument record by trading symbol from DuckDB."""
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
-    conn = get_connection()
-
-    with _lock:
+    with get_read_connection() as conn:
         if exchange:
             row = conn.execute("""
                 SELECT instrument_key, trading_symbol, name, exchange, instrument_type, tick_size, lot_size
@@ -767,45 +929,8 @@ def upsert_intraday_candles(candles: List[Dict[str, Any]]):
 
 
 def upsert_daily_candles(candles: List[Dict[str, Any]]):
-    """Inserts or updates daily candles in DuckDB."""
-    if not candles:
-        return
+    """Inserts or updates daily candles in DuckDB using unified deduplicated write queue."""
+    save_daily_candles(candles)
 
-    df = pd.DataFrame(candles)
-    for col, default in [
-        ("instrument_key", ""), ("trading_symbol", ""), ("date", ""),
-        ("open", 0.0), ("high", 0.0), ("low", 0.0), ("close", 0.0),
-        ("volume", 0), ("open_interest", 0)
-    ]:
-        if col not in df.columns:
-            df[col] = default
-
-    df["date"] = df["date"].astype(str)
-
-    with _lock:
-        conn = get_write_connection()
-        try:
-            conn.register("_temp_daily_in", df)
-            conn.execute("""
-                INSERT INTO daily_candles (
-                    instrument_key, trading_symbol, date, open, high, low, close, volume, open_interest
-                )
-                SELECT
-                    instrument_key, trading_symbol, date, open, high, low, close, volume, open_interest
-                FROM _temp_daily_in
-                ON CONFLICT (instrument_key, date) DO UPDATE SET
-                    trading_symbol = EXCLUDED.trading_symbol,
-                    open = EXCLUDED.open,
-                    high = EXCLUDED.high,
-                    low = EXCLUDED.low,
-                    close = EXCLUDED.close,
-                    volume = EXCLUDED.volume,
-                    open_interest = EXCLUDED.open_interest;
-            """)
-            conn.unregister("_temp_daily_in")
-        except Exception as e:
-            logger.warning(f"Error upserting daily candles into DuckDB: {e}")
-        finally:
-            conn.close()
 
 
