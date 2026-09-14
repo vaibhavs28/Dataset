@@ -26,6 +26,7 @@ import logging
 import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
 
@@ -35,6 +36,13 @@ import parquet_loader
 import screener_engine
 import quadrant_image_generator
 import alert_engine
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def get_now_ist() -> datetime:
+    """Returns current datetime localized to Indian Standard Time (IST) as naive datetime for math."""
+    return datetime.now(IST).replace(tzinfo=None)
 
 # Configure logger
 logging.basicConfig(
@@ -46,7 +54,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger("auto_75m_broadcaster")
 
-# 75-Minute Candle Close Times in IST (hours, minutes)
+# Standard NSE 75-minute candle close times (IST)
 CANDLE_CLOSE_SCHEDULE = [
     (10, 30, "Candle 1 (09:15 - 10:30)"),
     (11, 45, "Candle 2 (10:30 - 11:45)"),
@@ -60,11 +68,13 @@ HISTORY_FILE = config.DATA_DIR / "broadcast_history.json"
 
 def get_75m_schedule_status(now: Optional[datetime] = None) -> Dict[str, Any]:
     """
-    Computes current status relative to NSE 75-minute candle closes.
+    Computes current status relative to NSE 75-minute candle closes in Indian Standard Time (IST).
     Returns countdown, next candle close time, active candle label, and market open status.
     """
     if now is None:
-        now = datetime.now()
+        now = get_now_ist()
+    elif now.tzinfo is not None:
+        now = now.astimezone(IST).replace(tzinfo=None)
 
     is_weekday = (now.weekday() < 5)  # Mon=0, Fri=4
     market_open_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
@@ -77,16 +87,17 @@ def get_75m_schedule_status(now: Optional[datetime] = None) -> Dict[str, Any]:
     active_slot_label = ""
     candle_idx = 0
 
-    for i, (h, m, label) in enumerate(CANDLE_CLOSE_SCHEDULE):
-        c_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
-        if now < c_time:
-            next_close = c_time
-            active_slot_label = label
-            candle_idx = i + 1
-            break
+    if is_weekday and now < market_close_time:
+        for i, (h, m, label) in enumerate(CANDLE_CLOSE_SCHEDULE):
+            c_time = now.replace(hour=h, minute=m, second=0, microsecond=0)
+            if now < c_time:
+                next_close = c_time
+                active_slot_label = label
+                candle_idx = i + 1
+                break
 
     # If all candles passed today or weekend, next close is next trading day 10:30
-    if next_close is None or not is_weekday:
+    if next_close is None:
         days_ahead = 1
         if now.weekday() == 4:  # Friday -> Monday
             days_ahead = 3
@@ -98,6 +109,8 @@ def get_75m_schedule_status(now: Optional[datetime] = None) -> Dict[str, Any]:
             days_ahead = 1
 
         next_date = now + timedelta(days=days_ahead)
+        while next_date.weekday() >= 5:  # Skip any weekend
+            next_date += timedelta(days=1)
         next_close = next_date.replace(hour=10, minute=30, second=0, microsecond=0)
         active_slot_label = "Next Trading Session Candle 1 (10:30 IST)"
         candle_idx = 1
@@ -220,7 +233,7 @@ def run_75m_waterfall_broadcast(
     for every qualifying stock, and dispatches multi-channel alerts.
     When sync_first is True, updates database with the latest 75m intraday candles from Upstox first.
     """
-    start_time = datetime.now()
+    start_time = get_now_ist()
     if candle_label is None:
         sched = get_75m_schedule_status(start_time)
         candle_label = sched.get("next_candle_label", "Intraday 75m Scan")
@@ -371,7 +384,7 @@ def run_daemon(
 
     while True:
         try:
-            now = datetime.now()
+            now = get_now_ist()
             is_weekday = (now.weekday() < 5)
 
             if is_weekday:

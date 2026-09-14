@@ -451,12 +451,20 @@ def render_alert_page(theme: str = "dark"):
             st.caption(f"💰 Current LTP for **{sel_sym}**: **₹{curr_ltp:,.2f}**")
 
             alert_category = st.selectbox(
-                "2. Alert Type:",
+                "2. Alert Category:",
                 [
-                    "🎯 Static Price Cross (Target ₹)",
-                    "📐 Trendline / Support & Resistance",
-                    "⚡ Dynamic Indicator (EMA, RSI, SuperTrend, Hilega Milega)",
-                    "🌊 Positional Scan #364 (Stage 4 Full Alignment)"
+                    "🎯 Price Target & Channel Range",
+                    "📐 Trendline & S/R Breakouts",
+                    "📈 Price vs Moving Average (20, 50, 200 EMA)",
+                    "⚡ Moving Average Crosses (Golden/Death Cross, 9x20)",
+                    "📊 RSI Oscillators (Level Cross, Oversold/Overbought)",
+                    "📉 MACD Momentum (Signal Cross, Zero Line)",
+                    "🧭 SuperTrend Trend Flip (Green / Red Direction)",
+                    "🎯 Bollinger Bands (Upper/Lower Breakout, Squeeze)",
+                    "🏛️ Weekly CPR & Pivots (R1 Breakout, S1, 0.5 Support)",
+                    "🚀 Volume Surge & Spike (2x/3x 20-day Volume)",
+                    "⚡ Hilega-Milega Setup (NK Sir Rule)",
+                    "🌊 Positional Scan #364 (Stage 4 Waterfall)"
                 ],
                 key="new_alert_type_choice"
             )
@@ -464,17 +472,29 @@ def render_alert_page(theme: str = "dark"):
         with c_col2:
             cond_dict = {}
 
-            if "Static Price" in alert_category:
+            # 1. PRICE TARGET & CHANNEL
+            if "Price Target & Channel" in alert_category:
                 atype_val = "STATIC_PRICE"
-                p_sub1, p_sub2 = st.columns(2)
-                with p_sub1:
-                    op = st.selectbox("Condition Operator:", [">= (Crosses Above)", "<= (Crosses Below)", "touches (Within 0.5%)"], key="new_p_op")
-                    op_code = ">=" if ">=" in op else ("<=" if "<=" in op else "touches")
-                    cond_dict["operator"] = op_code
-                with p_sub2:
-                    tgt = st.number_input("Target Price (₹):", min_value=1.0, max_value=100000.0, value=float(round(curr_ltp * 1.02, 2)), step=1.0, key="new_p_tgt")
-                    cond_dict["target_price"] = tgt
+                p_mode = st.radio("Price Mode:", ["Single Price Target", "Price Channel Range"], horizontal=True, key="new_p_mode")
+                if "Single" in p_mode:
+                    p_sub1, p_sub2 = st.columns(2)
+                    with p_sub1:
+                        op = st.selectbox("Trigger Condition:", [">= (Crosses Above)", "<= (Crosses Below)", "touches (Within 0.5%)"], key="new_p_op")
+                        cond_dict["operator"] = ">=" if ">=" in op else ("<=" if "<=" in op else "touches")
+                    with p_sub2:
+                        tgt = st.number_input("Target Price (₹):", min_value=0.1, max_value=500000.0, value=float(round(curr_ltp * 1.02, 2)), step=1.0, key="new_p_tgt")
+                        cond_dict["target_price"] = tgt
+                else:
+                    ch_sub1, ch_sub2, ch_sub3 = st.columns(3)
+                    with ch_sub1:
+                        ch_op = st.selectbox("Channel Action:", ["Enters Channel (Inside Range)", "Exits Channel (Outside Range)"], key="new_ch_op")
+                        cond_dict["operator"] = "channel_enter" if "Enters" in ch_op else "channel_exit"
+                    with ch_sub2:
+                        cond_dict["price_low"] = st.number_input("Channel Lower (₹):", min_value=0.1, max_value=500000.0, value=float(round(curr_ltp * 0.98, 2)), step=1.0, key="new_ch_low")
+                    with ch_sub3:
+                        cond_dict["price_high"] = st.number_input("Channel Upper (₹):", min_value=0.1, max_value=500000.0, value=float(round(curr_ltp * 1.02, 2)), step=1.0, key="new_ch_high")
 
+            # 2. TRENDLINE & S/R BREAKOUTS
             elif "Trendline" in alert_category:
                 atype_val = "TRENDLINE_SR"
                 sr_mode = st.radio("Trendline Mode:", ["Horizontal Support / Resistance", "Sloping Trendline"], horizontal=True, key="new_sr_mode")
@@ -482,55 +502,194 @@ def render_alert_page(theme: str = "dark"):
                     cond_dict["sr_type"] = "Horizontal"
                     sr_c1, sr_c2 = st.columns(2)
                     with sr_c1:
-                        kind = st.selectbox("Level Kind:", ["Resistance (Breakout Above)", "Support (Breakdown Below)"], key="new_sr_kind")
-                        cond_dict["kind"] = "Resistance" if "Resistance" in kind else "Support"
+                        kind = st.selectbox("Action Kind:", [
+                            "Resistance Breakout (Above Level)",
+                            "Support Breakdown (Below Level)",
+                            "Support Bounce (Dips to Level & Recovers)",
+                            "Resistance Rejection (Touches Level & Drops)"
+                        ], key="new_sr_kind")
+                        if "Resistance Breakout" in kind: cond_dict["kind"] = "Resistance"
+                        elif "Support Breakdown" in kind: cond_dict["kind"] = "Support"
+                        elif "Support Bounce" in kind: cond_dict["kind"] = "Support_Bounce"
+                        else: cond_dict["kind"] = "Resistance_Rejection"
                     with sr_c2:
-                        lvl = st.number_input("Level Price (₹):", value=float(curr_ltp), step=1.0, key="new_sr_lvl")
-                        cond_dict["level"] = lvl
+                        cond_dict["level"] = st.number_input("Level Price (₹):", value=float(curr_ltp), step=1.0, key="new_sr_lvl")
                 else:
                     cond_dict["sr_type"] = "Sloping_Trendline"
+                    tl_dir = st.selectbox("Trendline Direction:", ["Breakout Above (Upper Trendline)", "Breakdown Below (Lower Trendline)"], key="new_tl_dir")
+                    cond_dict["direction"] = "Breakout_Above" if "Breakout" in tl_dir else "Breakdown_Below"
                     tl1, tl2, tl3 = st.columns(3)
                     with tl1:
                         cond_dict["price1"] = st.number_input("Point 1 Price (₹):", value=float(round(curr_ltp * 0.95, 2)), key="new_tl_p1")
                     with tl2:
                         cond_dict["price2"] = st.number_input("Point 2 Price (₹):", value=float(curr_ltp), key="new_tl_p2")
                     with tl3:
-                        cond_dict["bars_span"] = st.number_input("Bars between points:", min_value=2, max_value=200, value=20, key="new_tl_bars")
+                        cond_dict["bars_span"] = st.number_input("Bars Between Points:", min_value=2, max_value=200, value=20, key="new_tl_bars")
 
-            elif "Dynamic Indicator" in alert_category:
+            # 3. PRICE VS MOVING AVERAGE
+            elif "Price vs Moving Average" in alert_category:
                 atype_val = "INDICATOR"
-                i_rule = st.selectbox("Select Indicator Setup:", [
-                    "EMA Crossover (e.g. 9 EMA > 20 EMA)",
-                    "RSI Level Threshold (e.g. RSI > 60)",
-                    "Hilega Milega Bullish Cross (EMA3 > WMA21 & RSI>=50)",
-                    "SuperTrend Bullish Flip (Reverses to Bullish)"
-                ], key="new_ind_rule")
-                
-                cond_dict["timeframe"] = st.selectbox("Indicator Timeframe:", ["Daily", "Weekly", "75-Min"], key="new_ind_tf")
+                cond_dict["rule"] = "Price_EMA"
+                pm_c1, pm_c2, pm_c3 = st.columns(3)
+                with pm_c1:
+                    cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "Weekly", "75-Min", "Monthly"], key="new_pm_tf")
+                with pm_c2:
+                    ema_choice = st.selectbox("Moving Average:", ["20 EMA", "50 EMA", "100 EMA", "200 EMA", "9 EMA", "Custom EMA"], key="new_pm_choice")
+                    if "Custom" in ema_choice:
+                        cond_dict["span"] = int(st.number_input("Custom Span:", min_value=2, max_value=500, value=20, key="new_pm_custom"))
+                    else:
+                        cond_dict["span"] = int(ema_choice.split(" ")[0])
+                with pm_c3:
+                    p_dir = st.selectbox("Condition:", ["Crosses Above", "Crosses Below"], key="new_pm_dir")
+                    cond_dict["direction"] = "crosses_above" if "Above" in p_dir else "crosses_below"
 
-                if "EMA Crossover" in i_rule:
-                    cond_dict["rule"] = "EMA_Cross"
-                    em1, em2 = st.columns(2)
-                    with em1:
-                        cond_dict["fast_ema"] = int(st.number_input("Fast EMA Span:", min_value=2, max_value=100, value=9, key="new_ind_f_ema"))
-                    with em2:
-                        cond_dict["slow_ema"] = int(st.number_input("Slow EMA Span:", min_value=5, max_value=500, value=20, key="new_ind_s_ema"))
-                elif "RSI Level" in i_rule:
-                    cond_dict["rule"] = "RSI_Level"
-                    r1, r2, r3 = st.columns(3)
-                    with r1:
-                        cond_dict["span"] = int(st.number_input("RSI Span:", min_value=2, max_value=100, value=14, key="new_ind_rsi_span"))
-                    with r2:
-                        cond_dict["operator"] = st.selectbox("Operator:", ["> (Crosses Above)", "< (Crosses Below)"], key="new_ind_rsi_op").split(" ")[0]
-                    with r3:
-                        cond_dict["threshold"] = float(st.number_input("Threshold Value:", min_value=0.0, max_value=100.0, value=60.0, key="new_ind_rsi_thresh"))
-                elif "Hilega" in i_rule:
-                    cond_dict["rule"] = "Hilega_Milega"
-                    st.caption("Triggers when RSI(9) EMA(3) crosses above WMA(21) and RSI is above 50 (NK Sir rule).")
-                else:
-                    cond_dict["rule"] = "SuperTrend"
-                    st.caption("Triggers immediately when 10-period, 3.0 multiplier SuperTrend flips from Bearish to Bullish.")
+            # 4. MOVING AVERAGE CROSSES
+            elif "Moving Average Crosses" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "EMA_Cross"
+                mc_c1, mc_c2, mc_c3 = st.columns(3)
+                with mc_c1:
+                    cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "Weekly", "75-Min"], key="new_mc_tf")
+                with mc_c2:
+                    cross_preset = st.selectbox("EMA Pair:", [
+                        "9 EMA x 20 EMA (Short-term)",
+                        "20 EMA x 50 EMA (Medium-term)",
+                        "50 EMA x 200 EMA (Golden / Death Cross)",
+                        "Custom Pair"
+                    ], key="new_mc_preset")
+                    if "9 EMA" in cross_preset:
+                        cond_dict["fast_ema"], cond_dict["slow_ema"] = 9, 20
+                    elif "20 EMA" in cross_preset:
+                        cond_dict["fast_ema"], cond_dict["slow_ema"] = 20, 50
+                    elif "50 EMA" in cross_preset:
+                        cond_dict["fast_ema"], cond_dict["slow_ema"] = 50, 200
+                    else:
+                        f_col, s_col = st.columns(2)
+                        with f_col: cond_dict["fast_ema"] = int(st.number_input("Fast EMA:", value=9, min_value=2, max_value=100, key="new_mc_fast"))
+                        with s_col: cond_dict["slow_ema"] = int(st.number_input("Slow EMA:", value=20, min_value=5, max_value=500, key="new_mc_slow"))
+                with mc_c3:
+                    c_dir = st.selectbox("Cross Type:", ["Bullish Crossover (Fast > Slow)", "Bearish Crossunder (Fast < Slow)"], key="new_mc_dir")
+                    cond_dict["direction"] = "bullish_cross" if "Bullish" in c_dir else "bearish_cross"
 
+            # 5. RSI OSCILLATOR ALERTS
+            elif "RSI Oscillators" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "RSI_Level"
+                r_c1, r_c2, r_c3 = st.columns(3)
+                with r_c1:
+                    cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "Weekly", "75-Min"], key="new_rsi_tf")
+                with r_c2:
+                    cond_dict["span"] = int(st.selectbox("RSI Period:", [14, 9, 21, 7], index=0, key="new_rsi_period"))
+                with r_c3:
+                    rsi_type = st.selectbox("Trigger Rule:", [
+                        "Crosses Above Threshold",
+                        "Crosses Below Threshold",
+                        "Enters Oversold Zone (< 30)",
+                        "Exits Oversold Zone (> 30)",
+                        "Enters Overbought Zone (> 70)",
+                        "Exits Overbought Zone (< 70)"
+                    ], key="new_rsi_rule_choice")
+
+                if "Above" in rsi_type:
+                    cond_dict["operator"] = "crosses_above"
+                    cond_dict["threshold"] = float(st.number_input("Threshold Value:", min_value=0.0, max_value=100.0, value=60.0, key="new_rsi_th_ab"))
+                elif "Below" in rsi_type:
+                    cond_dict["operator"] = "crosses_below"
+                    cond_dict["threshold"] = float(st.number_input("Threshold Value:", min_value=0.0, max_value=100.0, value=40.0, key="new_rsi_th_bl"))
+                elif "Enters Oversold" in rsi_type: cond_dict["operator"] = "enters_oversold"
+                elif "Exits Oversold" in rsi_type: cond_dict["operator"] = "exits_oversold"
+                elif "Enters Overbought" in rsi_type: cond_dict["operator"] = "enters_overbought"
+                else: cond_dict["operator"] = "exits_overbought"
+
+            # 6. MACD MOMENTUM ALERTS
+            elif "MACD" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "MACD"
+                m_c1, m_c2 = st.columns(2)
+                with m_c1:
+                    cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "Weekly", "75-Min"], key="new_macd_tf")
+                with m_c2:
+                    m_signal = st.selectbox("MACD Signal:", [
+                        "Bullish Crossover (MACD crosses above Signal Line)",
+                        "Bearish Crossunder (MACD crosses below Signal Line)",
+                        "Zero Line Cross Above (Crosses above 0 into Bullish)",
+                        "Zero Line Cross Below (Crosses below 0 into Bearish)"
+                    ], key="new_macd_signal_choice")
+                    if "Bullish Crossover" in m_signal: cond_dict["macd_type"] = "bullish_cross"
+                    elif "Bearish Crossunder" in m_signal: cond_dict["macd_type"] = "bearish_cross"
+                    elif "Zero Line Cross Above" in m_signal: cond_dict["macd_type"] = "zero_cross_above"
+                    else: cond_dict["macd_type"] = "zero_cross_below"
+                cond_dict["fast"], cond_dict["slow"], cond_dict["signal"] = 12, 26, 9
+
+            # 7. SUPERTREND TREND FLIP
+            elif "SuperTrend" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "SuperTrend"
+                st_c1, st_c2, st_c3 = st.columns(3)
+                with st_c1:
+                    cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "Weekly", "75-Min"], key="new_st_tf")
+                with st_c2:
+                    st_dir_choice = st.selectbox("Trend Flip:", ["Bullish Flip (Turns Green / +1 🟢)", "Bearish Flip (Turns Red / -1 🔴)"], key="new_st_dir")
+                    cond_dict["direction"] = "bullish_flip" if "Bullish" in st_dir_choice else "bearish_flip"
+                with st_c3:
+                    cond_dict["period"], cond_dict["multiplier"] = 10, 3.0
+                    st.caption("Standard ATR Period: **10**, Multiplier: **3.0**")
+
+            # 8. BOLLINGER BANDS
+            elif "Bollinger Bands" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "Bollinger_Bands"
+                bb_c1, bb_c2 = st.columns(2)
+                with bb_c1:
+                    cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "Weekly", "75-Min"], key="new_bb_tf")
+                with bb_c2:
+                    bb_event = st.selectbox("Event:", [
+                        "Upper Band Breakout (Price crosses above Upper Band)",
+                        "Lower Band Breakdown (Price crosses below Lower Band)",
+                        "Bollinger Band Squeeze (Volatility Contraction)"
+                    ], key="new_bb_event")
+                    if "Upper" in bb_event: cond_dict["bb_type"] = "upper_cross"
+                    elif "Lower" in bb_event: cond_dict["bb_type"] = "lower_cross"
+                    else:
+                        cond_dict["bb_type"] = "squeeze"
+                        cond_dict["bandwidth_threshold"] = 0.05
+                cond_dict["period"], cond_dict["std"] = 20, 2.0
+
+            # 9. WEEKLY CPR & PIVOTS
+            elif "Weekly CPR" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "Weekly_CPR"
+                cpr_event = st.selectbox("Weekly CPR Level Event:", [
+                    "R1 Resistance Breakout (Take Profit Trigger)",
+                    "S1 Support Breakdown (Stop Loss Trigger)",
+                    "Central Pivot (P) Cross Above",
+                    "0.5 Support Touched ([P + S1] / 2 Stop Loss)"
+                ], key="new_cpr_event")
+                if "R1" in cpr_event: cond_dict["cpr_level"] = "R1"
+                elif "S1" in cpr_event: cond_dict["cpr_level"] = "S1"
+                elif "Central Pivot" in cpr_event: cond_dict["cpr_level"] = "P"
+                else: cond_dict["cpr_level"] = "S_05"
+                st.caption("Automatically recalculates dynamic Weekly CPR levels every Monday based on prior completed week's OHLC.")
+
+            # 10. VOLUME SURGE
+            elif "Volume Surge" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "Volume_Surge"
+                vs_c1, vs_c2 = st.columns(2)
+                with vs_c1:
+                    cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "75-Min"], key="new_vs_tf")
+                with vs_c2:
+                    v_mult = st.selectbox("Volume Surge Threshold:", ["2.0x 20-day Average Volume", "3.0x 20-day Average Volume", "5.0x 20-day Average Volume"], key="new_vs_mult")
+                    cond_dict["volume_multiplier"] = float(v_mult.split("x")[0])
+
+            # 11. HILEGA-MILEGA
+            elif "Hilega-Milega" in alert_category:
+                atype_val = "INDICATOR"
+                cond_dict["rule"] = "Hilega_Milega"
+                cond_dict["timeframe"] = st.selectbox("Timeframe:", ["Daily", "Weekly", "75-Min"], key="new_hm_tf")
+                st.info("Triggers when RSI(9) EMA(3) crosses above WMA(21) and RSI is above 50 (NK Sir Rule).")
+
+            # 12. WATERFALL STAGE 4
             else:
                 atype_val = "WATERFALL_STAGE4"
                 st.info("🌊 Triggers automatically when this stock satisfies all 4 tiers of the Chartink Positional Scan (Monthly + Weekly + Daily + 75-Min)!")
