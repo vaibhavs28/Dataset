@@ -1064,28 +1064,30 @@ def main():
                 show_volume = st.checkbox("Show Volume", value=True)
 
             today_str = datetime.today().strftime("%Y-%m-%d")
-            latest_d = database.get_latest_candle_date(sel_stock)
 
-            # Check if stock is missing today's candle or missing historical data
-            if force_sync or not latest_d:
-                with st.spinner(f"⚡ Syncing complete market history for {sel_stock} from Upstox (2022 to today)..."):
-                    downloader.sync_symbol_history(sel_stock, from_date="2022-01-01", to_date=today_str)
-            elif latest_d < today_str:
-                with st.spinner(f"⚡ Syncing latest market data for {sel_stock}..."):
-                    try:
-                        import batch_downloader
-                        res = batch_downloader.sync_live_market_batch(symbols=[sel_stock])
-                        if not res.get("synced"):
-                            downloader.sync_symbol_history(sel_stock, from_date=latest_d, to_date=today_str)
-                    except Exception:
-                        downloader.sync_symbol_history(sel_stock, from_date=latest_d, to_date=today_str)
-
-            # Fetch multi-timeframe candle data for selected stock
+            # 1. Instantly load cached multi-timeframe candles from ultra-fast DuckDB (sub-20ms)
             daily_candles = database.get_candles_df(sel_stock)
 
-            # Extra fallback: if daily_candles is still empty, attempt direct historical fetch
+            # 2. Only if the user explicitly clicks 'Sync Live' button, perform on-demand sync
+            if force_sync:
+                if not is_live_hours:
+                    st.info(f"ℹ️ Indian equity markets are currently closed (Mon-Fri 09:15 - 15:30 IST). Showing latest recorded session data.")
+                else:
+                    with st.spinner(f"⚡ Syncing live market data for {sel_stock}..."):
+                        try:
+                            import batch_downloader
+                            res = batch_downloader.sync_live_market_batch(symbols=[sel_stock])
+                            if not res.get("synced"):
+                                latest_d = database.get_latest_candle_date(sel_stock)
+                                downloader.sync_symbol_history(sel_stock, from_date=latest_d or "2022-01-01", to_date=today_str)
+                            daily_candles = database.get_candles_df(sel_stock)
+                            st.success(f"✓ Synced latest market data for {sel_stock}")
+                        except Exception as e:
+                            st.warning(f"Live sync note: {e}")
+
+            # 3. Only if stock has zero data in local database (new unseeded stock), fetch history once
             if daily_candles.empty:
-                with st.spinner(f"📥 Fetching authentic candles for {sel_stock} from Upstox..."):
+                with st.spinner(f"📥 Downloading historical candles for {sel_stock} from Upstox (first-time setup)..."):
                     downloader.sync_symbol_history(sel_stock, from_date="2022-01-01", to_date=today_str)
                     daily_candles = database.get_candles_df(sel_stock)
 
@@ -1425,7 +1427,11 @@ def main():
             clean_sym = term_stock.upper().replace("-EQ", "").replace(".NS", "")
             st.write("")
             st.write("")
-            st.link_button(f"🚀 Open {clean_sym} in TradingView Web", f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}", use_container_width=True)
+            btn_term_c1, btn_term_c2 = st.columns([1, 1.2])
+            with btn_term_c1:
+                term_force_sync = st.button("🔄 Sync Live", key="btn_term_sync_live", use_container_width=True, help="Force sync live market ticks for this stock")
+            with btn_term_c2:
+                st.link_button(f"🚀 TV Web", f"https://in.tradingview.com/chart/?symbol=NSE:{clean_sym}", use_container_width=True)
 
         # Date Range Controls Row
         from datetime import date, timedelta
@@ -1545,11 +1551,19 @@ def main():
         for i, csym in enumerate(chip_symbols):
             chip_cols[i].button(csym, key=f"chip_{csym}", use_container_width=True, on_click=_set_term_sym, args=(csym,))
 
-        # Pull today's live Upstox ticks if market is active/recent
-        downloader.sync_live_market_candles(term_stock)
-
-        # Load data for term_stock
+        # 1. Instantly load cached candles for term_stock from ultra-fast DuckDB (sub-20ms)
         term_candles = database.get_candles_df(term_stock)
+
+        # 2. Sync live ticks only if user explicitly requested via 'Sync Live' button
+        if term_force_sync:
+            if not is_live_hours:
+                st.info(f"ℹ️ Indian equity markets are currently closed (Mon-Fri 09:15 - 15:30 IST). Showing latest recorded session data.")
+            else:
+                with st.spinner(f"⚡ Syncing live market candles for {term_stock}..."):
+                    downloader.sync_live_market_candles(term_stock)
+                    term_candles = database.get_candles_df(term_stock)
+
+        # 3. First-time setup fallback if stock has zero cached candles
         if term_candles.empty:
             if term_stock in parquet_symbols:
                 with st.spinner(f"Loading {term_stock} from Parquet dataset..."):
@@ -1557,7 +1571,7 @@ def main():
                     term_candles = database.get_candles_df(term_stock)
 
             if term_candles.empty:
-                with st.spinner(f"📥 Downloading historical candles for {term_stock} from Upstox..."):
+                with st.spinner(f"📥 Downloading historical candles for {term_stock} from Upstox (first-time setup)..."):
                     downloader.sync_symbol_history(term_stock, from_date="2022-01-01")
                     term_candles = database.get_candles_df(term_stock)
 
