@@ -184,6 +184,37 @@ def _init_schema(conn: duckdb.DuckDBPyConnection):
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_intraday_uniq ON intraday_candles (instrument_key, timeframe, timestamp);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_daily_sym_date ON daily_candles (trading_symbol, date);")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_intraday_sym_tf_ts ON intraday_candles (trading_symbol, timeframe, timestamp);")
+        # Auto-heal: If stocks table has pre-2020 data and daily_candles does not have them, merge them
+        has_stocks = conn.execute("SELECT count(*) FROM information_schema.tables WHERE table_name = 'stocks'").fetchone()[0] > 0
+        if has_stocks:
+            min_daily = conn.execute("SELECT min(date) FROM daily_candles").fetchone()[0]
+            if not min_daily or str(min_daily) >= '2020-01-01':
+                conn.execute("""
+                    INSERT INTO daily_candles (
+                        instrument_key, trading_symbol, date, open, high, low, close, volume, open_interest
+                    )
+                    SELECT
+                        'NSE_EQ|' || s.ticker AS instrument_key,
+                        s.ticker AS trading_symbol,
+                        strftime(s.date, '%Y-%m-%d') AS date,
+                        arg_min(s.open, s.datetime) AS open,
+                        MAX(s.high) AS high,
+                        MIN(s.low) AS low,
+                        arg_max(s.close, s.datetime) AS close,
+                        CAST(SUM(s.volume) AS BIGINT) AS volume,
+                        0 AS open_interest
+                    FROM stocks s
+                    WHERE s.date < '2020-01-01'
+                    GROUP BY s.ticker, s.date
+                    ON CONFLICT (instrument_key, date) DO UPDATE SET
+                        trading_symbol = EXCLUDED.trading_symbol,
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        open_interest = EXCLUDED.open_interest;
+                """)
     except Exception:
         pass
 
@@ -193,13 +224,12 @@ def get_candles_df(
     symbol: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: Optional[int] = 1500
+    limit: Optional[int] = None
 ) -> pd.DataFrame:
     """
     Returns a Pandas DataFrame of daily candles for a given symbol, indexed by DatetimeIndex (date).
     Columns: open, high, low, close, volume, open_interest.
-    Default limit=1500 (~6 years of daily data) keeps memory and transfer payload minimal (<40 KB).
-    Pass limit=None or a start_date to fetch custom or unbounded historical ranges.
+    Returns complete authentic history back to 2017 when limit is None.
     Sub-3ms execution time directly via DuckDB.
     """
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
@@ -252,13 +282,13 @@ def get_candles_df(
 def get_intraday_candles(
     symbol: str,
     timeframe: str = "75m",
-    limit: int = 2500,
+    limit: Optional[int] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None
 ) -> pd.DataFrame:
     """
     Returns authentic pre-calculated intraday candles directly from DuckDB's intraday_candles table.
-    Supports filtering by start_date and end_date (e.g. '2022-01-01' to '2023-12-31').
+    Supports filtering by start_date and end_date (e.g. '2017-10-01' to '2026-09-14').
     Sub-10ms query execution with non-blocking read connection.
     """
     clean_sym = symbol.upper().strip().replace("-EQ", "").replace(".NS", "")
@@ -280,8 +310,8 @@ def get_intraday_candles(
                 params.append(end_ts)
 
             query += " ORDER BY timestamp ASC"
-            if not (start_date or end_date):
-                query += f" LIMIT {limit}"
+            if limit and not (start_date or end_date):
+                query += f" LIMIT {int(limit)}"
             query += ";"
 
             df = conn.execute(query, params).df()
@@ -299,7 +329,7 @@ def get_intraday_candles(
         df["timestamp"] = df["timestamp"].dt.tz_convert("Asia/Kolkata")
 
     df.set_index("timestamp", inplace=True)
-    return df if (start_date or end_date) else df.tail(limit)
+    return df if (start_date or end_date or limit is None) else df.tail(limit)
 
 
 
@@ -652,11 +682,33 @@ def get_resampled_candles(
 
     if has_parquet:
         # Fast, lock-free path: standalone symbol parquet exists.
-        # Use an in-memory DuckDB connection to completely avoid any OS file lock contention on market_data.duckdb!
+        # Check if symbol also has historical 2017-2021 1m data in market_data.duckdb's stocks table
         try:
             conn = duckdb.connect()
+            has_stocks = False
+            try:
+                conn.execute(f"ATTACH '{str(DUCKDB_PATH)}' AS main_db (READ_ONLY);")
+                chk = conn.execute("SELECT 1 FROM main_db.stocks WHERE ticker = ? LIMIT 1;", [clean_sym]).fetchone()
+                if chk:
+                    has_stocks = True
+            except Exception:
+                has_stocks = False
+
             ts_col = "timestamp"
-            from_source = f"read_parquet('{str(symbol_parquet)}')"
+            if has_stocks and (not min_date or str(min_date)[:10] < "2022-01-01"):
+                from_source = f"""
+                    (
+                        SELECT datetime::TIMESTAMP AS timestamp, open, high, low, close, volume 
+                        FROM main_db.stocks 
+                        WHERE ticker = '{clean_sym}'
+                        UNION ALL
+                        SELECT timestamp::TIMESTAMP AS timestamp, open, high, low, close, volume 
+                        FROM read_parquet('{str(symbol_parquet)}')
+                    )
+                """
+            else:
+                from_source = f"read_parquet('{str(symbol_parquet)}')"
+
             where_clause = "WHERE 1=1"
             params = []
 
@@ -673,21 +725,21 @@ def get_resampled_candles(
             """
 
             if min_date:
-                query += f" AND {ts_col} >= ?::TIMESTAMPTZ"
-                min_ts = f"{min_date} 00:00:00+05:30" if len(str(min_date)) == 10 else str(min_date)
+                query += f" AND {ts_col} >= ?::TIMESTAMP"
+                min_ts = f"{min_date} 00:00:00" if len(str(min_date)) == 10 else str(min_date)[:19]
                 params.append(min_ts)
 
             if max_date:
-                query += f" AND {ts_col} <= ?::TIMESTAMPTZ"
-                end_ts = f"{max_date} 23:59:59+05:30" if len(str(max_date)) == 10 else str(max_date)
+                query += f" AND {ts_col} <= ?::TIMESTAMP"
+                end_ts = f"{max_date} 23:59:59" if len(str(max_date)) == 10 else str(max_date)[:19]
                 params.append(end_ts)
 
             query += f"""
                 GROUP BY 1
                 ORDER BY bucket_time DESC
             """
-            if not (min_date or max_date):
-                query += f" LIMIT {limit}"
+            if limit and not (min_date or max_date):
+                query += f" LIMIT {int(limit)}"
             query += ";"
 
             df = conn.execute(query, params).df()
@@ -695,13 +747,13 @@ def get_resampled_candles(
                 df.sort_values("bucket_time", ascending=True, inplace=True)
                 df["bucket_time"] = pd.to_datetime(df["bucket_time"])
                 if df["bucket_time"].dt.tz is None:
-                    df["bucket_time"] = df["bucket_time"].dt.tz_localize("UTC").dt.tz_convert("Asia/Kolkata")
+                    df["bucket_time"] = df["bucket_time"].dt.tz_localize("Asia/Kolkata")
                 else:
                     df["bucket_time"] = df["bucket_time"].dt.tz_convert("Asia/Kolkata")
                 df.set_index("bucket_time", inplace=True)
                 return df
         except Exception as e:
-            logger.error(f"Error resampling from parquet for {symbol} ({interval_minutes}m): {e}", exc_info=True)
+            logger.error(f"Error resampling from parquet/stocks for {symbol} ({interval_minutes}m): {e}", exc_info=True)
 
     # Fallback to market_data.duckdb database connection for stocks or candles_1m tables
     try:

@@ -398,7 +398,7 @@ def ensure_symbol_75m_candles(
     # 1. First query our ultra-fast DuckDB intraday_candles table
     try:
         import duckdb_store
-        df_duck = duckdb_store.get_intraday_candles(sym, timeframe="75m", limit=5000, start_date=start_date, end_date=end_date)
+        df_duck = duckdb_store.get_intraday_candles(sym, timeframe="75m", limit=None, start_date=start_date, end_date=end_date)
         if not df_duck.empty:
             return df_duck
     except Exception as e:
@@ -406,7 +406,7 @@ def ensure_symbol_75m_candles(
 
     # 2. Fall back to SQLite intraday_candles (market_data.db)
     try:
-        df_sql = database.get_intraday_candles_df(sym, "75m", limit=5000, start_date=start_date, end_date=end_date)
+        df_sql = database.get_intraday_candles_df(sym, "75m", limit=15000, start_date=start_date, end_date=end_date)
         if not df_sql.empty and is_genuine_75m_df(df_sql):
             return df_sql
     except Exception as e:
@@ -415,7 +415,7 @@ def ensure_symbol_75m_candles(
     # 3. If local single-stock parquet exists, resample locally via DuckDB
     try:
         import duckdb_store
-        df_resampled = duckdb_store.get_resampled_candles(sym, interval_minutes=75, limit=5000, min_date=start_date, max_date=end_date)
+        df_resampled = duckdb_store.get_resampled_candles(sym, interval_minutes=75, limit=15000, min_date=start_date, max_date=end_date)
         if not df_resampled.empty:
             return df_resampled
     except Exception as e:

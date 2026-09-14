@@ -1205,8 +1205,8 @@ def main():
                         symbol=sel_stock,
                         monthly_df=m_df,
                         weekly_df=w_df,
-                        daily_df=d_df.tail(1500) if len(d_df) > 1500 else d_df,
-                        intra_df=intra_df.tail(2500) if (intra_df is not None and len(intra_df) > 2500) else intra_df,
+                        daily_df=d_df,
+                        intra_df=intra_df.tail(12000) if (intra_df is not None and len(intra_df) > 12000) else intra_df,
                         rsi_span=rsi_span,
                         show_rsi=show_rsi_panel,
                         show_volume=show_volume,
@@ -1445,7 +1445,10 @@ def main():
             date_range_preset = st.selectbox(
                 "📅 Date Range Selection",
                 [
-                    "All Available History",
+                    "All Available History (2017 - Today)",
+                    "2017 to 2021 (Historical Archive)",
+                    "2017 to 2019",
+                    "2020 to 2022",
                     "2022 to 2023",
                     "2023 to 2024",
                     "2024 to 2025",
@@ -1457,7 +1460,16 @@ def main():
                 key="term_date_preset"
             )
 
-        if date_range_preset == "2022 to 2023":
+        if date_range_preset == "2017 to 2021 (Historical Archive)":
+            def_start = date(2017, 10, 1)
+            def_end = date(2021, 12, 31)
+        elif date_range_preset == "2017 to 2019":
+            def_start = date(2017, 10, 1)
+            def_end = date(2019, 12, 31)
+        elif date_range_preset == "2020 to 2022":
+            def_start = date(2020, 1, 1)
+            def_end = date(2022, 12, 31)
+        elif date_range_preset == "2022 to 2023":
             def_start = date(2022, 1, 1)
             def_end = date(2023, 12, 31)
         elif date_range_preset == "2023 to 2024":
@@ -1473,7 +1485,7 @@ def main():
             def_start = today_date - timedelta(days=180)
             def_end = today_date
         elif date_range_preset == "Custom Date Range":
-            def_start = date(2022, 1, 1)
+            def_start = date(2017, 10, 1)
             def_end = today_date
         else:
             def_start = None
@@ -1492,20 +1504,20 @@ def main():
         with dr_c2:
             from_date_input = st.date_input(
                 "From Date",
-                value=st.session_state.get("term_from_date", def_start if def_start else date(2015, 1, 1)),
-                disabled=(date_range_preset == "All Available History"),
+                value=st.session_state.get("term_from_date", def_start if def_start else date(2017, 10, 1)),
+                disabled=date_range_preset.startswith("All Available History"),
                 key="term_from_date"
             )
         with dr_c3:
             to_date_input = st.date_input(
                 "To Date",
                 value=st.session_state.get("term_to_date", def_end if def_end else today_date),
-                disabled=(date_range_preset == "All Available History"),
+                disabled=date_range_preset.startswith("All Available History"),
                 key="term_to_date"
             )
 
-        filter_start = str(from_date_input) if (date_range_preset != "All Available History") else None
-        filter_end = str(to_date_input) if (date_range_preset != "All Available History") else None
+        filter_start = str(from_date_input) if not date_range_preset.startswith("All Available History") else None
+        filter_end = str(to_date_input) if not date_range_preset.startswith("All Available History") else None
 
         # Indicator Toggles Row (Organized Expander)
         with st.expander("🛠️ Indicator Settings & Overlay Toggles", expanded=True):
@@ -1686,7 +1698,7 @@ def main():
                     term_df = term_df[term_df.index <= end_dt]
 
                 # Cap maximum visual candles to keep TradingView chart rendering snappy & avoid browser freeze
-                MAX_TERMINAL_BARS = 3000
+                MAX_TERMINAL_BARS = 15000
                 if len(term_df) > MAX_TERMINAL_BARS:
                     st.caption(f"⚡ Showing latest **{MAX_TERMINAL_BARS:,}** {display_tf} candles from selected date range ({len(term_df):,} total bars available) for instant responsiveness.")
                     term_df = term_df.tail(MAX_TERMINAL_BARS)

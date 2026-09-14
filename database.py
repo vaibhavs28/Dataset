@@ -288,12 +288,12 @@ def get_candles_df(
     symbol: str,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-    limit: Optional[int] = 1500
+    limit: Optional[int] = None
 ) -> pd.DataFrame:
     """
     Fetches daily candles for a symbol as a Pandas DataFrame indexed by Datetime.
     Sorted in ascending order (earliest to latest) via fast DuckDB.
-    Defaults to latest 1,500 candles (<40 KB payload, sub-3ms latency).
+    Returns full authentic history (back to 2017) when limit is None.
     """
     try:
         import duckdb_store
