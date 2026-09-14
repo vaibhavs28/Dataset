@@ -97,6 +97,25 @@ class TestChartinkOCR(unittest.TestCase):
         self.assertEqual(result["logic"], "ALL")
         self.assertGreaterEqual(len(result["clauses"]), 2)
 
+    def test_chartink_ocr_exact_periods_and_numbers(self):
+        text = """
+        [ Latest ] Close Greater than [ Latest ] EMA(close, 50)
+        [ Latest ] Close Greater than Number 100
+        [ Latest ] Close Less than Number 5000
+        [ Latest ] SMA(close, 200) Greater than [ Latest ] EMA(close, 20)
+        """
+        logic, lines = clean_chartink_ocr_text(text)
+        clauses = parse_chartink_query("\n".join(lines))
+        self.assertEqual(len(clauses), 4)
+        self.assertEqual(clauses[0].rhs_indicator, "EMA_50")
+        self.assertEqual(clauses[1].rhs_type, "Number")
+        self.assertEqual(clauses[1].rhs_value, 100.0)
+        self.assertEqual(clauses[2].rhs_type, "Number")
+        self.assertEqual(clauses[2].rhs_value, 5000.0)
+        self.assertEqual(clauses[3].lhs, "SMA_200")
+        self.assertEqual(clauses[3].rhs_indicator, "EMA_20")
+
 
 if __name__ == "__main__":
     unittest.main()
+

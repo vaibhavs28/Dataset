@@ -468,6 +468,7 @@ def render_screener_page(theme: str = "dark"):
                 }
                 for c in preset_cfg.clauses
             ]
+            st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
 
         # 1. Chartink Scanner Screenshot-to-Scanner Uploader (OCR Vision Engine)
         with st.expander("📸 **Upload Chartink Scanner Screenshot (Auto-Create Scanner)**", expanded=True):
@@ -491,41 +492,91 @@ def render_screener_page(theme: str = "dark"):
 
             with scr_col2:
                 if uploaded_scr is not None:
-                    with st.spinner("🤖 Scanning and extracting Chartink conditions via OCR..."):
-                        ocr_data = parse_chartink_screenshot(uploaded_scr)
+                    scr_cache_key = f"scr_ocr_{uploaded_scr.name}_{uploaded_scr.size}"
+                    if scr_cache_key not in st.session_state:
+                        with st.spinner("🤖 Scanning and extracting Chartink conditions via OCR..."):
+                            st.session_state[scr_cache_key] = parse_chartink_screenshot(uploaded_scr)
 
-                    if ocr_data["success"] and ocr_data["clauses"]:
+                    ocr_data = st.session_state[scr_cache_key]
+
+                    if ocr_data["success"] and (ocr_data["clauses"] or ocr_data["cleaned_lines"]):
                         st.success(f"🎉 Successfully extracted **{len(ocr_data['clauses'])} condition(s)** with **{ocr_data['logic']}** match logic!")
-                        st.markdown("**Detected Scanner Rules from Screenshot:**")
-                        for idx, rule_txt in enumerate(ocr_data["cleaned_lines"], 1):
-                            st.markdown(f"• `Rule #{idx}:` **{rule_txt}**")
+                        detected_text = "\n".join(ocr_data["cleaned_lines"]) if ocr_data["cleaned_lines"] else ocr_data.get("raw_text", "")
+                        st.markdown("**Detected Scanner Rules (Inspect or Tweak below):**")
+                        user_ocr_rules = st.text_area(
+                            "Detected Rules from Screenshot:",
+                            value=detected_text,
+                            height=120,
+                            key=f"ocr_editor_{uploaded_scr.name}_{uploaded_scr.size}",
+                            help="Review or fine-tune detected rules. Any edits will be used when you click 'Create & Run Scanner'."
+                        )
 
                         btn_ocr_1, btn_ocr_2 = st.columns(2)
                         with btn_ocr_1:
                             if st.button("⚡ Create & Run Scanner Now", type="primary", use_container_width=True, key="btn_create_and_run_ocr"):
-                                st.session_state["screener_clauses"] = [
-                                    {
-                                        "timeframe": c.timeframe,
-                                        "lhs": c.lhs,
-                                        "operator": c.operator,
-                                        "rhs_type": c.rhs_type,
-                                        "rhs_indicator": c.rhs_indicator,
-                                        "rhs_value": c.rhs_value,
-                                        "multiplier": c.multiplier
-                                    }
-                                    for c in ocr_data["clauses"]
-                                ]
-                                st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
-                                st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
-                                if ocr_data["logic"] == "ANY":
-                                    st.session_state["pending_logic_select"] = "ANY (OR)"
-                                else:
-                                    st.session_state["pending_logic_select"] = "ALL (AND)"
-                                st.session_state["auto_trigger_custom_scan"] = True
-                                st.rerun()
+                                parsed_user_clauses = parse_chartink_query(user_ocr_rules) if user_ocr_rules.strip() else ocr_data["clauses"]
+                                target_clauses = parsed_user_clauses if parsed_user_clauses else ocr_data["clauses"]
+                                if target_clauses:
+                                    st.session_state["screener_clauses"] = [
+                                        {
+                                            "timeframe": c.timeframe,
+                                            "lhs": c.lhs,
+                                            "operator": c.operator,
+                                            "rhs_type": c.rhs_type,
+                                            "rhs_indicator": c.rhs_indicator,
+                                            "rhs_value": c.rhs_value,
+                                            "multiplier": c.multiplier
+                                        }
+                                        for c in target_clauses
+                                    ]
+                                    st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
+                                    st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
+                                    st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
+                                    if ocr_data["logic"] == "ANY":
+                                        st.session_state["pending_logic_select"] = "ANY (OR)"
+                                    else:
+                                        st.session_state["pending_logic_select"] = "ALL (AND)"
+                                    st.session_state["auto_trigger_custom_scan"] = True
+                                    st.rerun()
 
                         with btn_ocr_2:
                             if st.button("📝 Load into Rule Builder (Edit)", type="secondary", use_container_width=True, key="btn_load_ocr_builder"):
+                                parsed_user_clauses = parse_chartink_query(user_ocr_rules) if user_ocr_rules.strip() else ocr_data["clauses"]
+                                target_clauses = parsed_user_clauses if parsed_user_clauses else ocr_data["clauses"]
+                                if target_clauses:
+                                    st.session_state["screener_clauses"] = [
+                                        {
+                                            "timeframe": c.timeframe,
+                                            "lhs": c.lhs,
+                                            "operator": c.operator,
+                                            "rhs_type": c.rhs_type,
+                                            "rhs_indicator": c.rhs_indicator,
+                                            "rhs_value": c.rhs_value,
+                                            "multiplier": c.multiplier
+                                        }
+                                        for c in target_clauses
+                                    ]
+                                    st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
+                                    st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
+                                    st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
+                                    if ocr_data["logic"] == "ANY":
+                                        st.session_state["pending_logic_select"] = "ANY (OR)"
+                                    else:
+                                        st.session_state["pending_logic_select"] = "ALL (AND)"
+                                    st.rerun()
+
+                    elif ocr_data.get("error"):
+                        st.error(f"⚠️ {ocr_data['error']}")
+                        st.info("💡 **Tip:** If Tesseract is not installed on your server, run `sudo apt-get install -y tesseract-ocr` or paste your rules below.")
+                        manual_rules = st.text_area(
+                            "Type / Paste Chartink Rules directly:",
+                            placeholder="Daily Close > Daily 20 EMA\nDaily RSI(14) > 60",
+                            height=90,
+                            key="manual_rules_fallback"
+                        )
+                        if st.button("⚡ Convert & Run Scanner", type="primary", use_container_width=True, key="btn_run_fallback"):
+                            parsed = parse_chartink_query(manual_rules)
+                            if parsed:
                                 st.session_state["screener_clauses"] = [
                                     {
                                         "timeframe": c.timeframe,
@@ -536,18 +587,13 @@ def render_screener_page(theme: str = "dark"):
                                         "rhs_value": c.rhs_value,
                                         "multiplier": c.multiplier
                                     }
-                                    for c in ocr_data["clauses"]
+                                    for c in parsed
                                 ]
+                                st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
                                 st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
                                 st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
-                                if ocr_data["logic"] == "ANY":
-                                    st.session_state["pending_logic_select"] = "ANY (OR)"
-                                else:
-                                    st.session_state["pending_logic_select"] = "ALL (AND)"
+                                st.session_state["auto_trigger_custom_scan"] = True
                                 st.rerun()
-
-                    elif ocr_data.get("error"):
-                        st.error(f"⚠️ {ocr_data['error']}")
                     else:
                         st.warning("Could not identify specific conditions from the screenshot. Please check the image clarity or paste the query text below.")
                 else:
@@ -589,32 +635,44 @@ def render_screener_page(theme: str = "dark"):
                                 }
                                 for c in parsed_clauses
                             ]
+                            st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
                             st.session_state["last_loaded_preset"] = "🛠️ Custom Screener Builder"
                             st.session_state["pending_preset_select"] = "🛠️ Custom Screener Builder"
                             st.success(f"✅ Successfully converted {len(parsed_clauses)} Chartink rules!")
                             st.rerun()
 
+
         # Condition Builder rows
         clauses = st.session_state.get("screener_clauses", [])
+        c_ver = st.session_state.get("clauses_version", 0)
         to_delete_idx = None
 
         for i, c in enumerate(clauses):
             row_cols = st.columns([1.2, 1.6, 1.4, 1.3, 1.6, 0.6])
+
+            # Dynamically include any custom indicator in options
+            lhs_opts = list(INDICATOR_OPTIONS)
+            if c.get("lhs") and c["lhs"] not in lhs_opts:
+                lhs_opts.append(c["lhs"])
+
+            rhs_opts = list(INDICATOR_OPTIONS)
+            if c.get("rhs_indicator") and c["rhs_indicator"] not in rhs_opts:
+                rhs_opts.append(c["rhs_indicator"])
 
             with row_cols[0]:
                 c["timeframe"] = st.selectbox(
                     f"TF #{i+1}",
                     ["Daily", "Weekly", "Monthly", "75-Min"],
                     index=["Daily", "Weekly", "Monthly", "75-Min"].index(c["timeframe"]) if c["timeframe"] in ["Daily", "Weekly", "Monthly", "75-Min"] else 0,
-                    key=f"c_tf_{i}",
+                    key=f"c_tf_{c_ver}_{i}",
                     label_visibility="collapsed"
                 )
             with row_cols[1]:
                 c["lhs"] = st.selectbox(
                     f"LHS #{i+1}",
-                    INDICATOR_OPTIONS,
-                    index=INDICATOR_OPTIONS.index(c["lhs"]) if c["lhs"] in INDICATOR_OPTIONS else 0,
-                    key=f"c_lhs_{i}",
+                    lhs_opts,
+                    index=lhs_opts.index(c["lhs"]) if c["lhs"] in lhs_opts else 0,
+                    key=f"c_lhs_{c_ver}_{i}",
                     label_visibility="collapsed"
                 )
             with row_cols[2]:
@@ -622,7 +680,7 @@ def render_screener_page(theme: str = "dark"):
                     f"Op #{i+1}",
                     OPERATOR_OPTIONS,
                     index=OPERATOR_OPTIONS.index(c["operator"]) if c["operator"] in OPERATOR_OPTIONS else 0,
-                    key=f"c_op_{i}",
+                    key=f"c_op_{c_ver}_{i}",
                     label_visibility="collapsed"
                 )
             with row_cols[3]:
@@ -630,16 +688,16 @@ def render_screener_page(theme: str = "dark"):
                     f"Type #{i+1}",
                     ["Indicator", "Number"],
                     index=0 if c["rhs_type"] == "Indicator" else 1,
-                    key=f"c_rtype_{i}",
+                    key=f"c_rtype_{c_ver}_{i}",
                     label_visibility="collapsed"
                 )
             with row_cols[4]:
                 if c["rhs_type"] == "Indicator":
                     c["rhs_indicator"] = st.selectbox(
                         f"RHS Ind #{i+1}",
-                        INDICATOR_OPTIONS,
-                        index=INDICATOR_OPTIONS.index(c["rhs_indicator"]) if c["rhs_indicator"] in INDICATOR_OPTIONS else 11,
-                        key=f"c_rind_{i}",
+                        rhs_opts,
+                        index=rhs_opts.index(c["rhs_indicator"]) if c["rhs_indicator"] in rhs_opts else 11,
+                        key=f"c_rind_{c_ver}_{i}",
                         label_visibility="collapsed"
                     )
                 else:
@@ -647,16 +705,17 @@ def render_screener_page(theme: str = "dark"):
                         f"Value #{i+1}",
                         value=float(c.get("rhs_value", 0.0)),
                         step=1.0,
-                        key=f"c_rval_{i}",
+                        key=f"c_rval_{c_ver}_{i}",
                         label_visibility="collapsed"
                     ))
             with row_cols[5]:
-                if st.button("🗑️", key=f"del_c_{i}", help="Delete this condition"):
+                if st.button("🗑️", key=f"del_c_{c_ver}_{i}", help="Delete this condition"):
                     to_delete_idx = i
 
         if to_delete_idx is not None:
             clauses.pop(to_delete_idx)
             st.session_state["screener_clauses"] = clauses
+            st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
             st.rerun()
 
         add_col, scan_col = st.columns([1.5, 2.5])
@@ -672,6 +731,7 @@ def render_screener_page(theme: str = "dark"):
                     "multiplier": 1.0
                 })
                 st.session_state["screener_clauses"] = clauses
+                st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
                 st.rerun()
 
         with scan_col:
@@ -708,8 +768,38 @@ def render_screener_page(theme: str = "dark"):
 
             if res_df.empty:
                 st.warning("⚠️ No stocks matched all the specified conditions in the selected universe.")
+                diag = getattr(res_df, "attrs", {}).get("diag", {})
+                if diag and diag.get("clause_stats"):
+                    st.markdown(f"#### 🔍 Filter Diagnostic Breakdown ({diag.get('evaluated_stocks', 0)} Stocks Evaluated — Match Logic: `{diag.get('logic', 'ALL')}`)")
+                    diag_data = []
+                    for cs in diag["clause_stats"]:
+                        diag_data.append({
+                            "Rule #": f"Rule #{cs['index']}",
+                            "Condition": cs["desc"],
+                            "Stocks Passed": f"{cs['passed_count']} / {diag['evaluated_stocks']}",
+                            "Pass Rate": f"{cs['passed_pct']}%"
+                        })
+                    st.table(pd.DataFrame(diag_data))
+                    zero_clauses = [cs for cs in diag["clause_stats"] if cs["passed_count"] == 0]
+                    if zero_clauses:
+                        rule_names = ", ".join(f"Rule #{z['index']}" for z in zero_clauses)
+                        st.info(f"💡 **Bottleneck:** {rule_names} returned 0 matching stocks. Consider adjusting its threshold or operator.")
             else:
+                diag = getattr(res_df, "attrs", {}).get("diag", {})
+                if diag and diag.get("clause_stats"):
+                    with st.expander("🔍 View Per-Rule Filtering Statistics", expanded=False):
+                        diag_data = []
+                        for cs in diag["clause_stats"]:
+                            diag_data.append({
+                                "Rule #": f"Rule #{cs['index']}",
+                                "Condition": cs["desc"],
+                                "Stocks Passed": f"{cs['passed_count']} / {diag['evaluated_stocks']}",
+                                "Pass Rate": f"{cs['passed_pct']}%"
+                            })
+                        st.table(pd.DataFrame(diag_data))
+
                 m1, m2, m3, m4 = st.columns(4)
+
                 match_count = len(res_df)
                 gainers_count = len(res_df[res_df["Change_%"] > 0]) if "Change_%" in res_df.columns else 0
                 avg_return = res_df["Change_%"].mean() if "Change_%" in res_df.columns else 0.0

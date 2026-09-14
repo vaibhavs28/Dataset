@@ -164,7 +164,74 @@ class TestScreenerEngine(unittest.TestCase):
         self.assertEqual(res.iloc[0]["Scan_Time"], "11:45")
         self.assertIn("Return_Since_Scan_%", res.columns)
 
+    def test_dynamic_indicator_calculation(self):
+        from screener_engine import ensure_indicator
+        df_copy = self.df.copy()
+        # Test dynamic calculation of arbitrary periods
+        self.assertTrue(ensure_indicator(df_copy, "EMA_100"))
+        self.assertIn("EMA_100", df_copy.columns)
+        self.assertTrue(ensure_indicator(df_copy, "EMA_21"))
+        self.assertIn("EMA_21", df_copy.columns)
+        self.assertTrue(ensure_indicator(df_copy, "SMA_10"))
+        self.assertIn("SMA_10", df_copy.columns)
+        self.assertTrue(ensure_indicator(df_copy, "RSI_21"))
+        self.assertIn("RSI_21", df_copy.columns)
+
+        # Test evaluate_clause with dynamic indicator
+        c = ScreenerClause(timeframe="Daily", lhs="Close", operator=">", rhs_type="Indicator", rhs_indicator="EMA_100")
+        passed, lhs, rhs = evaluate_clause(df_copy, c)
+        self.assertIsInstance(passed, (bool, np.bool_))
+        self.assertGreater(rhs, 0.0)
+
+    def test_chartink_query_parser_exact_periods(self):
+        query = (
+            "[ Latest ] Close Greater than [ Latest ] EMA(close, 100)\n"
+            "[ Latest ] Close Greater than Number 100\n"
+            "[ Latest ] Close Less than Number 5000\n"
+            "[ Latest ] SMA(close, 200) > [ Latest ] EMA(close, 50)"
+        )
+        clauses = parse_chartink_query(query)
+        self.assertEqual(len(clauses), 4)
+        self.assertEqual(clauses[0].lhs, "Close")
+        self.assertEqual(clauses[0].operator, ">")
+        self.assertEqual(clauses[0].rhs_indicator, "EMA_100")
+
+        self.assertEqual(clauses[1].lhs, "Close")
+        self.assertEqual(clauses[1].operator, ">")
+        self.assertEqual(clauses[1].rhs_type, "Number")
+        self.assertEqual(clauses[1].rhs_value, 100.0)
+
+        self.assertEqual(clauses[2].lhs, "Close")
+        self.assertEqual(clauses[2].operator, "<")
+        self.assertEqual(clauses[2].rhs_type, "Number")
+        self.assertEqual(clauses[2].rhs_value, 5000.0)
+
+        self.assertEqual(clauses[3].lhs, "SMA_200")
+        self.assertEqual(clauses[3].operator, ">")
+        self.assertEqual(clauses[3].rhs_indicator, "EMA_50")
+
+    def test_run_screen_diagnostics(self):
+        stocks_data = {
+            "STOCK_A": create_test_ohlcv(50, 100.0),
+            "STOCK_B": create_test_ohlcv(50, 50.0),
+        }
+        # Impossible filter: Close > 1,000,000
+        cfg = ScreenerConfig(
+            name="Impossible Screener",
+            logic="ALL",
+            clauses=[
+                ScreenerClause(timeframe="Daily", lhs="Close", operator=">", rhs_type="Number", rhs_value=1000000.0)
+            ]
+        )
+        res = run_screen(list(stocks_data.keys()), cfg, data_provider_fn=lambda s, tf: stocks_data.get(s))
+        self.assertTrue(res.empty)
+        self.assertIn("diag", res.attrs)
+        diag = res.attrs["diag"]
+        self.assertEqual(diag["evaluated_stocks"], 2)
+        self.assertEqual(diag["clause_stats"][0]["passed_count"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

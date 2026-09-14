@@ -50,17 +50,26 @@ INDICATOR_OPTIONS = [
     "Volume",
     "RSI_14",
     "RSI_9",
+    "RSI_21",
     "RSI_EMA3",
     "RSI_WMA21",
     "EMA_5",
+    "EMA_8",
     "EMA_9",
+    "EMA_10",
     "EMA_13",
     "EMA_20",
+    "EMA_21",
     "EMA_26",
+    "EMA_34",
     "EMA_50",
+    "EMA_100",
     "EMA_200",
+    "SMA_10",
     "SMA_20",
+    "SMA_30",
     "SMA_50",
+    "SMA_100",
     "SMA_200",
     "SuperTrend",
     "MACD_Line",
@@ -74,6 +83,7 @@ INDICATOR_OPTIONS = [
     "Prev_Day_Low",
     "Prev_Day_Close",
 ]
+
 
 OPERATOR_OPTIONS = [
     ">",
@@ -114,21 +124,30 @@ def compute_screener_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # RSIs
     out["RSI_14"] = scanner.calculate_rsi(close, span=14)
     out["RSI_9"] = scanner.calculate_rsi(close, span=9)
+    out["RSI_21"] = scanner.calculate_rsi(close, span=21)
     out["RSI_EMA3"] = scanner.calculate_ema(out["RSI_9"], span=3)
     out["RSI_WMA21"] = scanner.calculate_wma(out["RSI_9"], period=21)
 
     # EMAs
     out["EMA_5"] = scanner.calculate_ema(close, span=5)
+    out["EMA_8"] = scanner.calculate_ema(close, span=8)
     out["EMA_9"] = scanner.calculate_ema(close, span=9)
+    out["EMA_10"] = scanner.calculate_ema(close, span=10)
     out["EMA_13"] = scanner.calculate_ema(close, span=13)
     out["EMA_20"] = scanner.calculate_ema(close, span=20)
+    out["EMA_21"] = scanner.calculate_ema(close, span=21)
     out["EMA_26"] = scanner.calculate_ema(close, span=26)
+    out["EMA_34"] = scanner.calculate_ema(close, span=34)
     out["EMA_50"] = scanner.calculate_ema(close, span=50)
+    out["EMA_100"] = scanner.calculate_ema(close, span=100)
     out["EMA_200"] = scanner.calculate_ema(close, span=200)
 
     # SMAs
+    out["SMA_10"] = close.rolling(window=10, min_periods=1).mean()
     out["SMA_20"] = close.rolling(window=20, min_periods=1).mean()
+    out["SMA_30"] = close.rolling(window=30, min_periods=1).mean()
     out["SMA_50"] = close.rolling(window=50, min_periods=1).mean()
+    out["SMA_100"] = close.rolling(window=100, min_periods=1).mean()
     out["SMA_200"] = close.rolling(window=200, min_periods=1).mean()
 
     # SuperTrend (10, 3.0)
@@ -171,6 +190,73 @@ def compute_screener_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def ensure_indicator(df_ind: pd.DataFrame, col_name: str) -> bool:
+    """
+    Ensures an indicator column exists in df_ind, dynamically computing it on the fly
+    for arbitrary periods (e.g. EMA_21, EMA_100, SMA_10, SMA_100, RSI_7, ATR_21).
+    """
+    if df_ind is None or df_ind.empty or not col_name:
+        return False
+    if col_name in df_ind.columns:
+        return True
+    for c in df_ind.columns:
+        if c.lower() == col_name.lower():
+            return True
+
+    # Check for price aliases
+    c_lower = col_name.lower()
+    if c_lower in ("close", "open", "high", "low", "volume") and c_lower in df_ind.columns:
+        df_ind[col_name] = df_ind[c_lower]
+        return True
+
+    if "close" not in df_ind.columns:
+        return False
+
+    close = df_ind["close"]
+
+    # Dynamic EMA: EMA_(\d+)
+    m_ema = re.match(r"^EMA_(\d+)$", col_name, re.IGNORECASE)
+    if m_ema:
+        p = int(m_ema.group(1))
+        ema_series = scanner.calculate_ema(close, span=p)
+        if ema_series.isna().all() and len(close) > 3:
+            ema_series = close.ewm(span=p, min_periods=1, adjust=False).mean()
+        df_ind[col_name] = ema_series
+        return True
+
+
+    # Dynamic SMA: SMA_(\d+)
+    m_sma = re.match(r"^SMA_(\d+)$", col_name, re.IGNORECASE)
+    if m_sma:
+        p = int(m_sma.group(1))
+        df_ind[col_name] = close.rolling(window=p, min_periods=1).mean()
+        return True
+
+    # Dynamic RSI: RSI_(\d+)
+    m_rsi = re.match(r"^RSI_(\d+)$", col_name, re.IGNORECASE)
+    if m_rsi:
+        p = int(m_rsi.group(1))
+        df_ind[col_name] = scanner.calculate_rsi(close, span=p)
+        return True
+
+    # Dynamic ATR: ATR_(\d+)
+    m_atr = re.match(r"^ATR_(\d+)$", col_name, re.IGNORECASE)
+    if m_atr:
+        p = int(m_atr.group(1))
+        df_ind[col_name] = scanner.calculate_atr(df_ind, period=p)
+        return True
+
+    # Dynamic Volume SMA: Vol_SMA_(\d+)
+    m_vsma = re.match(r"^Vol_SMA_(\d+)$", col_name, re.IGNORECASE)
+    if m_vsma:
+        p = int(m_vsma.group(1))
+        vol = df_ind["volume"] if "volume" in df_ind.columns else pd.Series(1, index=df_ind.index)
+        df_ind[col_name] = vol.rolling(window=p, min_periods=1).mean()
+        return True
+
+    return False
+
+
 def evaluate_clause(df_ind: pd.DataFrame, clause: ScreenerClause) -> Tuple[bool, float, float]:
     """
     Evaluates a single ScreenerClause on the indicator dataframe.
@@ -180,6 +266,7 @@ def evaluate_clause(df_ind: pd.DataFrame, clause: ScreenerClause) -> Tuple[bool,
         return False, 0.0, 0.0
 
     lhs_col = clause.lhs
+    ensure_indicator(df_ind, lhs_col)
     if lhs_col not in df_ind.columns:
         # Case-insensitive fallback
         matched = [c for c in df_ind.columns if c.lower() == lhs_col.lower()]
@@ -207,6 +294,7 @@ def evaluate_clause(df_ind: pd.DataFrame, clause: ScreenerClause) -> Tuple[bool,
         val_rhs_prev = float(clause.rhs_value)
     else:
         rhs_col = clause.rhs_indicator
+        ensure_indicator(df_ind, rhs_col)
         if rhs_col not in df_ind.columns:
             matched_r = [c for c in df_ind.columns if c.lower() == rhs_col.lower()]
             if matched_r:
@@ -244,24 +332,27 @@ def evaluate_clause(df_ind: pd.DataFrame, clause: ScreenerClause) -> Tuple[bool,
     return passed, val_lhs_curr, val_rhs_curr
 
 
+
 def evaluate_stock(
     symbol: str,
     timeframe_dfs: Dict[str, pd.DataFrame],
-    cfg: ScreenerConfig
-) -> Optional[Dict[str, Any]]:
+    cfg: ScreenerConfig,
+    return_clause_results: bool = False
+) -> Any:
     """
     Evaluates all clauses for a single symbol across required timeframes.
     Returns dictionary with match info or None if criteria not met.
+    If return_clause_results is True, returns (res, clause_results).
     """
     if not cfg.clauses:
-        return None
+        return (None, []) if return_clause_results else None
 
     clause_results = []
     indicator_summary = {}
 
     daily_df = timeframe_dfs.get("Daily")
     if daily_df is None or daily_df.empty:
-        return None
+        return (None, []) if return_clause_results else None
 
     ltp = float(daily_df["close"].iloc[-1])
     prev_close = float(daily_df["close"].iloc[-2]) if len(daily_df) >= 2 else ltp
@@ -279,7 +370,6 @@ def evaluate_stock(
         clause_results.append(passed)
 
         # Store for display
-        label = f"Rule #{i+1}: {clause.timeframe} {clause.lhs} {clause.operator} {clause.rhs_indicator if clause.rhs_type=='Indicator' else clause.rhs_value}"
         indicator_summary[f"C{i+1}_Result"] = "✅" if passed else "❌"
         indicator_summary[f"C{i+1}_LHS"] = round(lhs_val, 2)
         indicator_summary[f"C{i+1}_RHS"] = round(rhs_val, 2)
@@ -290,7 +380,7 @@ def evaluate_stock(
         overall_match = any(clause_results)
 
     if not overall_match:
-        return None
+        return (None, clause_results) if return_clause_results else None
 
     res = {
         "Symbol": symbol,
@@ -301,7 +391,7 @@ def evaluate_stock(
         "Total_Clauses": len(cfg.clauses),
     }
     res.update(indicator_summary)
-    return res
+    return (res, clause_results) if return_clause_results else res
 
 
 def run_screen(
@@ -330,6 +420,9 @@ def run_screen(
     }
     time_str = as_of_time[:5] if as_of_time else "15:30"
     time_cutoff = close_to_start.get(time_str, "14:15:00")
+
+    clause_pass_counts = [0] * len(cfg.clauses)
+    evaluated_count = 0
 
     for sym in symbols:
         tf_dfs = {}
@@ -395,7 +488,13 @@ def run_screen(
                 if intra_raw is not None and not intra_raw.empty:
                     tf_dfs["75-Min"] = compute_screener_indicators(intra_raw)
 
-        eval_res = evaluate_stock(sym, tf_dfs, cfg)
+        eval_res, clause_results = evaluate_stock(sym, tf_dfs, cfg, return_clause_results=True)
+        if clause_results:
+            evaluated_count += 1
+            for i, p in enumerate(clause_results):
+                if p:
+                    clause_pass_counts[i] += 1
+
         if eval_res is not None:
             as_of_str = str(daily_raw.index[-1])[:10]
             eval_res["Scan_Date"] = as_of_str
@@ -408,13 +507,24 @@ def run_screen(
                     eval_res["Latest_Close"] = round(future_close, 2)
             matches.append(eval_res)
 
-    if not matches:
-        return pd.DataFrame()
-
-    df_res = pd.DataFrame(matches)
-    # Sort by % change descending
-    if "Change_%" in df_res.columns:
+    df_res = pd.DataFrame(matches) if matches else pd.DataFrame()
+    if not df_res.empty and "Change_%" in df_res.columns:
         df_res = df_res.sort_values(by="Change_%", ascending=False)
+
+    df_res.attrs["diag"] = {
+        "total_universe": len(symbols),
+        "evaluated_stocks": evaluated_count,
+        "clause_stats": [
+            {
+                "index": i + 1,
+                "desc": f"{c.timeframe} {c.lhs} {c.operator} " + (f"{c.multiplier} * {c.rhs_indicator}" if c.rhs_type == "Indicator" else f"{c.rhs_value}"),
+                "passed_count": clause_pass_counts[i] if i < len(clause_pass_counts) else 0,
+                "passed_pct": round(clause_pass_counts[i] / max(evaluated_count, 1) * 100, 1) if i < len(clause_pass_counts) else 0.0
+            }
+            for i, c in enumerate(cfg.clauses)
+        ],
+        "logic": cfg.logic
+    }
     return df_res
 
 
@@ -879,7 +989,8 @@ def parse_chartink_query(query: str) -> List[ScreenerClause]:
 
     for line in expanded_lines:
         # Strip brackets around tokens e.g. [ Latest ] -> Latest
-        cleaned_line = re.sub(r"[\[\(]\s*([a-zA-Z0-9\s\-\_]+)\s*[\]\)]", r" \1 ", line)
+        cleaned_line = re.sub(r"\[\s*([^\]]+?)\s*\]", r" \1 ", line)
+        cleaned_line = re.sub(r"\(\s*(latest|daily|weekly|monthly|intraday|\-?\d+\s*day[s]?\s*ago)\s*\)", r" \1 ", cleaned_line, flags=re.IGNORECASE)
         cleaned_line = re.sub(r"\s+", " ", cleaned_line).strip().rstrip(".;,")
 
         tf = "Daily"
@@ -976,47 +1087,32 @@ def parse_chartink_query(query: str) -> List[ScreenerClause]:
 
             # RSI and variations
             if "rsi" in t:
-                if "ema" in t or "3" in t and "rsi" in t:
+                if "ema" in t or ("3" in t and "rsi" in t):
                     return "RSI_EMA3"
-                if "wma" in t or "21" in t and "rsi" in t:
+                if "wma" in t or ("21" in t and "rsi" in t):
                     return "RSI_WMA21"
-                if "9" in t:
-                    return "RSI_9"
+                m_rsi = re.search(r"rsi\s*\([^)]*?(\d+)[^)]*?\)|rsi\s*(\d+)", t)
+                if m_rsi:
+                    p = int(m_rsi.group(1) or m_rsi.group(2))
+                    return f"RSI_{p}"
                 return "RSI_14"
 
-            # EMAs (5, 9, 13, 20, 26, 50, 200)
+            # EMAs
             if "ema" in t:
-                m_ema = re.search(r"(\d+)\s*ema|ema\s*\(?\s*(\d+)", t)
+                m_ema = re.search(r"ema\s*\([^)]*?(\d+)[^)]*?\)|(\d+)\s*ema|ema\s*(\d+)", t)
                 if m_ema:
-                    p = int(m_ema.group(1) or m_ema.group(2))
-                    if p <= 7:
-                        return "EMA_5"
-                    elif p <= 11:
-                        return "EMA_9"
-                    elif p <= 16:
-                        return "EMA_13"
-                    elif p <= 23:
-                        return "EMA_20"
-                    elif p <= 35:
-                        return "EMA_26"
-                    elif p <= 100:
-                        return "EMA_50"
-                    else:
-                        return "EMA_200"
+                    p = int(m_ema.group(1) or m_ema.group(2) or m_ema.group(3))
+                    return f"EMA_{p}"
                 return "EMA_20"
 
-            # SMAs (20, 50, 200)
+            # SMAs
             if "sma" in t:
-                m_sma = re.search(r"(\d+)\s*sma|sma\s*\(?\s*(\d+)", t)
+                m_sma = re.search(r"sma\s*\([^)]*?(\d+)[^)]*?\)|(\d+)\s*sma|sma\s*(\d+)", t)
                 if m_sma:
-                    p = int(m_sma.group(1) or m_sma.group(2))
-                    if p <= 35:
-                        return "SMA_20"
-                    elif p <= 100:
-                        return "SMA_50"
-                    else:
-                        return "SMA_200"
+                    p = int(m_sma.group(1) or m_sma.group(2) or m_sma.group(3))
+                    return f"SMA_{p}"
                 return "SMA_20"
+
 
             # Standard price items
             if "close" in t:
@@ -1034,14 +1130,15 @@ def parse_chartink_query(query: str) -> List[ScreenerClause]:
 
         # Detect RHS: number or indicator
         rhs_clean = rhs_part.strip().rstrip(".;,")
-        num_match = re.match(r"^[\d\.]+$", rhs_clean)
-        if num_match:
+        num_match = re.search(r"^(?:number\s*\(?\s*|₹\s*|\$\s*)?([\d\.]+)\s*\)?$", rhs_clean, re.IGNORECASE)
+        has_ind_word = any(k in rhs_clean.lower() for k in ["ema", "sma", "rsi", "close", "open", "high", "low", "volume", "supertrend", "macd"])
+        if num_match and not has_ind_word:
             clauses.append(ScreenerClause(
                 timeframe=tf,
                 lhs=lhs,
                 operator=op,
                 rhs_type="Number",
-                rhs_value=float(rhs_clean),
+                rhs_value=float(num_match.group(1)),
                 multiplier=multiplier
             ))
         else:

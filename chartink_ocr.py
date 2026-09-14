@@ -219,8 +219,10 @@ def clean_chartink_ocr_text(raw_text: str) -> Tuple[str, List[str], str]:
         if is_ignore:
             continue
 
-        # Strip brackets around words e.g. [ Latest ] -> Latest, [ Daily ] -> Daily
-        cleaned = re.sub(r"[\[\(]\s*([a-zA-Z0-9\s\-\_]+)\s*[\]\)]", r" \1 ", line)
+        # Strip square brackets e.g. [ Latest ] -> Latest, [ Daily ] -> Daily
+        cleaned = re.sub(r"\[\s*([^\]]+?)\s*\]", r" \1 ", line)
+        # Strip parentheses only around timeframe markers e.g. ( Latest ), ( -1 day )
+        cleaned = re.sub(r"\(\s*(latest|daily|weekly|monthly|intraday|\-?\d+\s*day[s]?\s*ago)\s*\)", r" \1 ", cleaned, flags=re.IGNORECASE)
         
         # OCR typo corrections
         cleaned = re.sub(r"\bRS[!1|lI]\b", "RSI", cleaned, flags=re.I)
