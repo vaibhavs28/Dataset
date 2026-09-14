@@ -27,15 +27,31 @@ DELTA_BASE_URLS = [
 # Resolution mapping
 TIMEFRAME_TO_DELTA_RES = {
     "1m": "1m",
+    "1-Minute": "1m",
+    "3m": "3m",
+    "3-Minute": "3m",
     "5m": "5m",
+    "5-Minute": "5m",
     "15m": "15m",
+    "15-Minute": "15m",
+    "30m": "30m",
+    "30-Minute": "30m",
     "1h": "1h",
+    "60-Minute (1H)": "1h",
+    "1 Hour": "1h",
+    "2h": "2h",
+    "2-Hour": "2h",
     "4h": "4h",
+    "4-Hour": "4h",
+    "6h": "6h",
     "1d": "1d",
     "Daily": "1d",
+    "Daily (1D)": "1d",
     "1w": "1w",
-    "Weekly": "1w"
+    "Weekly": "1w",
+    "Weekly (1W)": "1w"
 }
+
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
