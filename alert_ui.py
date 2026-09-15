@@ -23,6 +23,7 @@ import alert_engine
 import quadrant_image_generator
 import auto_75m_broadcaster
 import sync_75m_intraday
+import auto_nifty500_updater
 
 
 def _get_theme_styles(theme: str) -> dict:
@@ -252,6 +253,27 @@ def render_alert_page(theme: str = "dark"):
             render_metric_card("Active Broadcast Channels", f"{len(active_chs)} Connected", ch_summary, "green" if active_chs else "normal", styles)
 
         st.markdown("---")
+
+        # 15-Minute Nifty 500 Intraday Auto-Updater Status Card
+        n500_status = auto_nifty500_updater.get_sync_status()
+        with st.expander("⚡ Nifty 500 15-Minute 1m Intraday Auto-Updater (09:00 - 16:00 IST)", expanded=False):
+            u_col1, u_col2, u_col3, u_col4 = st.columns(4)
+            with u_col1:
+                st.markdown(f"**Daemon Status:** `{n500_status.get('status', 'IDLE')}`")
+                st.markdown(f"**Active Window:** `09:00 - 16:00 IST`")
+            with u_col2:
+                st.markdown(f"**Last Sync:** `{n500_status.get('last_run_timestamp', 'Never')}`")
+                st.markdown(f"**Next Sync:** `{n500_status.get('next_run_timestamp', 'Pending')}`")
+            with u_col3:
+                st.markdown(f"**Target Stocks:** `{n500_status.get('total_symbols', 500)} (Nifty 500)`")
+                st.markdown(f"**1m Bars Ingested:** `{n500_status.get('bars_1m_ingested', 0):,}`")
+            with u_col4:
+                st.markdown(f"**Execution Speed:** `{n500_status.get('elapsed_seconds', 0)}s`")
+                if st.button("🚀 Sync Nifty 500 Now", key="btn_sync_nifty500_now", use_container_width=True):
+                    with st.spinner("Syncing 1m & 75m candles for Nifty 500..."):
+                        res_sync = auto_nifty500_updater.run_nifty500_sync_cycle(ignore_market_hours=True)
+                        st.success(f"Synced {res_sync.get('synced_symbols', 0)} stocks in {res_sync.get('elapsed_seconds', 0)}s!")
+                        st.rerun()
 
         # Controls
         ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1.8, 1.8])
