@@ -8,6 +8,7 @@ Featuring:
 2. Custom Condition Builder & Chartink Query Importer.
 """
 
+import time
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -241,13 +242,25 @@ def render_screener_page(theme: str = "dark"):
         wf_cache_key = f"wf_res_{wf_universe}_{scan_id}"
         if run_wf_btn or wf_cache_key not in st.session_state:
             target_syms = get_target_equities(wf_universe)
-            p_bar = st.progress(0)
+            p_bar = st.progress(0.0)
             p_txt = st.empty()
+            wf_start_t = time.time()
+            last_wf_update = [0.0]
 
             def _wf_progress(curr, total, sym):
-                if curr % 5 == 0 or curr == total:
-                    p_bar.progress(min(curr / max(total, 1), 1.0))
-                    p_txt.caption(f"Screening {sym} ({curr}/{total})...")
+                now = time.time()
+                if curr == 1 or curr == total or (now - last_wf_update[0] >= 0.08):
+                    last_wf_update[0] = now
+                    pct = min(curr / max(total, 1), 1.0)
+                    p_bar.progress(pct)
+                    elapsed = max(now - wf_start_t, 0.001)
+                    speed = curr / elapsed
+                    rem_secs = (total - curr) / speed if speed > 0 else 0
+                    eta_str = f"{int(rem_secs)}s" if rem_secs < 60 else f"{int(rem_secs // 60)}m {int(rem_secs % 60)}s"
+                    p_txt.markdown(
+                        f"⚡ **Scanning `{sym}`** — **{curr}/{total}** ({pct*100:.1f}%) | "
+                        f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
+                    )
 
             wf_results = run_waterfall_scan(target_syms, as_of_date=as_of_param, as_of_time=as_of_time_param, progress_callback=_wf_progress)
             p_bar.empty()
@@ -755,9 +768,29 @@ def render_screener_page(theme: str = "dark"):
                 for c in clauses
             ]
             cfg = ScreenerConfig(name=selected_preset, logic=logic_val, universe=universe_choice, clauses=screener_clauses)
-            p_bar = st.progress(0)
-            res_df = run_screen(target_symbols, cfg, as_of_date=cust_as_of_param, as_of_time=cust_as_of_time_param)
+            p_bar = st.progress(0.0)
+            p_txt = st.empty()
+            scr_start_t = time.time()
+            last_scr_update = [0.0]
+
+            def _scr_progress(curr, total, sym):
+                now = time.time()
+                if curr == 1 or curr == total or (now - last_scr_update[0] >= 0.08):
+                    last_scr_update[0] = now
+                    pct = min(curr / max(total, 1), 1.0)
+                    p_bar.progress(pct)
+                    elapsed = max(now - scr_start_t, 0.001)
+                    speed = curr / elapsed
+                    rem_secs = (total - curr) / speed if speed > 0 else 0
+                    eta_str = f"{int(rem_secs)}s" if rem_secs < 60 else f"{int(rem_secs // 60)}m {int(rem_secs % 60)}s"
+                    p_txt.markdown(
+                        f"🔍 **Evaluating `{sym}`** — **{curr}/{total}** ({pct*100:.1f}%) | "
+                        f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
+                    )
+
+            res_df = run_screen(target_symbols, cfg, as_of_date=cust_as_of_param, as_of_time=cust_as_of_time_param, progress_callback=_scr_progress)
             p_bar.empty()
+            p_txt.empty()
             st.session_state["last_screener_results"] = res_df
             st.session_state["last_screener_total_scanned"] = len(target_symbols)
 

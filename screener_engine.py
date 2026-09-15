@@ -405,7 +405,8 @@ def run_screen(
     cfg: ScreenerConfig,
     as_of_date: Optional[Any] = None,
     as_of_time: Optional[str] = None,
-    data_provider_fn=None
+    data_provider_fn=None,
+    progress_callback=None
 ) -> pd.DataFrame:
     """
     Executes a screener across a list of symbols.
@@ -514,11 +515,20 @@ def run_screen(
 
         return eval_res, clause_results
 
-    max_workers = min(32, max(4, (os.cpu_count() or 4) * 4)) if len(symbols) > 4 else 1
+    completed_count = 0
+    total_symbols = len(symbols)
+    max_workers = min(32, max(4, (os.cpu_count() or 4) * 4)) if total_symbols > 4 else 1
     if max_workers > 1:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_sym = {executor.submit(_eval_screen_sym, sym): sym for sym in symbols}
             for future in concurrent.futures.as_completed(future_to_sym):
+                sym = future_to_sym[future]
+                completed_count += 1
+                if progress_callback:
+                    try:
+                        progress_callback(completed_count, total_symbols, sym)
+                    except Exception:
+                        pass
                 try:
                     eval_res, clause_results = future.result()
                     if clause_results:
@@ -529,9 +539,15 @@ def run_screen(
                     if eval_res is not None:
                         matches.append(eval_res)
                 except Exception as e:
-                    logger.error(f"Error screening {future_to_sym[future]}: {e}")
+                    logger.error(f"Error screening {sym}: {e}")
     else:
         for sym in symbols:
+            completed_count += 1
+            if progress_callback:
+                try:
+                    progress_callback(completed_count, total_symbols, sym)
+                except Exception:
+                    pass
             eval_res, clause_results = _eval_screen_sym(sym)
             if clause_results:
                 evaluated_count += 1
@@ -908,36 +924,33 @@ def run_waterfall_scan(
         )
 
     completed_count = 0
-    progress_lock = threading.Lock()
-
-    def _worker(sym: str) -> Optional[Dict[str, Any]]:
-        nonlocal completed_count
-        try:
-            return _eval_sym(sym)
-        finally:
-            if progress_callback:
-                with progress_lock:
-                    completed_count += 1
+    max_workers = min(32, max(4, (os.cpu_count() or 4) * 4)) if total_scanned > 4 else 1
+    if max_workers > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_sym = {executor.submit(_eval_sym, sym): sym for sym in symbols}
+            for future in concurrent.futures.as_completed(future_to_sym):
+                sym = future_to_sym[future]
+                completed_count += 1
+                if progress_callback:
                     try:
                         progress_callback(completed_count, total_scanned, sym)
                     except Exception:
                         pass
-
-    # 3. Parallel multi-threaded execution across CPU cores
-    max_workers = min(32, max(4, (os.cpu_count() or 4) * 4)) if total_scanned > 4 else 1
-    if max_workers > 1:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_sym = {executor.submit(_worker, sym): sym for sym in symbols}
-            for future in concurrent.futures.as_completed(future_to_sym):
                 try:
                     res = future.result()
                     if res is not None:
                         results.append(res)
                 except Exception as e:
-                    logger.error(f"Error evaluating {future_to_sym[future]}: {e}")
+                    logger.error(f"Error evaluating {sym}: {e}")
     else:
         for sym in symbols:
-            res = _worker(sym)
+            completed_count += 1
+            if progress_callback:
+                try:
+                    progress_callback(completed_count, total_scanned, sym)
+                except Exception:
+                    pass
+            res = _eval_sym(sym)
             if res is not None:
                 results.append(res)
 
