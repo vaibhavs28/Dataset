@@ -775,9 +775,10 @@ def render_screener_page(theme: str = "dark"):
             else:
                 st.caption("ℹ️ Snapshot table not yet built. First live scan will build it automatically.")
         with snap_c2:
-            if st.button("🔄 Rebuild Snapshot", key="scr_rebuild_snap_btn", use_container_width=True, help="Recomputes all 94 technical indicators across all stocks into DuckDB"):
-                with st.spinner("Materializing wide indicators table in DuckDB..."):
-                    res = screener_snapshot.build_screener_snapshot()
+            if st.button("🔄 Rebuild Snapshot", key="scr_rebuild_snap_btn", use_container_width=True, help="Recomputes all 94 technical indicators across the selected universe into DuckDB"):
+                with st.spinner(f"Materializing indicators for {universe_choice}..."):
+                    target_symbols_snap = get_target_equities(universe_choice)
+                    res = screener_snapshot.build_screener_snapshot(symbols=target_symbols_snap)
                     st.success(f"✅ Snapshot ready! {res.get('total_symbols', 0)} stocks in {res.get('elapsed_seconds', 0)}s.")
                     st.rerun()
 

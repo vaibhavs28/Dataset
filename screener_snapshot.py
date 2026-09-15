@@ -296,35 +296,48 @@ def build_screener_snapshot(
     if not batch_daily:
         batch_daily = database.get_batch_candles_df(clean_symbols)
 
-    # Step 2: Batch load 75m candles from intraday_candles table
+    # Step 2: Batch load 75m candles (check hot_intraday first, or recent 30 days from DuckDB)
     logger.info("Fetching batch 75m intraday candles...")
     batch_75m: Dict[str, pd.DataFrame] = {}
-    try:
-        with duckdb_store.get_read_connection() as conn:
-            has_75 = conn.execute("SELECT 1 FROM intraday_candles WHERE timeframe='75m' LIMIT 1;").fetchone()
-            if has_75:
-                q75 = """
-                    SELECT trading_symbol, timestamp, open, high, low, close, volume
-                    FROM intraday_candles
-                    WHERE timeframe = '75m'
-                    ORDER BY trading_symbol, timestamp ASC;
-                """
-                df75 = conn.execute(q75).df()
-                if not df75.empty:
-                    df75["timestamp"] = pd.to_datetime(df75["timestamp"])
-                    df75["clean_sym"] = df75["trading_symbol"].str.replace("-EQ", "", regex=False)
-                    for sym, grp in df75.groupby("clean_sym"):
-                        batch_75m[sym] = grp.drop(columns=["trading_symbol", "clean_sym"]).set_index("timestamp").tail(50)
-    except Exception as e:
-        logger.debug(f"Batch 75m query note: {e}")
 
-    # Step 3: Batch load 15m candles from candles_1m or parquet
+    # Check live hot_intraday.db first (< 20ms)
+    try:
+        import hot_intraday
+        if hot_intraday.has_hot_data():
+            batch_75m = hot_intraday.get_batch_resampled_candles(clean_symbols, interval_minutes=75, limit_per_symbol=50)
+    except Exception as e:
+        logger.debug(f"hot_intraday 75m resample note: {e}")
+
+    # Fallback to recent 30 days of intraday_candles (prevents loading 10.76 million historical rows into RAM!)
+    if not batch_75m:
+        try:
+            with duckdb_store.get_read_connection() as conn:
+                has_75 = conn.execute("SELECT 1 FROM intraday_candles WHERE timeframe='75m' LIMIT 1;").fetchone()
+                if has_75:
+                    q75 = """
+                        SELECT trading_symbol, timestamp, open, high, low, close, volume
+                        FROM intraday_candles
+                        WHERE timeframe = '75m' AND timestamp >= (CURRENT_DATE - INTERVAL '30 days')
+                        ORDER BY trading_symbol, timestamp ASC;
+                    """
+                    df75 = conn.execute(q75).df()
+                    if not df75.empty:
+                        df75["timestamp"] = pd.to_datetime(df75["timestamp"])
+                        df75["clean_sym"] = df75["trading_symbol"].str.replace("-EQ", "", regex=False)
+                        for sym, grp in df75.groupby("clean_sym"):
+                            batch_75m[sym] = grp.drop(columns=["trading_symbol", "clean_sym"]).set_index("timestamp").tail(50)
+        except Exception as e:
+            logger.debug(f"Batch 75m query note: {e}")
+
+    # Step 3: Batch load 15m candles (check hot_intraday first)
     logger.info("Fetching batch 15m candles...")
     batch_15m: Dict[str, pd.DataFrame] = {}
     try:
-        batch_15m = duckdb_store.get_batch_resampled_candles(clean_symbols, interval_minutes=15, limit_per_symbol=50)
+        import hot_intraday
+        if hot_intraday.has_hot_data():
+            batch_15m = hot_intraday.get_batch_resampled_candles(clean_symbols, interval_minutes=15, limit_per_symbol=50)
     except Exception as e:
-        logger.debug(f"Batch 15m query note: {e}")
+        logger.debug(f"hot_intraday 15m query note: {e}")
 
     # Step 4: Parallel snapshot row generation
     logger.info("Computing multi-timeframe indicators in parallel...")
