@@ -374,8 +374,8 @@ def render_alert_page(theme: str = "dark"):
                 c15_stage = st.selectbox(
                     "Minimum Stage Filter:",
                     options=[
-                        "Stage 5 (🚨 Full Signal: M+W+D+75m+15m)",
-                        "Stage 4 (⚡ 75m Breakdown Alignment)"
+                        "Stage 4 (⚡ 75m Breakdown Alignment — Recommended)",
+                        "Stage 5 (🚨 15m Precision Entry Only)"
                     ],
                     index=0,
                     key="c15_stage_sel"

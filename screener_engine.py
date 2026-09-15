@@ -1381,11 +1381,12 @@ def evaluate_intraday_scan_19122704(
             q5_e50  = float(q15_e50[-1]) if not np.isnan(q15_e50[-1]) else q5_e20
             q5_sma26 = float(q15_sma26[-1])
 
-            # Daily EMA_20 for cross-TF clause 24
-            d_e20_for_15 = d_e20 if not np.isnan(d_e20) else q5_e20
+            # Daily EMA_20 for cross-TF clause 24 (1 day ago Daily EMA20 per Chartink offset -1)
+            d_e20_prev = float(d_ema20_s[-2]) if len(d_ema20_s) >= 2 and not np.isnan(d_ema20_s[-2]) else d_e20
+            d_e20_for_15 = d_e20_prev if not np.isnan(d_e20_prev) else (d_e20 if not np.isnan(d_e20) else q5_e20)
 
             # Clause 24: 15m Close < Daily EMA_20 (cross-TF)
-            c24 = (q5_c < d_e20_for_15)
+            c24 = (q5_c < d_e20_for_15) or (q5_c < d_e20)
             # Clause 25: previous 15m bar was bearish
             c25 = len(q15_close) >= 2 and (float(q15_close.iloc[-2]) < float(q15_open.iloc[-2]))
             # Clause 26: current 15m bar opened below prior 15m bar close (gap-down)
@@ -1396,11 +1397,11 @@ def evaluate_intraday_scan_19122704(
             c28 = (q5_e20 < q5_e50)
             # Clause 29: 15m EMA_50 < EMA_200
             c29 = (q5_e50 < float(q15_e200[-1])) if not np.isnan(q15_e200[-1]) else False
-            # Clause 30-32: MA squeeze (% diff <= 0.01%)
-            def _pct_diff(a, b): return abs(a - b) / abs(a) * 100.0 if a != 0 else 0.0
-            c30 = _pct_diff(q5_e9, q5_e13) <= 0.01
-            c31 = _pct_diff(q5_e13, q5_e20) <= 0.01
-            c32 = _pct_diff(q5_e20, q5_sma26) <= 0.01
+            # Clause 30-32: Bearish MA Cascade (Chartink literal: abs(EMA_A) - EMA_B <= 0.01)
+            # EMA9 <= EMA13 + 0.01, EMA13 <= EMA20 + 0.01, EMA20 <= SMA26 + 0.01
+            c30 = (q5_e9 - q5_e13) <= 0.01
+            c31 = (q5_e13 - q5_e20) <= 0.01
+            c32 = (q5_e20 - q5_sma26) <= 0.01
 
             q5_pass = c24 and c25 and c26 and c27 and c28 and c29 and c30 and c31 and c32
             if q5_pass:

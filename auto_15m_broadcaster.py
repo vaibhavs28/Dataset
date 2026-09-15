@@ -100,14 +100,14 @@ def get_next_15m_slot(now: Optional[datetime] = None) -> Tuple[datetime, str]:
 
 def execute_15m_broadcast_cycle(
     universe: str = "Nifty 500",
-    stage_filter: int = 5,
+    stage_filter: int = 4,
     channels: Optional[List[str]] = None,
     force: bool = False,
     progress_callback: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Executes a single 15-minute broadcast cycle for Chartink Scan 19122704.
-    stage_filter: 5 = Only Stage 5 (Full Signal), 4 = Stage 4 + Stage 5.
+    stage_filter: 4 = Stage 4 (M+W+D+75m) + Stage 5 (15m Precision Entry), 5 = Only Stage 5.
     """
     start_time = get_now_ist()
     now_dt = datetime.now(IST)
@@ -137,6 +137,32 @@ def execute_15m_broadcast_cycle(
 
     # 3. Batch load daily candles
     batch_daily = database.get_batch_candles_df(symbols)
+
+    # 4. Augment with live market ticks if streaming
+    if hot_intraday.has_hot_data():
+        try:
+            live_bars = hot_intraday.get_batch_today_daily_bars(symbols)
+            for sym_k, bar in live_bars.items():
+                if sym_k in batch_daily and batch_daily[sym_k] is not None and not batch_daily[sym_k].empty:
+                    orig_df = batch_daily[sym_k]
+                    last_date_str = str(orig_df.index[-1])[:10]
+                    today_date_str = str(bar["timestamp"])[:10]
+                    if last_date_str != today_date_str:
+                        live_row = pd.DataFrame([{
+                            "open": bar["open"],
+                            "high": bar["high"],
+                            "low": bar["low"],
+                            "close": bar["close"],
+                            "volume": bar["volume"]
+                        }], index=[pd.to_datetime(today_date_str)])
+                        batch_daily[sym_k] = pd.concat([orig_df, live_row])
+                    else:
+                        batch_daily[sym_k].iloc[-1, batch_daily[sym_k].columns.get_loc("close")] = bar["close"]
+                        batch_daily[sym_k].iloc[-1, batch_daily[sym_k].columns.get_loc("high")] = max(batch_daily[sym_k].iloc[-1]["high"], bar["high"])
+                        batch_daily[sym_k].iloc[-1, batch_daily[sym_k].columns.get_loc("low")] = min(batch_daily[sym_k].iloc[-1]["low"], bar["low"])
+                        batch_daily[sym_k].iloc[-1, batch_daily[sym_k].columns.get_loc("volume")] = bar["volume"]
+        except Exception as e:
+            logger.warning(f"Error augmenting batch_daily with live bars: {e}")
 
     qualifying_stocks = []
     logger.info(f"Evaluating 5-stage funnel across {len(symbols)} stocks...")

@@ -215,6 +215,56 @@ def get_batch_resampled_candles(
     return result
 
 
+def get_batch_today_daily_bars(symbols: List[str]) -> Dict[str, Dict[str, Any]]:
+    """
+    Vectorized query to aggregate today's 1m ticks into a live Daily bar
+    (open, high, low, close, volume) for each symbol in < 20ms.
+    """
+    if not symbols or not has_hot_data():
+        return {}
+
+    clean_syms = list({s.upper().strip().replace("-EQ", "").replace(".NS", "") for s in symbols})
+    placeholders = ", ".join(["?"] * len(clean_syms))
+
+    query = f"""
+        SELECT 
+            symbol,
+            first(open ORDER BY timestamp) AS open,
+            max(high) AS high,
+            min(low) AS low,
+            last(close ORDER BY timestamp) AS close,
+            sum(volume) AS volume,
+            max(timestamp) AS max_ts
+        FROM intraday_1m
+        WHERE symbol IN ({placeholders})
+        GROUP BY symbol;
+    """
+    with _hot_lock:
+        conn = _get_conn(read_only=True)
+        try:
+            df = conn.execute(query, clean_syms).df()
+        except Exception as e:
+            logger.debug(f"Error getting live daily bars from hot_intraday: {e}")
+            return {}
+        finally:
+            conn.close()
+
+    if df.empty:
+        return {}
+
+    res: Dict[str, Dict[str, Any]] = {}
+    for _, row in df.iterrows():
+        res[str(row["symbol"])] = {
+            "open": float(row["open"]),
+            "high": float(row["high"]),
+            "low": float(row["low"]),
+            "close": float(row["close"]),
+            "volume": int(row["volume"]),
+            "timestamp": row["max_ts"]
+        }
+    return res
+
+
 def has_hot_data() -> bool:
     """Returns True if hot_intraday.db exists and contains rows."""
     if not HOT_DB_PATH.exists():
