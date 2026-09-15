@@ -20,6 +20,7 @@ import pandas as pd
 import scanner
 import database
 import parquet_loader
+import duckdb_store
 import config
 
 logger = logging.getLogger("screener_engine")
@@ -502,23 +503,219 @@ def run_screen(
     clause_pass_counts = [0] * len(cfg.clauses)
     evaluated_count = 0
 
-    batch_daily = {}
+    # ── Pre-split clauses by tier (daily-resampable vs intraday) ────────────
+    # Daily-tier: Monthly/Weekly/Daily can be computed from batch-loaded daily data
+    # Intraday-tier: 75-Min, 15-Min need separate per-stock DuckDB/parquet loads
+    DAILY_TIER_TFS = {"Daily", "Weekly", "Monthly"}
+    INTRADAY_TIER_TFS = {"75-Min", "15-Min"}
+
+    daily_tier_clauses  = [c for c in cfg.clauses if c.timeframe in DAILY_TIER_TFS]
+    intraday_75m_clauses = [c for c in cfg.clauses if c.timeframe == "75-Min"]
+    intraday_15m_clauses = [c for c in cfg.clauses if c.timeframe == "15-Min"
+                            or (c.rhs_timeframe and c.rhs_timeframe not in DAILY_TIER_TFS)]
+    has_intraday = bool(intraday_75m_clauses or intraday_15m_clauses)
+    has_75m = "75-Min" in needed_tfs
+    has_15m = "15-Min" in needed_tfs
+
+    # Build daily-tier-only screener config for pre-filter
+    daily_tier_cfg = ScreenerConfig(
+        name=cfg.name, logic=cfg.logic,
+        clauses=daily_tier_clauses
+    ) if daily_tier_clauses else None
+
+    batch_daily: Dict[str, pd.DataFrame] = {}
     if not data_provider_fn and len(symbols) > 1:
         try:
             batch_daily = database.get_batch_candles_df(symbols)
         except Exception as e:
             logger.warning(f"Batch daily load error in run_screen: {e}")
 
+    # ── Stage A: evaluate daily-tier across all symbols (fast, all in RAM) ─
+    daily_tier_pass: Dict[str, Dict[str, pd.DataFrame]] = {}  # sym -> tf_dfs that passed
+
+    def _build_daily_tf_dfs(sym: str, daily_raw: pd.DataFrame) -> Dict[str, pd.DataFrame]:
+        """Build the Daily/Weekly/Monthly indicator frames from daily raw data."""
+        tf_dfs: Dict[str, pd.DataFrame] = {}
+        tf_dfs["Daily"] = compute_needed_indicators(daily_raw, needed_indicators_by_tf.get("Daily", set()))
+        if "Weekly" in needed_tfs:
+            w_raw = scanner.resample_ohlcv(daily_raw, "weekly")
+            tf_dfs["Weekly"] = compute_needed_indicators(w_raw, needed_indicators_by_tf.get("Weekly", set()))
+        if "Monthly" in needed_tfs:
+            m_raw = scanner.resample_ohlcv(daily_raw, "monthly")
+            tf_dfs["Monthly"] = compute_needed_indicators(m_raw, needed_indicators_by_tf.get("Monthly", set()))
+        return tf_dfs
+
+    def _get_daily_raw(sym: str) -> Optional[pd.DataFrame]:
+        clean = sym.upper().strip().replace("-EQ", "").replace(".NS", "")
+        if data_provider_fn:
+            return data_provider_fn(sym, "Daily")
+        raw = batch_daily.get(clean)
+        if (raw is None or raw.empty) and not batch_daily:
+            raw = database.get_candles_df(sym)
+        return raw
+
+    clause_pass_counts = [0] * len(cfg.clauses)
+    evaluated_count = 0
+
+    # If ALL logic and has intraday tier, pre-filter by daily tier first
+    use_funnel = (cfg.logic == "ALL" and has_intraday and daily_tier_clauses and not data_provider_fn)
+
+    daily_raw_cache: Dict[str, pd.DataFrame] = {}  # store raw daily for later intraday stage
+
+    if use_funnel and len(symbols) > 4:
+        # Evaluate daily-tier only for all symbols (parallel, fast)
+        def _check_daily_tier(sym: str):
+            daily_raw = _get_daily_raw(sym)
+            if daily_raw is None or daily_raw.empty or len(daily_raw) < 5:
+                return sym, None, None
+
+            if not isinstance(daily_raw.index, pd.DatetimeIndex):
+                daily_raw = daily_raw.copy()
+                daily_raw.index = pd.to_datetime(daily_raw.index)
+
+            full_daily = daily_raw
+            if as_of_date is not None:
+                target_dt = pd.to_datetime(as_of_date)
+                eod_naive = target_dt.replace(hour=23, minute=59, second=59)
+                d_tz = getattr(daily_raw.index, "tz", None)
+                if d_tz is not None:
+                    daily_raw = daily_raw[daily_raw.index <= eod_naive.tz_localize(d_tz)]
+                else:
+                    daily_raw = daily_raw[daily_raw.index <= eod_naive]
+                if daily_raw.empty or len(daily_raw) < 5:
+                    return sym, None, None
+
+            tf_dfs = _build_daily_tf_dfs(sym, daily_raw)
+            # Evaluate daily-tier clauses only
+            if daily_tier_cfg is not None:
+                res, cr = evaluate_stock(sym, tf_dfs, daily_tier_cfg, return_clause_results=True)
+                if res is None:
+                    return sym, None, None  # failed daily-tier — skip intraday entirely
+            return sym, daily_raw, tf_dfs
+
+        pre_filter_workers = min(32, max(4, (os.cpu_count() or 4) * 4))
+        with concurrent.futures.ThreadPoolExecutor(max_workers=pre_filter_workers) as ex:
+            futures = {ex.submit(_check_daily_tier, sym): sym for sym in symbols}
+            for fut in concurrent.futures.as_completed(futures):
+                sym, daily_raw, tf_dfs = fut.result()
+                if daily_raw is not None:
+                    daily_tier_pass[sym] = tf_dfs
+                    daily_raw_cache[sym] = daily_raw
+
+        logger.info(f"⚡ Funnel pre-filter: {len(daily_tier_pass)}/{len(symbols)} stocks passed daily-tier (skipped {len(symbols)-len(daily_tier_pass)} intraday loads)")
+
+        # ── Stage B: batch-load intraday for the small set that passed ──────
+        passed_syms = list(daily_tier_pass.keys())
+        batch_75m: Dict[str, pd.DataFrame] = {}
+        batch_15m: Dict[str, pd.DataFrame] = {}
+
+        if passed_syms:
+            if has_75m:
+                try:
+                    batch_75m = duckdb_store.get_batch_resampled_candles(passed_syms, interval_minutes=75, limit_per_symbol=500)
+                except Exception as e:
+                    logger.debug(f"Batch 75m resample error: {e}")
+            if has_15m:
+                try:
+                    batch_15m = duckdb_store.get_batch_resampled_candles(passed_syms, interval_minutes=15, limit_per_symbol=500)
+                except Exception as e:
+                    logger.debug(f"Batch 15m resample error: {e}")
+
+        def _eval_funneled_sym(sym: str) -> Tuple[Optional[Dict], Optional[List[bool]]]:
+            tf_dfs = daily_tier_pass.get(sym)
+            if tf_dfs is None:
+                return None, None
+
+            daily_raw = daily_raw_cache.get(sym)
+            full_daily = _get_daily_raw(sym) or daily_raw
+
+            # Add 75-Min
+            if has_75m:
+                intra_75 = batch_75m.get(sym.upper().strip().replace("-EQ", "").replace(".NS", ""))
+                if intra_75 is None or intra_75.empty:
+                    intra_75 = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
+                if intra_75 is not None and not intra_75.empty:
+                    if not isinstance(intra_75.index, pd.DatetimeIndex):
+                        intra_75.index = pd.to_datetime(intra_75.index)
+                    if as_of_date is not None:
+                        target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
+                        tz = getattr(intra_75.index, "tz", None)
+                        if tz:
+                            intra_75 = intra_75[intra_75.index <= target_dt.tz_localize(tz)]
+                        else:
+                            intra_75 = intra_75[intra_75.index <= target_dt]
+                    if intra_75 is not None and not intra_75.empty:
+                        tf_dfs["75-Min"] = compute_needed_indicators(intra_75, needed_indicators_by_tf.get("75-Min", set()))
+
+            # Add 15-Min
+            if has_15m:
+                clean = sym.upper().strip().replace("-EQ", "").replace(".NS", "")
+                intra_15 = batch_15m.get(clean)
+                if intra_15 is None or intra_15.empty:
+                    intra_15 = parquet_loader.ensure_symbol_custom_minute_candles(sym, interval_minutes=15, min_bars=10)
+                if intra_15 is not None and not intra_15.empty:
+                    if not isinstance(intra_15.index, pd.DatetimeIndex):
+                        intra_15.index = pd.to_datetime(intra_15.index)
+                    if as_of_date is not None:
+                        target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
+                        tz = getattr(intra_15.index, "tz", None)
+                        if tz:
+                            intra_15 = intra_15[intra_15.index <= target_dt.tz_localize(tz)]
+                        else:
+                            intra_15 = intra_15[intra_15.index <= target_dt]
+                    if intra_15 is not None and not intra_15.empty:
+                        tf_dfs["15-Min"] = compute_needed_indicators(intra_15, needed_indicators_by_tf.get("15-Min", set()))
+
+            eval_res, clause_results = evaluate_stock(sym, tf_dfs, cfg, return_clause_results=True)
+            if eval_res is not None and daily_raw is not None:
+                as_of_str = str(daily_raw.index[-1])[:10]
+                eval_res["Scan_Date"] = as_of_str
+                eval_res["Scan_Time"] = time_str
+                if full_daily is not None and len(full_daily) > len(daily_raw):
+                    future_close = float(full_daily["close"].iloc[-1])
+                    curr_p = float(eval_res.get("LTP", 0.0))
+                    if curr_p > 0:
+                        eval_res["Return_Since_Scan_%"] = round(((future_close - curr_p) / curr_p) * 100.0, 2)
+                        eval_res["Latest_Close"] = round(future_close, 2)
+            return eval_res, clause_results
+
+        # Run full evaluation only on passed_syms
+        intra_workers = min(32, max(4, (os.cpu_count() or 4) * 4))
+        completed_count = 0
+        total_symbols = len(symbols)
+        with concurrent.futures.ThreadPoolExecutor(max_workers=intra_workers) as executor:
+            future_to_sym = {executor.submit(_eval_funneled_sym, sym): sym for sym in symbols}
+            for future in concurrent.futures.as_completed(future_to_sym):
+                sym = future_to_sym[future]
+                completed_count += 1
+                if progress_callback:
+                    try:
+                        progress_callback(completed_count, total_symbols, sym)
+                    except Exception:
+                        pass
+                try:
+                    eval_res, clause_results = future.result()
+                    if clause_results:
+                        evaluated_count += 1
+                        for i, p in enumerate(clause_results):
+                            if p and i < len(clause_pass_counts):
+                                clause_pass_counts[i] += 1
+                    if eval_res is not None:
+                        matches.append(eval_res)
+                except Exception as e:
+                    logger.error(f"Error screening {sym}: {e}")
+
+        if matches:
+            df_out = pd.DataFrame(matches)
+            df_out.attrs["clause_pass_counts"] = clause_pass_counts
+            df_out.attrs["evaluated_count"] = evaluated_count
+            return df_out
+        return pd.DataFrame()
+
+    # ── Non-funneled path (no intraday, custom data_provider_fn, or small list) ──
     def _eval_screen_sym(sym: str) -> Tuple[Optional[Dict[str, Any]], Optional[List[bool]]]:
         clean = sym.upper().strip().replace("-EQ", "").replace(".NS", "")
-        daily_raw = None
-
-        if data_provider_fn:
-            daily_raw = data_provider_fn(sym, "Daily")
-        else:
-            daily_raw = batch_daily.get(clean)
-            if (daily_raw is None or daily_raw.empty) and not batch_daily:
-                daily_raw = database.get_candles_df(sym)
+        daily_raw = _get_daily_raw(sym)
 
         if daily_raw is None or daily_raw.empty or len(daily_raw) < 5:
             return None, None
@@ -539,58 +736,35 @@ def run_screen(
             if daily_raw.empty or len(daily_raw) < 5:
                 return None, None
 
-        tf_dfs = {}
-        tf_dfs["Daily"] = compute_needed_indicators(daily_raw, needed_indicators_by_tf.get("Daily", set()))
-
-        # Weekly resample
-        if "Weekly" in needed_tfs:
-            w_raw = scanner.resample_ohlcv(daily_raw, "weekly")
-            tf_dfs["Weekly"] = compute_needed_indicators(w_raw, needed_indicators_by_tf.get("Weekly", set()))
-
-        # Monthly resample
-        if "Monthly" in needed_tfs:
-            m_raw = scanner.resample_ohlcv(daily_raw, "monthly")
-            tf_dfs["Monthly"] = compute_needed_indicators(m_raw, needed_indicators_by_tf.get("Monthly", set()))
+        tf_dfs = _build_daily_tf_dfs(sym, daily_raw)
 
         # 75-Min intraday
         if "75-Min" in needed_tfs:
-            intra_raw = None
-            if data_provider_fn:
-                intra_raw = data_provider_fn(sym, "75-Min")
-            else:
-                intra_raw = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
+            intra_raw = data_provider_fn(sym, "75-Min") if data_provider_fn else parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
             if intra_raw is not None and not intra_raw.empty:
                 if not isinstance(intra_raw.index, pd.DatetimeIndex):
                     intra_raw = intra_raw.copy()
                     intra_raw.index = pd.to_datetime(intra_raw.index)
                 if as_of_date is not None:
                     target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
-                    if intra_raw.index.tz is not None:
-                        intra_raw = intra_raw[intra_raw.index <= target_dt.tz_localize(intra_raw.index.tz)]
-                    else:
-                        intra_raw = intra_raw[intra_raw.index <= target_dt]
+                    tz = getattr(intra_raw.index, "tz", None)
+                    intra_raw = intra_raw[intra_raw.index <= (target_dt.tz_localize(tz) if tz else target_dt)]
                 if intra_raw is not None and not intra_raw.empty:
                     tf_dfs["75-Min"] = compute_needed_indicators(intra_raw, needed_indicators_by_tf.get("75-Min", set()))
 
-        # 15-Min intraday (Chartink 19122704 Stage 5 trigger + cross-TF queries)
+        # 15-Min intraday
         if "15-Min" in needed_tfs:
-            intra_15_raw = None
-            if data_provider_fn:
-                intra_15_raw = data_provider_fn(sym, "15-Min")
-            else:
-                intra_15_raw = parquet_loader.ensure_symbol_custom_minute_candles(sym, interval_minutes=15, min_bars=10)
-            if intra_15_raw is not None and not intra_15_raw.empty:
-                if not isinstance(intra_15_raw.index, pd.DatetimeIndex):
-                    intra_15_raw = intra_15_raw.copy()
-                    intra_15_raw.index = pd.to_datetime(intra_15_raw.index)
+            intra_15 = data_provider_fn(sym, "15-Min") if data_provider_fn else parquet_loader.ensure_symbol_custom_minute_candles(sym, interval_minutes=15, min_bars=10)
+            if intra_15 is not None and not intra_15.empty:
+                if not isinstance(intra_15.index, pd.DatetimeIndex):
+                    intra_15 = intra_15.copy()
+                    intra_15.index = pd.to_datetime(intra_15.index)
                 if as_of_date is not None:
                     target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
-                    if intra_15_raw.index.tz is not None:
-                        intra_15_raw = intra_15_raw[intra_15_raw.index <= target_dt.tz_localize(intra_15_raw.index.tz)]
-                    else:
-                        intra_15_raw = intra_15_raw[intra_15_raw.index <= target_dt]
-                if intra_15_raw is not None and not intra_15_raw.empty:
-                    tf_dfs["15-Min"] = compute_needed_indicators(intra_15_raw, needed_indicators_by_tf.get("15-Min", set()))
+                    tz = getattr(intra_15.index, "tz", None)
+                    intra_15 = intra_15[intra_15.index <= (target_dt.tz_localize(tz) if tz else target_dt)]
+                if intra_15 is not None and not intra_15.empty:
+                    tf_dfs["15-Min"] = compute_needed_indicators(intra_15, needed_indicators_by_tf.get("15-Min", set()))
 
         eval_res, clause_results = evaluate_stock(sym, tf_dfs, cfg, return_clause_results=True)
         if eval_res is not None:
@@ -605,6 +779,7 @@ def run_screen(
                     eval_res["Latest_Close"] = round(future_close, 2)
 
         return eval_res, clause_results
+
 
     completed_count = 0
     total_symbols = len(symbols)
