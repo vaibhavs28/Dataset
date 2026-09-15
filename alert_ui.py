@@ -11,6 +11,7 @@ Multi-channel delivery to Telegram, WhatsApp, Email, Webhooks, and In-App Audio.
 """
 
 import os
+import time
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -23,7 +24,6 @@ import alert_engine
 import quadrant_image_generator
 import auto_75m_broadcaster
 import sync_75m_intraday
-import auto_nifty500_updater
 import auto_15m_broadcaster
 
 
@@ -256,27 +256,6 @@ def render_alert_page(theme: str = "dark"):
 
         st.markdown("---")
 
-        # 15-Minute Nifty 500 Intraday Auto-Updater Status Card
-        n500_status = auto_nifty500_updater.get_sync_status()
-        with st.expander("⚡ Nifty 500 15-Minute 1m Intraday Auto-Updater (09:00 - 16:00 IST)", expanded=False):
-            u_col1, u_col2, u_col3, u_col4 = st.columns(4)
-            with u_col1:
-                st.markdown(f"**Daemon Status:** `{n500_status.get('status', 'IDLE')}`")
-                st.markdown(f"**Active Window:** `09:00 - 16:00 IST`")
-            with u_col2:
-                st.markdown(f"**Last Sync:** `{n500_status.get('last_run_timestamp', 'Never')}`")
-                st.markdown(f"**Next Sync:** `{n500_status.get('next_run_timestamp', 'Pending')}`")
-            with u_col3:
-                st.markdown(f"**Target Stocks:** `{n500_status.get('total_symbols', 500)} (Nifty 500)`")
-                st.markdown(f"**1m Bars Ingested:** `{n500_status.get('bars_1m_ingested', 0):,}`")
-            with u_col4:
-                st.markdown(f"**Execution Speed:** `{n500_status.get('elapsed_seconds', 0)}s`")
-                if st.button("🚀 Sync Nifty 500 Now", key="btn_sync_nifty500_now", use_container_width=True):
-                    with st.spinner("Syncing 1m & 75m candles for Nifty 500..."):
-                        res_sync = auto_nifty500_updater.run_nifty500_sync_cycle(ignore_market_hours=True)
-                        st.success(f"Synced {res_sync.get('synced_symbols', 0)} stocks in {res_sync.get('elapsed_seconds', 0)}s!")
-                        st.rerun()
-
         # Controls
         ctrl_col1, ctrl_col2, ctrl_col3, ctrl_col4 = st.columns([2, 2, 1.8, 1.8])
         with ctrl_col1:
@@ -333,19 +312,43 @@ def render_alert_page(theme: str = "dark"):
                 )
 
         if trigger_now:
+            p_bar_75 = st.progress(0.0)
+            p_txt_75 = st.empty()
+            scan_start_75 = time.time()
+            last_update_75 = [0.0]
+
+            def _75m_progress(curr, total, sym):
+                now = time.time()
+                if curr == 1 or curr == total or (now - last_update_75[0] >= 0.25):
+                    last_update_75[0] = now
+                    pct = min(curr / max(total, 1), 1.0)
+                    p_bar_75.progress(pct)
+                    elapsed = max(now - scan_start_75, 0.001)
+                    speed = curr / elapsed
+                    rem_secs = (total - curr) / speed if speed > 0 else 0
+                    eta_str = f"{int(rem_secs)}s" if rem_secs < 60 else f"{int(rem_secs // 60)}m {int(rem_secs % 60)}s"
+                    p_txt_75.markdown(
+                        f"⚡ **Scanning `{sym}`** — **{curr}/{total}** ({pct*100:.1f}%) | "
+                        f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
+                    )
+
             with st.spinner(f"Running 75-Min Waterfall Scan across {bc_universe} (Auto-sync: {auto_sync_upstox})..."):
                 bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
                     universe=bc_universe,
                     stage_filter=stage_num,
                     sync_first=auto_sync_upstox,
-                    force=True
+                    force=True,
+                    progress_callback=_75m_progress
                 )
-                q_count = bc_res.get("qualifying_count", 0)
-                el_sec = bc_res.get("elapsed_seconds", 0.0)
-                if q_count > 0:
-                    st.success(f"🎉 Scan Complete in {el_sec:.1f}s! Found {q_count} qualifying stock(s). 4-Quadrant screenshots generated and dispatched!")
-                else:
-                    st.info(f"✅ Scan Complete in {el_sec:.1f}s. Scanned {bc_res.get('scanned_count')} stocks in {bc_universe}. Currently 0 stocks match Stage {stage_num} criteria.")
+            p_bar_75.empty()
+            p_txt_75.empty()
+
+            q_count = bc_res.get("qualifying_count", 0)
+            el_sec = bc_res.get("elapsed_seconds", 0.0)
+            if q_count > 0:
+                st.success(f"🎉 Scan Complete in {el_sec:.1f}s! Found {q_count} qualifying stock(s). 4-Quadrant screenshots generated and dispatched!")
+            else:
+                st.info(f"✅ Scan Complete in {el_sec:.1f}s. Scanned {bc_res.get('scanned_count')} stocks in {bc_universe}. Currently 0 stocks match Stage {stage_num} criteria.")
 
         # ─── 15-Minute Chartink Scan #19122704 Broadcaster ──────────────────────────
         with st.expander("⚡ **Chartink 15-Minute Intraday Scan (#19122704) — Telegram Broadcaster**", expanded=True):
@@ -384,19 +387,59 @@ def render_alert_page(theme: str = "dark"):
 
             if btn_trigger_15m:
                 stg_val = 5 if "Stage 5" in c15_stage else 4
+                p_bar_15 = st.progress(0.0)
+                p_txt_15 = st.empty()
+                scan_start_15 = time.time()
+                last_update_15 = [0.0]
+
+                def _15m_progress(curr, total, sym):
+                    now = time.time()
+                    if curr == 1 or curr == total or (now - last_update_15[0] >= 0.25):
+                        last_update_15[0] = now
+                        pct = min(curr / max(total, 1), 1.0)
+                        p_bar_15.progress(pct)
+                        elapsed = max(now - scan_start_15, 0.001)
+                        speed = curr / elapsed
+                        rem_secs = (total - curr) / speed if speed > 0 else 0
+                        eta_str = f"{int(rem_secs)}s" if rem_secs < 60 else f"{int(rem_secs // 60)}m {int(rem_secs % 60)}s"
+                        p_txt_15.markdown(
+                            f"⚡ **Scanning `{sym}`** — **{curr}/{total}** ({pct*100:.1f}%) | "
+                            f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
+                        )
+
                 with st.spinner(f"Running 15-minute Chartink #19122704 Scan ({c15_universe}, Stage {stg_val})..."):
                     res15 = auto_15m_broadcaster.execute_15m_broadcast_cycle(
                         universe=c15_universe,
                         stage_filter=stg_val,
-                        force=True
+                        force=True,
+                        progress_callback=_15m_progress
                     )
-                    q_cnt = res15.get("qualifying_count", 0)
-                    dis_cnt = res15.get("alerts_dispatched", 0)
-                    el_s = res15.get("elapsed_seconds", 0.0)
-                    if q_cnt > 0:
-                        st.success(f"🎉 Scan Complete in {el_s:.1f}s! Found {q_cnt} qualifying stocks. Dispatched {dis_cnt} alerts with 4-quadrant charts to Telegram!")
-                    else:
-                        st.info(f"✅ Scan Complete in {el_s:.1f}s. Currently 0 stocks match Stage {stg_val} criteria in {c15_universe}.")
+                p_bar_15.empty()
+                p_txt_15.empty()
+
+                q_cnt = res15.get("qualifying_count", 0)
+                dis_cnt = res15.get("alerts_dispatched", 0)
+                el_s = res15.get("elapsed_seconds", 0.0)
+                scanned_total = res15.get("scanned_count", 0)
+                if q_cnt > 0:
+                    st.success(f"🎉 15-Min Scan Complete in {el_s:.1f}s! Evaluated {scanned_total} stocks. Found {q_cnt} qualifying stocks. Dispatched {dis_cnt} alerts with 4-quadrant charts to Telegram!")
+                else:
+                    st.info(f"✅ 15-Min Scan Complete in {el_s:.1f}s. Evaluated {scanned_total} stocks in {c15_universe}. Currently 0 stocks match Stage {stg_val} criteria.")
+
+                # Interactive results table of qualifying stocks
+                q_stocks = res15.get("qualifying_stocks", [])
+                if q_stocks:
+                    df_q = pd.DataFrame(q_stocks)
+                    cols_to_show = [c for c in ["Symbol", "LTP", "1D Return (%)", "Waterfall Stage", "Monthly", "Weekly", "Daily", "75-Min", "15-Min"] if c in df_q.columns]
+                    st.markdown(f"##### 📋 15-Minute Scan Qualifying Stocks ({len(df_q)} stocks)")
+                    st.dataframe(
+                        df_q[cols_to_show].style.format({
+                            "LTP": "₹{:,.2f}",
+                            "1D Return (%)": "{:+.2f}%"
+                        }).map(lambda v: "color: #10B981; font-weight: 600;" if isinstance(v, (int, float)) and v > 0 else ("color: #EF4444; font-weight: 600;" if isinstance(v, (int, float)) and v < 0 else ""), subset=["1D Return (%)"] if "1D Return (%)" in cols_to_show else []),
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
         # Single Stock Instant Test Section
         with st.expander("🖼️ **On-Demand Single Stock Quadrant Preview & Test**", expanded=False):

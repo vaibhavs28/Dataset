@@ -102,7 +102,8 @@ def execute_15m_broadcast_cycle(
     universe: str = "Nifty 500",
     stage_filter: int = 5,
     channels: Optional[List[str]] = None,
-    force: bool = False
+    force: bool = False,
+    progress_callback: Optional[Any] = None
 ) -> Dict[str, Any]:
     """
     Executes a single 15-minute broadcast cycle for Chartink Scan 19122704.
@@ -152,10 +153,19 @@ def execute_15m_broadcast_cycle(
                 return res
         return None
 
+    completed_count = 0
+    total_symbols = len(symbols)
     eval_workers = min(8, max(2, os.cpu_count() or 2))
     with concurrent.futures.ThreadPoolExecutor(max_workers=eval_workers) as executor:
         futures = {executor.submit(_evaluate_sym, s): s for s in symbols}
         for fut in concurrent.futures.as_completed(futures):
+            sym = futures[fut]
+            completed_count += 1
+            if progress_callback:
+                try:
+                    progress_callback(completed_count, total_symbols, sym)
+                except Exception:
+                    pass
             res = fut.result()
             if res is not None:
                 qualifying_stocks.append(res)
@@ -240,7 +250,9 @@ def execute_15m_broadcast_cycle(
         "timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S IST"),
         "qualifying_count": len(qualifying_stocks),
         "alerts_dispatched": len(dispatched),
-        "elapsed_seconds": elapsed
+        "elapsed_seconds": elapsed,
+        "qualifying_stocks": qualifying_stocks,
+        "scanned_count": len(symbols)
     }
 
 
