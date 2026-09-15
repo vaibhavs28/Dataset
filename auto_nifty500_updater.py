@@ -139,24 +139,19 @@ def get_sync_status() -> Dict[str, Any]:
     }
 
 
-def run_nifty500_sync_cycle(
-    max_workers: int = 20,
-    ignore_market_hours: bool = False
-) -> Dict[str, Any]:
+def run_nifty500_sync_cycle(max_workers: int = 25, ignore_market_hours: bool = False, save_parquet: bool = False) -> Dict[str, Any]:
     """
     Executes a single high-speed sync cycle for Nifty 500:
-    - Ingests 1-minute intraday bars from Upstox
-    - Resamples to 75m bars
-    - Commits directly into DuckDB candles_1m, intraday_candles, and daily_candles
-    - Updates per-symbol Parquet files
+    1. Fetches latest 1-min intraday candles from Upstox API v2.
+    2. Resamples to genuine 75-minute candles.
+    3. Commits to DuckDB & SQLite database tables in batches.
     """
     now_ist = datetime.now(IST)
-
     if not ignore_market_hours and not is_market_hours_ist(now_ist):
-        msg = f"Skipping sync: Outside IST market hours (09:00 to 16:00 Mon-Fri). Current IST: {now_ist.strftime('%Y-%m-%d %H:%M:%S')}"
+        msg = f"⏸️ Outside market hours (Current: {now_ist.strftime('%H:%M:%S IST')}). Auto-updater operates 09:00 - 16:00 IST Mon-Fri."
         logger.info(msg)
         update_status_file({
-            "status": "OUTSIDE_MARKET_HOURS",
+            "status": "IDLE",
             "message": msg,
             "current_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S"),
             "market_window": "09:00 - 16:00 IST (Mon-Fri)"
@@ -180,7 +175,7 @@ def run_nifty500_sync_cycle(
         symbols=symbols,
         universe="Nifty 500",
         max_workers=max_workers,
-        save_parquet=True,
+        save_parquet=save_parquet,
         save_db=True,
         batch_commit_size=50
     )
@@ -215,7 +210,7 @@ def run_nifty500_sync_cycle(
     return status_data
 
 
-def run_15m_daemon(max_workers: int = 20):
+def run_15m_daemon(max_workers: int = 25, save_parquet: bool = False):
     """
     Continuous background daemon running every 15 minutes during IST market hours.
     Syncs precisely at :00, :15, :30, :45 minute marks.
@@ -237,7 +232,7 @@ def run_15m_daemon(max_workers: int = 20):
                 if (now_ist.minute % 15 == 0) and (last_slot != slot_id):
                     logger.info(f"🔔 15-Minute Interval Trigger: {now_ist.strftime('%H:%M:%S IST')}")
                     last_slot = slot_id
-                    run_nifty500_sync_cycle(max_workers=max_workers)
+                    run_nifty500_sync_cycle(max_workers=max_workers, save_parquet=save_parquet)
 
             else:
                 update_status_file({
@@ -260,15 +255,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Nifty 500 15-Minute Intraday Database Updater")
     parser.add_argument("--daemon", action="store_true", help="Run continuously in background every 15 minutes")
     parser.add_argument("--once", action="store_true", help="Run a single update cycle now and exit")
-    parser.add_argument("--workers", type=int, default=20, help="Number of concurrent worker threads (default: 20)")
+    parser.add_argument("--workers", type=int, default=25, help="Number of concurrent worker threads (default: 25)")
+    parser.add_argument("--save-parquet", action="store_true", help="Also append bars to individual disk Parquet files")
     parser.add_argument("--ignore-market-hours", action="store_true", help="Force sync execution outside market hours")
 
     args = parser.parse_args()
 
     if args.daemon:
-        run_15m_daemon(max_workers=args.workers)
+        run_15m_daemon(max_workers=args.workers, save_parquet=args.save_parquet)
     else:
-        res = run_nifty500_sync_cycle(max_workers=args.workers, ignore_market_hours=args.ignore_market_hours)
+        res = run_nifty500_sync_cycle(max_workers=args.workers, ignore_market_hours=args.ignore_market_hours, save_parquet=args.save_parquet)
         print("\n--- Nifty 500 15-Min Sync Summary ---")
         for k, v in res.items():
             print(f"{k}: {v}")
