@@ -1,0 +1,16 @@
+[Unit]
+Description=Upstox Real-Time Protobuf WebSocket Streamer & RAM Accumulator
+After=network.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/home/trader/Dataset
+ExecStart=/home/trader/Dataset/venv/bin/python3 upstox_protobuf_stream.py --universe all
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/trader/Dataset/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target

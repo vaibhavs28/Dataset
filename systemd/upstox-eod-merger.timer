@@ -1,0 +1,9 @@
+[Unit]
+Description=Trigger Upstox EOD Merger at 16:00 IST Mon-Fri
+
+[Timer]
+OnCalendar=Mon..Fri 16:00:00 Asia/Kolkata
+Persistent=true
+
+[Install]
+WantedBy=timers.target

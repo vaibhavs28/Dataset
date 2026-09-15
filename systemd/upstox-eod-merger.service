@@ -1,0 +1,10 @@
+[Unit]
+Description=Upstox 4:00 PM IST End-of-Day Database Merger
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/home/trader/Dataset
+ExecStart=/home/trader/Dataset/venv/bin/python3 eod_merger.py
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/trader/Dataset/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
