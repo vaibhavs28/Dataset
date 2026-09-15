@@ -1182,6 +1182,42 @@ def main():
                 else:
                     intra_df = pd.DataFrame()
 
+                # 5. Quad Chart Data Scope: Restrict displayed price action to the last 1 year
+                if d_df is not None and not d_df.empty:
+                    latest_date = pd.to_datetime(d_df.index[-1])
+                    one_year_cutoff = latest_date - pd.DateOffset(years=1)
+
+                    # Monthly slice (last 1 year)
+                    if m_df is not None and not m_df.empty:
+                        m_tz = getattr(m_df.index, "tz", None)
+                        m_cutoff = one_year_cutoff.tz_localize(m_tz) if m_tz is not None else (one_year_cutoff.tz_localize(None) if getattr(one_year_cutoff, 'tz', None) is not None else one_year_cutoff)
+                        m_sliced = m_df[m_df.index >= m_cutoff]
+                        if len(m_sliced) >= 6:
+                            m_df = m_sliced
+
+                    # Weekly slice (last 1 year)
+                    if w_df is not None and not w_df.empty:
+                        w_tz = getattr(w_df.index, "tz", None)
+                        w_cutoff = one_year_cutoff.tz_localize(w_tz) if w_tz is not None else (one_year_cutoff.tz_localize(None) if getattr(one_year_cutoff, 'tz', None) is not None else one_year_cutoff)
+                        w_sliced = w_df[w_df.index >= w_cutoff]
+                        if len(w_sliced) >= 10:
+                            w_df = w_sliced
+
+                    # Daily slice (last 1 year)
+                    d_tz = getattr(d_df.index, "tz", None)
+                    d_cutoff = one_year_cutoff.tz_localize(d_tz) if d_tz is not None else (one_year_cutoff.tz_localize(None) if getattr(one_year_cutoff, 'tz', None) is not None else one_year_cutoff)
+                    d_sliced = d_df[d_df.index >= d_cutoff]
+                    if len(d_sliced) >= 30:
+                        d_df = d_sliced
+
+                    # 75-Min / Q4 Intraday slice (last 1 year)
+                    if intra_df is not None and not intra_df.empty:
+                        i_tz = getattr(intra_df.index, "tz", None)
+                        i_cutoff = one_year_cutoff.tz_localize(i_tz) if i_tz is not None else (one_year_cutoff.tz_localize(None) if getattr(one_year_cutoff, 'tz', None) is not None else one_year_cutoff)
+                        i_sliced = intra_df[intra_df.index >= i_cutoff]
+                        if not i_sliced.empty:
+                            intra_df = i_sliced
+
                 # Alignment status summary banner
                 res_meta = scanner.evaluate_multiframe_alignment(sel_stock)
                 if res_meta:
@@ -1196,7 +1232,7 @@ def main():
                 if chart_engine == "TradingView":
                     c_lead, c_fs = st.columns([3, 1])
                     with c_lead:
-                        st.caption("💡 **Interactive 4-Quadrant Matrix:** Click **'⛶ FULLSCREEN'** (or press **'F'**) to expand all 4 charts across your monitor. Use **mousewheel** on any chart to zoom smoothly.")
+                        st.caption("💡 **Interactive 4-Quadrant Matrix (Last 1-Year Range):** Displaying 1-year historical price action across Monthly, Weekly, Daily, and 75-Min charts. Click **'⛶ FULLSCREEN'** (or press **'F'**) to expand across monitor.")
                     with c_fs:
                         theater_mode = st.toggle("⛶ Ultra Height (1,100px)", value=False, key="quad_theater_mode")
 
@@ -1206,7 +1242,7 @@ def main():
                         monthly_df=m_df,
                         weekly_df=w_df,
                         daily_df=d_df,
-                        intra_df=intra_df.tail(12000) if (intra_df is not None and len(intra_df) > 12000) else intra_df,
+                        intra_df=intra_df,
                         rsi_span=rsi_span,
                         show_rsi=show_rsi_panel,
                         show_volume=show_volume,
