@@ -7,6 +7,10 @@ complex operators (>, <, crossed_above, crossed_below), custom indicators,
 pre-built Chartink screener presets, and Chartink query string parsing.
 """
 
+import os
+import threading
+import concurrent.futures
+import logging
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Any, Tuple
 import re
@@ -17,6 +21,8 @@ import scanner
 import database
 import parquet_loader
 import config
+
+logger = logging.getLogger("screener_engine")
 
 
 @dataclass
@@ -424,18 +430,26 @@ def run_screen(
     clause_pass_counts = [0] * len(cfg.clauses)
     evaluated_count = 0
 
-    for sym in symbols:
-        tf_dfs = {}
+    batch_daily = {}
+    if not data_provider_fn and len(symbols) > 1:
+        try:
+            batch_daily = database.get_batch_candles_df(symbols)
+        except Exception as e:
+            logger.warning(f"Batch daily load error in run_screen: {e}")
+
+    def _eval_screen_sym(sym: str) -> Tuple[Optional[Dict[str, Any]], Optional[List[bool]]]:
+        clean = sym.upper().strip().replace("-EQ", "").replace(".NS", "")
         daily_raw = None
 
-        # Fetch daily first
         if data_provider_fn:
             daily_raw = data_provider_fn(sym, "Daily")
         else:
-            daily_raw = database.get_candles_df(sym)
+            daily_raw = batch_daily.get(clean)
+            if daily_raw is None or daily_raw.empty:
+                daily_raw = database.get_candles_df(sym)
 
         if daily_raw is None or daily_raw.empty or len(daily_raw) < 5:
-            continue
+            return None, None
 
         if not isinstance(daily_raw.index, pd.DatetimeIndex):
             daily_raw = daily_raw.copy()
@@ -445,17 +459,15 @@ def run_screen(
         if as_of_date is not None:
             target_dt = pd.to_datetime(as_of_date)
             eod_naive = target_dt.replace(hour=23, minute=59, second=59)
-            if not isinstance(daily_raw.index, pd.DatetimeIndex):
-                daily_raw.index = pd.to_datetime(daily_raw.index)
             d_tz = getattr(daily_raw.index, "tz", None)
             if d_tz is not None:
                 daily_raw = daily_raw[daily_raw.index <= eod_naive.tz_localize(d_tz)]
             else:
                 daily_raw = daily_raw[daily_raw.index <= eod_naive]
             if daily_raw.empty or len(daily_raw) < 5:
-                continue
+                return None, None
 
-        # Prepare Daily indicators
+        tf_dfs = {}
         tf_dfs["Daily"] = compute_screener_indicators(daily_raw)
 
         # Weekly resample
@@ -489,12 +501,6 @@ def run_screen(
                     tf_dfs["75-Min"] = compute_screener_indicators(intra_raw)
 
         eval_res, clause_results = evaluate_stock(sym, tf_dfs, cfg, return_clause_results=True)
-        if clause_results:
-            evaluated_count += 1
-            for i, p in enumerate(clause_results):
-                if p:
-                    clause_pass_counts[i] += 1
-
         if eval_res is not None:
             as_of_str = str(daily_raw.index[-1])[:10]
             eval_res["Scan_Date"] = as_of_str
@@ -505,7 +511,35 @@ def run_screen(
                 if curr_p > 0:
                     eval_res["Return_Since_Scan_%"] = round(((future_close - curr_p) / curr_p) * 100.0, 2)
                     eval_res["Latest_Close"] = round(future_close, 2)
-            matches.append(eval_res)
+
+        return eval_res, clause_results
+
+    max_workers = min(32, max(4, (os.cpu_count() or 4) * 4)) if len(symbols) > 4 else 1
+    if max_workers > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_sym = {executor.submit(_eval_screen_sym, sym): sym for sym in symbols}
+            for future in concurrent.futures.as_completed(future_to_sym):
+                try:
+                    eval_res, clause_results = future.result()
+                    if clause_results:
+                        evaluated_count += 1
+                        for i, p in enumerate(clause_results):
+                            if p:
+                                clause_pass_counts[i] += 1
+                    if eval_res is not None:
+                        matches.append(eval_res)
+                except Exception as e:
+                    logger.error(f"Error screening {future_to_sym[future]}: {e}")
+    else:
+        for sym in symbols:
+            eval_res, clause_results = _eval_screen_sym(sym)
+            if clause_results:
+                evaluated_count += 1
+                for i, p in enumerate(clause_results):
+                    if p:
+                        clause_pass_counts[i] += 1
+            if eval_res is not None:
+                matches.append(eval_res)
 
     df_res = pd.DataFrame(matches) if matches else pd.DataFrame()
     if not df_res.empty and "Change_%" in df_res.columns:
@@ -533,7 +567,8 @@ def evaluate_stock_waterfall(
     daily_df: pd.DataFrame,
     intra_75_df: Optional[pd.DataFrame] = None,
     as_of_date: Optional[Any] = None,
-    as_of_time: Optional[str] = None
+    as_of_time: Optional[str] = None,
+    intra_75_provider: Optional[Any] = None
 ) -> Optional[Dict[str, Any]]:
     """
     Evaluates exact Chartink 'positional-scan-364' rules via a strict Waterfall Model:
@@ -541,6 +576,7 @@ def evaluate_stock_waterfall(
     If any stage fails, the stock cannot progress to subsequent stages.
     If Monthly fails, the stock is completely excluded (returns None).
     Supports historical date & time slicing if as_of_date/as_of_time are provided.
+    Supports lazy evaluation of 75m intraday data to eliminate redundant disk queries.
     """
     if daily_df is None or daily_df.empty:
         return None
@@ -576,6 +612,22 @@ def evaluate_stock_waterfall(
         if hasattr(last_intra_dt, "hour"):
             scan_time_str = candle_close_map.get((last_intra_dt.hour, last_intra_dt.minute), f"{last_intra_dt.hour:02d}:{last_intra_dt.minute:02d}")
 
+    def _slice_intra_75(idf: Optional[pd.DataFrame]) -> Optional[pd.DataFrame]:
+        if idf is None or idf.empty:
+            return idf
+        if not isinstance(idf.index, pd.DatetimeIndex):
+            idf = idf.copy()
+            idf.index = pd.to_datetime(idf.index)
+        if as_of_date is not None:
+            time_cutoff = close_to_start.get(scan_time_str, "14:15:00")
+            dt_str = str(as_of_date)[:10]
+            cutoff_dt = pd.to_datetime(f"{dt_str} {time_cutoff}")
+            if idf.index.tz is not None:
+                idf = idf[idf.index <= cutoff_dt.tz_localize(idf.index.tz)]
+            else:
+                idf = idf[idf.index <= cutoff_dt]
+        return idf
+
     if as_of_date is not None:
         target_dt = pd.to_datetime(as_of_date)
         eod_naive = target_dt.replace(hour=23, minute=59, second=59)
@@ -587,18 +639,18 @@ def evaluate_stock_waterfall(
         else:
             daily_df = daily_df[daily_df.index <= eod_naive]
 
-        if intra_75_df is not None and not intra_75_df.empty:
-            if not isinstance(intra_75_df.index, pd.DatetimeIndex):
-                intra_75_df = intra_75_df.copy()
-                intra_75_df.index = pd.to_datetime(intra_75_df.index)
+    # If an intraday time slice was explicitly requested, we need 75m data upfront for accurate LTP
+    if as_of_time and as_of_time[:5] != "15:30" and intra_75_df is None:
+        if intra_75_provider is not None:
+            try:
+                intra_75_df = intra_75_provider(symbol)
+            except TypeError:
+                intra_75_df = intra_75_provider(symbol, "75-Min")
+        else:
+            intra_75_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
 
-            time_cutoff = close_to_start.get(scan_time_str, "14:15:00")
-            dt_str = str(as_of_date)[:10]
-            cutoff_dt = pd.to_datetime(f"{dt_str} {time_cutoff}")
-            if intra_75_df.index.tz is not None:
-                intra_75_df = intra_75_df[intra_75_df.index <= cutoff_dt.tz_localize(intra_75_df.index.tz)]
-            else:
-                intra_75_df = intra_75_df[intra_75_df.index <= cutoff_dt]
+    if intra_75_df is not None and not intra_75_df.empty:
+        intra_75_df = _slice_intra_75(intra_75_df)
 
     if daily_df is None or daily_df.empty or len(daily_df) < 15:
         return None
@@ -727,8 +779,20 @@ def evaluate_stock_waterfall(
     # 4. 75-MIN STAGE (Q4 Intraday Trigger)
     # ==========================================
     q4_c, q4_e20, q4_r = np.nan, np.nan, np.nan
-    if d_pass and intra_75_df is not None and not intra_75_df.empty and len(intra_75_df) >= 10:
-        q_close = intra_75_df["close"]
+    if d_pass:
+        if intra_75_df is None:
+            if intra_75_provider is not None:
+                try:
+                    intra_75_df = intra_75_provider(symbol)
+                except TypeError:
+                    intra_75_df = intra_75_provider(symbol, "75-Min")
+            else:
+                intra_75_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
+            if intra_75_df is not None and not intra_75_df.empty:
+                intra_75_df = _slice_intra_75(intra_75_df)
+
+        if intra_75_df is not None and not intra_75_df.empty and len(intra_75_df) >= 10:
+            q_close = intra_75_df["close"]
         q_ema5 = scanner.calculate_ema(q_close, span=5).values
         q_ema20 = scanner.calculate_ema(q_close, span=20).values
         q_rsi = scanner.calculate_rsi(q_close, span=9).values
@@ -801,29 +865,81 @@ def run_waterfall_scan(
     """
     results = []
     total_scanned = len(symbols)
+    if total_scanned == 0:
+        empty_df = pd.DataFrame()
+        return {
+            "all_waterfall": empty_df,
+            "stage_4_full": empty_df,
+            "stage_3_daily": empty_df,
+            "stage_2_weekly": empty_df,
+            "stage_1_monthly": empty_df,
+            "counts": {"total": 0, "as_of_date": str(as_of_date) if as_of_date else "Latest Live", "as_of_time": str(as_of_time) if as_of_time else "15:30", "m_pass": 0, "w_pass": 0, "d_pass": 0, "q4_pass": 0}
+        }
 
-    for i, sym in enumerate(symbols):
-        if progress_callback:
-            progress_callback(i + 1, total_scanned, sym)
+    # 1. High-performance batch retrieval of daily candles in a single DuckDB query
+    batch_daily = {}
+    if not data_provider_fn and total_scanned > 1:
+        try:
+            batch_daily = database.get_batch_candles_df(symbols)
+        except Exception as e:
+            logger.warning(f"Batch daily load error, fallback to individual queries: {e}")
 
+    def _eval_sym(sym: str) -> Optional[Dict[str, Any]]:
+        clean = sym.upper().strip().replace("-EQ", "").replace(".NS", "")
         daily_df = None
         if data_provider_fn:
             daily_df = data_provider_fn(sym, "Daily")
         else:
-            daily_df = database.get_candles_df(sym)
+            daily_df = batch_daily.get(clean)
+            if daily_df is None or daily_df.empty:
+                daily_df = database.get_candles_df(sym)
 
         if daily_df is None or daily_df.empty or len(daily_df) < 15:
-            continue
+            return None
 
-        intra_75_df = None
-        if data_provider_fn:
-            intra_75_df = data_provider_fn(sym, "75-Min")
-        else:
-            intra_75_df = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
+        # 2. Lazy evaluation: 75m intraday is only fetched if Stage 3 passes or intraday slice requested
+        return evaluate_stock_waterfall(
+            sym,
+            daily_df,
+            intra_75_df=None,
+            as_of_date=as_of_date,
+            as_of_time=as_of_time,
+            intra_75_provider=data_provider_fn
+        )
 
-        eval_res = evaluate_stock_waterfall(sym, daily_df, intra_75_df, as_of_date=as_of_date, as_of_time=as_of_time)
-        if eval_res is not None:
-            results.append(eval_res)
+    completed_count = 0
+    progress_lock = threading.Lock()
+
+    def _worker(sym: str) -> Optional[Dict[str, Any]]:
+        nonlocal completed_count
+        try:
+            return _eval_sym(sym)
+        finally:
+            if progress_callback:
+                with progress_lock:
+                    completed_count += 1
+                    try:
+                        progress_callback(completed_count, total_scanned, sym)
+                    except Exception:
+                        pass
+
+    # 3. Parallel multi-threaded execution across CPU cores
+    max_workers = min(32, max(4, (os.cpu_count() or 4) * 4)) if total_scanned > 4 else 1
+    if max_workers > 1:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_sym = {executor.submit(_worker, sym): sym for sym in symbols}
+            for future in concurrent.futures.as_completed(future_to_sym):
+                try:
+                    res = future.result()
+                    if res is not None:
+                        results.append(res)
+                except Exception as e:
+                    logger.error(f"Error evaluating {future_to_sym[future]}: {e}")
+    else:
+        for sym in symbols:
+            res = _worker(sym)
+            if res is not None:
+                results.append(res)
 
     if not results:
         empty_df = pd.DataFrame()

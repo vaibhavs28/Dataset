@@ -335,6 +335,36 @@ def get_candles_df(
         return df
 
 
+def get_batch_candles_df(
+    symbols: List[str],
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> Dict[str, pd.DataFrame]:
+    """
+    High-performance batch fetch of daily candles for multiple symbols as DataFrames.
+    Returns {clean_symbol: df}. Uses DuckDB when available for sub-second retrieval.
+    """
+    if not symbols:
+        return {}
+
+    try:
+        import duckdb_store
+        res = duckdb_store.get_batch_candles_df(symbols, start_date=start_date, end_date=end_date)
+        if res:
+            return res
+    except Exception as e:
+        logger.warning(f"DuckDB get_batch_candles_df fallback to sequential/sqlite: {e}")
+
+    # Fallback to sequential get_candles_df
+    result = {}
+    for s in symbols:
+        clean = s.upper().strip().replace("-EQ", "").replace(".NS", "")
+        df = get_candles_df(s, start_date=start_date, end_date=end_date)
+        if not df.empty:
+            result[clean] = df
+    return result
+
+
 def upsert_intraday_candles(candles: List[Dict[str, Any]]):
     """
     Inserts or updates intraday candles (e.g. 75m, 1m) into DuckDB and SQLite.
