@@ -503,6 +503,14 @@ def load_candles_for_simulation(symbol: str, timeframe: str, custom_minutes: int
         daily = database.get_candles_df(symbol)
         return daily if (daily is not None and not daily.empty) else pd.DataFrame()
     elif tf_str in ("75-Min", "75m"):
+        try:
+            import hot_intraday
+            if hot_intraday.has_hot_data():
+                h_df = hot_intraday.get_resampled_candles(symbol, interval_minutes=75, limit=200)
+                if h_df is not None and len(h_df) >= 10:
+                    return h_df
+        except Exception:
+            pass
         df_75 = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=50)
         if df_75 is not None and not df_75.empty:
             return df_75
@@ -516,11 +524,20 @@ def load_candles_for_simulation(symbol: str, timeframe: str, custom_minutes: int
         minutes = custom_minutes
 
     try:
+        import hot_intraday
+        if hot_intraday.has_hot_data():
+            h_df = hot_intraday.get_resampled_candles(symbol, interval_minutes=minutes, limit=300)
+            if h_df is not None and len(h_df) >= 10:
+                return h_df
+    except Exception:
+        pass
+
+    try:
         df_intra = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=minutes, min_bars=20)
         if df_intra is not None and not df_intra.empty:
             return df_intra
     except Exception as e:
-        logger.warning(f"Note loading {minutes}-min candles for {symbol}: {e}")
+        pass
 
     # Fallback to daily
     daily = database.get_candles_df(symbol)
@@ -692,9 +709,9 @@ def render_strategy_lab_page(theme: str = "dark"):
             st.write("")
             run_btn = st.button("🚀 Run Backtest", type="primary", use_container_width=True, key="slab_run_single_btn")
 
-        # Auto-run on first load or button press
+        # Run simulation on button press
         sim_key = f"slab_result_{sel_sym}_{effective_tf}_{selected_strat_name}"
-        if run_btn or sim_key not in st.session_state:
+        if run_btn:
             with st.spinner(f"Simulating {selected_strat_name} on {sel_sym} ({effective_tf})..."):
                 df_raw = load_candles_for_simulation(sel_sym, effective_tf)
                 if df_raw.empty or len(df_raw) < 15:
@@ -715,7 +732,7 @@ def render_strategy_lab_page(theme: str = "dark"):
                             st.info(f"ℹ️ Selected lookback '{lookback_choice}' contains insufficient recent data ({len(df_filtered)} bars). Using all available history ({len(df_raw)} bars).")
 
                     # Prepare indicators & backtest
-                    df_ind = prepare_indicators(df_raw, cfg)
+                    df_ind = prepare_indicators(df_raw, cfg, symbol=sel_sym)
                     result = run_backtest(
                         df_ind,
                         cfg,
@@ -940,6 +957,15 @@ def render_strategy_lab_page(theme: str = "dark"):
                 )
             else:
                 st.info("No trades were generated under these parameter constraints. Try widening targets/stop-losses or testing another timeframe.")
+        else:
+            st.markdown(f"""
+            <div style="text-align: center; padding: 40px 20px; background: {tc['card_bg']}; border: 1px dashed {tc['card_border']}; border-radius: 8px; margin-top: 16px;">
+                <h4 style="color: {tc['text_primary']}; margin-bottom: 8px;">🚀 Ready to Simulate</h4>
+                <p style="color: {tc['text_secondary']}; font-size: 14px; margin: 0 auto; max-width: 500px;">
+                    Select your parameters above and click <b>'🚀 Run Backtest'</b> to execute strategy simulation, analyze win rates, and visualize trade markers.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
 
     # ==========================================
     # TAB 2: MULTI-STOCK BASKET BACKTEST

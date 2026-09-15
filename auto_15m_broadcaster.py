@@ -152,16 +152,26 @@ def execute_15m_broadcast_cycle(
                 return res
         return None
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=24) as executor:
+    eval_workers = min(8, max(2, os.cpu_count() or 2))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=eval_workers) as executor:
         futures = {executor.submit(_evaluate_sym, s): s for s in symbols}
         for fut in concurrent.futures.as_completed(futures):
             res = fut.result()
             if res is not None:
                 qualifying_stocks.append(res)
 
+    # Sort so highest stage (Stage 5) comes first, then by largest price move
+    qualifying_stocks.sort(
+        key=lambda x: (x.get("Stage", 0), abs(float(x.get("1D Return (%)", 0.0)))),
+        reverse=True
+    )
+
     logger.info(f"Scan complete. Found {len(qualifying_stocks)} stocks meeting Stage {stage_filter}+.")
 
-    # 4. Dispatch alerts with screenshots
+    # 4. Dispatch alerts with screenshots (capped to top 5 to prevent OOM memory saturation)
+    MAX_SCREENSHOTS = 5
+    import gc
+
     if channels is None:
         cfg = alert_engine.get_channel_config()
         channels = [ch for ch in ["telegram", "whatsapp", "email", "webhook"] if cfg.get(ch, {}).get("enabled")]
@@ -171,7 +181,7 @@ def execute_15m_broadcast_cycle(
     dispatched = []
     ch_url = "https://chartink.com/screener/intraday-scan-19122704"
 
-    for row in qualifying_stocks:
+    for idx, row in enumerate(qualifying_stocks):
         sym = str(row["Symbol"])
         ltp = float(row.get("LTP", 0.0))
         stg = int(row.get("Stage", 5))
@@ -190,12 +200,18 @@ def execute_15m_broadcast_cycle(
             f"• <b>15-Min:</b> {row.get('15-Min', 'PASS')}"
         )
 
-        logger.info(f"📸 Generating 4-Quadrant Screenshot for {sym} ({stg_lbl})...")
-        img_path = quadrant_image_generator.generate_stock_quadrant(
-            symbol=sym,
-            stage_label=f"{stg_lbl} QUALIFIED",
-            theme="light"
-        )
+        img_path = None
+        if idx < MAX_SCREENSHOTS:
+            logger.info(f"📸 Generating 4-Quadrant Screenshot ({idx+1}/{min(MAX_SCREENSHOTS, len(qualifying_stocks))}) for {sym} ({stg_lbl})...")
+            try:
+                img_path = quadrant_image_generator.generate_stock_quadrant(
+                    symbol=sym,
+                    stage_label=f"{stg_lbl} QUALIFIED",
+                    theme="light"
+                )
+            except Exception as e:
+                logger.error(f"Error generating quad screenshot for {sym}: {e}")
+            gc.collect()
 
         deliv = alert_engine.dispatch_alert(
             symbol=sym,

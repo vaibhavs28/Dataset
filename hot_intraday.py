@@ -11,6 +11,7 @@ Features:
 4. EOD Rotation: Cleansed and aggregated into historical daily candles at 4:00 PM IST by eod_merger.py.
 """
 
+import time
 import logging
 import threading
 from pathlib import Path
@@ -32,30 +33,40 @@ _hot_lock = threading.RLock()
 _db_initialized = False
 
 
-def _get_conn(read_only: bool = False) -> duckdb.DuckDBPyConnection:
-    """Returns a DuckDB connection to hot_intraday.db with WAL auto-checkpoint."""
+def _get_conn(read_only: bool = False, max_retries: int = 15, retry_delay: float = 0.05) -> duckdb.DuckDBPyConnection:
+    """Returns a DuckDB connection to hot_intraday.db with automatic retry backoff on lock contention."""
     global _db_initialized
-    conn = duckdb.connect(str(HOT_DB_PATH), read_only=read_only)
-    if not _db_initialized and not read_only:
-        with _hot_lock:
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS intraday_1m (
-                    symbol VARCHAR,
-                    timestamp TIMESTAMPTZ,
-                    open DOUBLE,
-                    high DOUBLE,
-                    low DOUBLE,
-                    close DOUBLE,
-                    volume BIGINT
-                );
-            """)
-            try:
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_hot_sym ON intraday_1m(symbol);")
-                conn.execute("CREATE INDEX IF NOT EXISTS idx_hot_ts ON intraday_1m(timestamp);")
-            except Exception:
-                pass
-            _db_initialized = True
-    return conn
+    last_err = None
+    for attempt in range(max_retries):
+        try:
+            conn = duckdb.connect(str(HOT_DB_PATH), read_only=read_only)
+            if not _db_initialized and not read_only:
+                with _hot_lock:
+                    conn.execute("""
+                        CREATE TABLE IF NOT EXISTS intraday_1m (
+                            symbol VARCHAR,
+                            timestamp TIMESTAMPTZ,
+                            open DOUBLE,
+                            high DOUBLE,
+                            low DOUBLE,
+                            close DOUBLE,
+                            volume BIGINT
+                        );
+                    """)
+                    try:
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_hot_sym ON intraday_1m(symbol);")
+                        conn.execute("CREATE INDEX IF NOT EXISTS idx_hot_ts ON intraday_1m(timestamp);")
+                    except Exception:
+                        pass
+                    _db_initialized = True
+            return conn
+        except Exception as e:
+            last_err = e
+            if attempt < max_retries - 1:
+                time.sleep(retry_delay * (1.5 ** attempt))
+            else:
+                logger.error(f"Failed to acquire hot_intraday connection (read_only={read_only}) after {max_retries} attempts: {e}")
+                raise last_err
 
 
 def append_1m_batch(df: pd.DataFrame) -> int:

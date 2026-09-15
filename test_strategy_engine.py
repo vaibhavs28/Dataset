@@ -232,5 +232,22 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertIn("signal_entry", signals.columns)
 
 
+    def test_tz_aware_prepare_indicators(self):
+        # Verify that timezone-aware DatetimeIndex handles multi-week data without warnings/errors
+        dates = pd.date_range("2026-01-01 09:15", periods=30, freq="D", tz="Asia/Kolkata")
+        df_tz = pd.DataFrame({
+            "open": [100.0 + i for i in range(30)],
+            "high": [101.0 + i for i in range(30)],
+            "low": [99.0 + i for i in range(30)],
+            "close": [100.5 + i for i in range(30)],
+            "volume": [1000] * 30
+        }, index=dates)
+        cfg = get_preset_strategy("Chartink 75m Waterfall")
+        df_ind = prepare_indicators(df_tz, cfg)
+        self.assertFalse(df_ind.empty)
+        self.assertIn("Weekly_P", df_ind.columns)
+        self.assertIn("Waterfall_Stage4", df_ind.columns)
+
+
 if __name__ == "__main__":
     unittest.main()

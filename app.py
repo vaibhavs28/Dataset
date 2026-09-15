@@ -1179,12 +1179,20 @@ def main():
                 d_df["RSI_EMA3"] = scanner.calculate_ema(d_df["RSI"], span=3)
                 d_df["RSI_WMA21"] = scanner.calculate_wma(d_df["RSI"], period=21)
 
-                # 4. Q4 DataFrame (Only 75-Min Updates Live!)
+                # 4. Q4 DataFrame (Dynamic hot_intraday < 2ms live feed priority)
                 if tf_type == "minute":
-                    if target_mins == 75:
-                        intra_df = parquet_loader.ensure_symbol_75m_candles(sel_stock, min_bars=100)
-                    else:
-                        intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=100)
+                    intra_df = None
+                    try:
+                        import hot_intraday
+                        if hot_intraday.has_hot_data():
+                            intra_df = hot_intraday.get_resampled_candles(sel_stock, interval_minutes=target_mins, limit=200)
+                    except Exception:
+                        pass
+                    if intra_df is None or intra_df.empty:
+                        if target_mins == 75:
+                            intra_df = parquet_loader.ensure_symbol_75m_candles(sel_stock, min_bars=100)
+                        else:
+                            intra_df = parquet_loader.ensure_symbol_custom_minute_candles(sel_stock, interval_minutes=target_mins, min_bars=100)
                 elif tf_type == "day":
                     if target_days == 1:
                         intra_df = eod_candles.copy()

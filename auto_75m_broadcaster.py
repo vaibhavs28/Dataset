@@ -351,21 +351,29 @@ def run_75m_waterfall_broadcast(
             channels = ["telegram", "email", "in_app"]
 
     dispatched_stocks = []
+    MAX_SCREENSHOTS = 5
+    import gc
 
     if qualifying_count > 0:
-        for _, row in qualifying_df.iterrows():
+        for idx, (_, row) in enumerate(qualifying_df.iterrows()):
             sym = str(row["Symbol"])
             ltp = float(row.get("LTP", 0.0))
             ret1d = float(row.get("1D Return (%)", 0.0))
             stg = int(row.get("Stage", 4))
             stg_lbl = row.get("Waterfall Stage", f"Stage {stg}")
 
-            logger.info(f"📸 Generating 1600x1200 4-Quadrant Screenshot (Light Theme) for {sym}...")
-            img_path = quadrant_image_generator.generate_stock_quadrant(
-                symbol=sym,
-                stage_label=f"{stg_lbl} QUALIFIED",
-                theme="light"
-            )
+            img_path = None
+            if idx < MAX_SCREENSHOTS:
+                logger.info(f"📸 Generating 1600x1200 4-Quadrant Screenshot ({idx+1}/{min(MAX_SCREENSHOTS, qualifying_count)}) for {sym}...")
+                try:
+                    img_path = quadrant_image_generator.generate_stock_quadrant(
+                        symbol=sym,
+                        stage_label=f"{stg_lbl} QUALIFIED",
+                        theme="light"
+                    )
+                except Exception as e:
+                    logger.error(f"Error generating quadrant screenshot for {sym}: {e}")
+                gc.collect()
 
             # Construct structured alert message
             headline = f"🏆 75-Min Waterfall Alert: {sym} qualified {stg_lbl}!"

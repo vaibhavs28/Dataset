@@ -5,7 +5,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import pandas as pd
 import duckdb
 
@@ -291,6 +291,10 @@ def get_batch_candles_df(
     """
     if not symbols:
         return {}
+
+    # Default to last 5 years for multi-symbol batches if not specified, preventing OOM crashes
+    if start_date is None and len(symbols) > 5:
+        start_date = (datetime.now() - timedelta(days=365 * 5)).strftime("%Y-%m-%d")
 
     query_symbols = []
     for s in symbols:

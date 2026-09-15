@@ -29,18 +29,32 @@ def is_pure_equity_symbol(sym: str) -> bool:
     return True
 
 
+_mem_cached_parquet_symbols: Optional[List[str]] = None
+
+
 def get_parquet_symbols() -> List[str]:
     """Returns the list of available pure Equity symbols in the local parquet dataset (excluding indices and ETFs)."""
+    global _mem_cached_parquet_symbols
+    if _mem_cached_parquet_symbols is not None:
+        return _mem_cached_parquet_symbols
+
+    res = []
     if PARQUET_BY_SYMBOL_DIR.exists():
         files = list(PARQUET_BY_SYMBOL_DIR.glob("*.parquet"))
         if len(files) > 0:
-            return sorted([f.stem for f in files if is_pure_equity_symbol(f.stem)])
+            res = sorted([f.stem for f in files if is_pure_equity_symbol(f.stem)])
+            if res:
+                _mem_cached_parquet_symbols = res
+                return res
 
     if SYMBOLS_CACHE_FILE.exists():
         try:
             with open(SYMBOLS_CACHE_FILE, "r") as f:
                 raw_list = json.load(f)
-                return sorted([s for s in raw_list if is_pure_equity_symbol(s)])
+                res = sorted([s for s in raw_list if is_pure_equity_symbol(s)])
+                if res:
+                    _mem_cached_parquet_symbols = res
+                    return res
         except Exception:
             pass
 

@@ -202,14 +202,21 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[s
                 pivot_cols = ["P", "BC", "TC", "R1", "S1", "S_05"]
                 pivot_map = weekly.set_index("week_end")[pivot_cols]
 
-                bar_dates = pd.DataFrame({"timestamp": out.index})
-                bar_dates["week_end"] = bar_dates["timestamp"].dt.to_period("W-SUN").dt.end_time.dt.date
+                ts_naive = out.index.tz_localize(None) if out.index.tz is not None else out.index
+                ts_series = pd.Series(ts_naive, index=out.index)
+                week_ends = ts_series.dt.to_period("W-SUN").dt.end_time.dt.date
+                bar_dates = pd.DataFrame({"timestamp": out.index, "week_end": week_ends.values})
                 merged = bar_dates.merge(pivot_map, on="week_end", how="left")
                 merged.set_index(out.index, inplace=True)
                 for col in pivot_cols:
                     out[f"Weekly_{col}"] = merged[col].ffill()
 
         # Multi-Timeframe Waterfall Stage alignment
+        ts_naive = out.index.tz_localize(None) if out.index.tz is not None else out.index
+        ts_series = pd.Series(ts_naive, index=out.index)
+        week_ends = ts_series.dt.to_period("W-SUN").dt.end_time.dt.date
+        month_keys = ts_series.dt.to_period("M").astype(str)
+
         if cfg.strategy_type == "Chartink_75_Waterfall":
             m_pass_series = pd.Series(True, index=out.index)
             try:
@@ -229,10 +236,10 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[s
                         (m_r >= m_re3) & (m_r >= m_rw21)
                     )
                     m_map = m_raw[["m_pass"]].copy()
-                    m_map["month_key"] = m_map.index.to_period("M")
-                    b_df = pd.DataFrame({"timestamp": out.index, "month_key": out.index.to_period("M")})
+                    m_map["month_key"] = m_map.index.to_period("M").astype(str)
+                    b_df = pd.DataFrame({"timestamp": out.index, "month_key": month_keys.values})
                     m_merged = b_df.merge(m_map[["month_key", "m_pass"]], on="month_key", how="left")
-                    m_pass_series = m_merged["m_pass"].fillna(False).values
+                    m_pass_series = m_merged["m_pass"].fillna(True).values
             except Exception:
                 pass
 
@@ -250,9 +257,9 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[s
                         (w_r > 50.0) & (w_r >= w_re3) & (w_r >= w_rw21)
                     )
                     w_map = weekly[["week_end", "w_pass"]].copy()
-                    b_df = pd.DataFrame({"timestamp": out.index, "week_end": out.index.dt.to_period("W-SUN").dt.end_time.dt.date})
+                    b_df = pd.DataFrame({"timestamp": out.index, "week_end": week_ends.values})
                     w_merged = b_df.merge(w_map, on="week_end", how="left")
-                    w_pass_series = w_merged["w_pass"].fillna(False).values
+                    w_pass_series = w_merged["w_pass"].fillna(True).values
             except Exception:
                 pass
 
@@ -266,14 +273,15 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[s
                     d_r = scanner.calculate_rsi(d_c, span=9)
                     d_re3 = scanner.calculate_ema(d_r, span=3)
                     d_rw21 = scanner.calculate_wma(d_r, period=21)
-                    d_bounce = (d_o <= d_e20 * 1.015) & (d_c >= d_e20 * 0.985)
+                    d_bounce = (d_o <= d_e20 * 1.02) & (d_c >= d_e20 * 0.98)
+                    d_bounce_recent = d_bounce.rolling(5, min_periods=1).max().fillna(0).astype(bool)
                     d_trend = (d_e20 > d_e50)
                     d_hilega = (d_r > 50.0) & (d_r >= d_re3) & (d_r >= d_rw21)
-                    daily_res["d_pass"] = d_bounce & d_trend & d_hilega
+                    daily_res["d_pass"] = (d_bounce_recent | (d_c >= d_e20)) & d_trend & d_hilega
                     d_map = pd.DataFrame({"day_date": daily_res.index.date, "d_pass": daily_res["d_pass"].values})
                     b_df = pd.DataFrame({"timestamp": out.index, "day_date": out.index.date})
                     d_merged = b_df.merge(d_map, on="day_date", how="left")
-                    d_pass_series = d_merged["d_pass"].fillna(False).values
+                    d_pass_series = d_merged["d_pass"].fillna(True).values
             except Exception:
                 pass
 
@@ -322,10 +330,10 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[s
                         (m_r < 50.0) & (m_r < m_re3) & (m_r < m_rw21)
                     )
                     m_map = m_raw[["m_pass"]].copy()
-                    m_map["month_key"] = m_map.index.to_period("M")
-                    b_df = pd.DataFrame({"timestamp": out.index, "month_key": out.index.to_period("M")})
+                    m_map["month_key"] = m_map.index.to_period("M").astype(str)
+                    b_df = pd.DataFrame({"timestamp": out.index, "month_key": month_keys.values})
                     m_merged = b_df.merge(m_map[["month_key", "m_pass"]], on="month_key", how="left")
-                    m_pass_series = m_merged["m_pass"].fillna(False).values
+                    m_pass_series = m_merged["m_pass"].fillna(True).values
             except Exception:
                 pass
 
@@ -344,9 +352,9 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[s
                         (w_r < 50.0) & (w_r < w_re3) & (w_r < w_rw21)
                     )
                     w_map = weekly[["week_end", "w_pass"]].copy()
-                    b_df = pd.DataFrame({"timestamp": out.index, "week_end": out.index.dt.to_period("W-SUN").dt.end_time.dt.date})
+                    b_df = pd.DataFrame({"timestamp": out.index, "week_end": week_ends.values})
                     w_merged = b_df.merge(w_map, on="week_end", how="left")
-                    w_pass_series = w_merged["w_pass"].fillna(False).values
+                    w_pass_series = w_merged["w_pass"].fillna(True).values
             except Exception:
                 pass
 

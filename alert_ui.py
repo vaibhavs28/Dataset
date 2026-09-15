@@ -69,6 +69,7 @@ def render_metric_card(title: str, value: str, subtext: str = "", delta_color: s
     st.markdown(html, unsafe_allow_html=True)
 
 
+@st.cache_data(ttl=600, show_spinner=False)
 def get_all_equities_list() -> list:
     db_symbols = database.get_all_symbols()
     parquet_symbols = parquet_loader.get_parquet_symbols()

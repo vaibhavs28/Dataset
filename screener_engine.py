@@ -589,7 +589,7 @@ def run_screen(
     daily_raw_cache: Dict[str, pd.DataFrame] = {}  # store raw daily for later intraday stage
 
     if use_funnel and len(symbols) > 4:
-        pre_filter_workers = min(32, max(4, (os.cpu_count() or 4) * 4))
+        pre_filter_workers = min(8, max(2, os.cpu_count() or 2))
         # Phase 1 progress: report each pre-filter completion
         pre_completed = 0
 
@@ -1501,7 +1501,7 @@ def run_waterfall_scan(
         )
 
     completed_count = 0
-    max_workers = min(32, max(4, (os.cpu_count() or 4) * 4)) if total_scanned > 4 else 1
+    max_workers = min(8, max(2, os.cpu_count() or 2)) if total_scanned > 4 else 1
     if max_workers > 1:
         with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_sym = {executor.submit(_eval_sym, sym): sym for sym in symbols}
