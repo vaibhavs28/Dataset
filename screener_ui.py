@@ -148,6 +148,7 @@ def render_screener_page(theme: str = "dark"):
             wf_date_mode = st.radio(
                 "Scan Date Mode:",
                 ["⚡ Latest Live Data", "📅 Historical Date (As-Of)"],
+                index=1,
                 horizontal=True,
                 key="wf_date_mode_select"
             )
@@ -174,8 +175,16 @@ def render_screener_page(theme: str = "dark"):
                 st.session_state["wf_as_of_date_input"] = st.session_state.pop("pending_wf_as_of_date")
             hist_c1, hist_c2, hist_c3 = st.columns([1.5, 1.4, 2.1])
             with hist_c1:
-                # Default to 5 Sept 2026 or previous trading day
-                default_dt = datetime(2026, 9, 5).date()
+                # Default to latest database trading date or today
+                latest_dt = None
+                try:
+                    import duckdb_store
+                    stats = duckdb_store.get_db_stats()
+                    if stats and stats.get("latest_date"):
+                        latest_dt = pd.to_datetime(stats["latest_date"]).date()
+                except Exception:
+                    pass
+                default_dt = latest_dt or datetime.today().date()
                 selected_as_of = st.date_input(
                     "📅 Select Historical Scan Date:",
                     value=default_dt,
@@ -213,8 +222,9 @@ def render_screener_page(theme: str = "dark"):
             st.markdown("<div style='font-size: 11px; color: #94A3B8; margin-bottom: 4px;'>⚡ Quick Date Presets:</div>", unsafe_allow_html=True)
             q_cols = st.columns(5)
             with q_cols[0]:
-                if st.button("📅 05 Sep 2026", key="q_btn_5sep", use_container_width=True):
-                    st.session_state["pending_wf_as_of_date"] = datetime(2026, 9, 5).date()
+                latest_label = f"📅 {default_dt.strftime('%d %b %Y')}" if default_dt else "📅 Latest"
+                if st.button(latest_label, key="q_btn_latest_db", use_container_width=True):
+                    st.session_state["pending_wf_as_of_date"] = default_dt
                     st.rerun()
             with q_cols[1]:
                 if st.button("📅 01 Sep 2026", key="q_btn_1sep", use_container_width=True):
@@ -418,7 +428,7 @@ def render_screener_page(theme: str = "dark"):
             cust_date_mode = st.radio(
                 "Scan Date:",
                 ["⚡ Latest Live", "📅 Historical Date"],
-                index=0,
+                index=1,
                 horizontal=True,
                 key="scr_cust_date_mode"
             )
@@ -438,9 +448,17 @@ def render_screener_page(theme: str = "dark"):
         if "Historical" in cust_date_mode:
             c_d1, c_d2, c_d3 = st.columns([1.5, 1.4, 2.1])
             with c_d1:
+                c_latest_dt = None
+                try:
+                    import duckdb_store
+                    stats = duckdb_store.get_db_stats()
+                    if stats and stats.get("latest_date"):
+                        c_latest_dt = pd.to_datetime(stats["latest_date"]).date()
+                except Exception:
+                    pass
                 c_sel_date = st.date_input(
                     "📅 Select Scan Date:",
-                    value=datetime(2026, 9, 5).date(),
+                    value=c_latest_dt or datetime.today().date(),
                     min_value=datetime(2020, 1, 1).date(),
                     max_value=datetime.today().date(),
                     key="scr_cust_as_of_date_input"
