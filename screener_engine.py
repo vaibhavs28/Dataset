@@ -1299,19 +1299,28 @@ def evaluate_intraday_scan_19122704(
         if d_pass:
             stage = 3
 
-    # 75-Min Analysis (Lazy Loading)
+    # 75-Min Analysis (Dynamic hot_intraday / Lazy Loading)
     q4_pass = False
     q4_c = q4_e20 = q4_e50 = q4_e200 = np.nan
 
     if d_pass:
         if intra_75_df is None:
-            if intra_75_provider is not None:
-                try:
-                    intra_75_df = intra_75_provider(symbol, "75-Min")
-                except TypeError:
-                    intra_75_df = intra_75_provider(symbol)
-            else:
-                intra_75_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
+            # Priority 0: Live hot_intraday.db stream (resampled in < 2ms)
+            try:
+                import hot_intraday
+                if hot_intraday.has_hot_data():
+                    intra_75_df = hot_intraday.get_resampled_candles(symbol, interval_minutes=75, limit=50)
+            except Exception as e:
+                logger.debug(f"hot_intraday 75m note for {symbol}: {e}")
+
+            if intra_75_df is None or intra_75_df.empty:
+                if intra_75_provider is not None:
+                    try:
+                        intra_75_df = intra_75_provider(symbol, "75-Min")
+                    except TypeError:
+                        intra_75_df = intra_75_provider(symbol)
+                else:
+                    intra_75_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
 
         if intra_75_df is not None and not intra_75_df.empty and len(intra_75_df) >= 10:
             q_close = intra_75_df["close"]
@@ -1332,20 +1341,28 @@ def evaluate_intraday_scan_19122704(
             if q4_pass:
                 stage = 4
 
-    # ─── Stage 5: 15-Min Precision Entry ───────────────────────────────────────
+    # ─── Stage 5: 15-Min Precision Entry (Dynamic hot_intraday / Lazy Loading) ───
     q5_pass = False
     q5_c = q5_e9 = q5_e13 = q5_e20 = q5_e50 = q5_sma26 = np.nan
 
     if q4_pass:
-        # Lazy-load 15-Min data if not provided
         if intra_15_df is None:
-            if intra_15_provider is not None:
-                try:
-                    intra_15_df = intra_15_provider(symbol, "15-Min")
-                except TypeError:
-                    intra_15_df = intra_15_provider(symbol)
-            else:
-                intra_15_df = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=15, min_bars=10)
+            # Priority 0: Live hot_intraday.db stream (resampled in < 2ms)
+            try:
+                import hot_intraday
+                if hot_intraday.has_hot_data():
+                    intra_15_df = hot_intraday.get_resampled_candles(symbol, interval_minutes=15, limit=50)
+            except Exception as e:
+                logger.debug(f"hot_intraday 15m note for {symbol}: {e}")
+
+            if intra_15_df is None or intra_15_df.empty:
+                if intra_15_provider is not None:
+                    try:
+                        intra_15_df = intra_15_provider(symbol, "15-Min")
+                    except TypeError:
+                        intra_15_df = intra_15_provider(symbol)
+                else:
+                    intra_15_df = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=15, min_bars=10)
 
         if intra_15_df is not None and not intra_15_df.empty and len(intra_15_df) >= 5:
             q15_close = intra_15_df["close"]

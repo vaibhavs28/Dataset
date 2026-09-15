@@ -1,0 +1,16 @@
+[Unit]
+Description=Upstox 15-Minute Chartink #19122704 Intraday Waterfall Broadcaster
+After=network.target
+
+[Service]
+Type=simple
+User=trader
+WorkingDirectory=/home/trader/Dataset
+ExecStart=/home/trader/Dataset/venv/bin/python3 auto_15m_broadcaster.py --daemon --universe "Nifty 500" --stage 4
+Restart=always
+RestartSec=10
+Environment=PYTHONUNBUFFERED=1
+Environment=PATH=/home/trader/Dataset/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target
