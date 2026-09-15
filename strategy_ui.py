@@ -561,6 +561,7 @@ def render_strategy_lab_page(theme: str = "dark"):
         with col_st1:
             strategy_options = [
                 "🏆 Chartink 75m Waterfall (Weekly CPR R1 / 0.5 SL)",
+                "⚡ Chartink Intraday 75m Scan (19122704 Breakdown)",
                 "⚡ Hilega Milega Momentum (NK Sir)",
                 "🌊 Triple EMA Ribbon Trend (9/20/50)",
                 "🏹 SuperTrend Volatility Rider (10, 3.0)",
@@ -596,6 +597,19 @@ def render_strategy_lab_page(theme: str = "dark"):
                     • <b>Direction</b>: Long Only (Buy Only) on Stage 4 alignment (Monthly + Weekly + Daily + 75m Trigger).<br>
                     • <b>🎯 Take Profit (TP)</b>: <b>Weekly CPR R1</b> resistance level (from prior week's range).<br>
                     • <b>🛑 Stop Loss (SL)</b>: <b>Weekly CPR 0.5 Support</b> midpoint between Weekly Pivot and S1: <code>(P + S1) / 2</code>.
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+        elif "19122704" in selected_strat_name:
+            st.markdown(f"""
+            <div style="margin-top: 6px; margin-bottom: 12px; padding: 10px 16px; background: rgba(239, 68, 68, 0.08); border-left: 4px solid #EF4444; border-radius: 6px;">
+                <div style="font-weight: 700; color: #EF4444; font-size: 14px; margin-bottom: 4px;">
+                    ⚡ Chartink Intraday 75-Min Breakdown Strategy (Scan #19122704)
+                </div>
+                <div style="font-size: 12.5px; color: {tc['text_secondary']}; line-height: 1.5;">
+                    • <b>Direction</b>: Short / Breakdown on Stage 4 multi-timeframe alignment (Monthly + Weekly + Daily + 75m Breakdown).<br>
+                    • <b>🎯 Target (TP)</b>: <b>Weekly CPR S1 Support</b> or fixed 3.0% trailing target.<br>
+                    • <b>🛑 Stop Loss (SL)</b>: <b>Weekly CPR R_05 Resistance</b> or 1.5% risk limit.
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -659,7 +673,7 @@ def render_strategy_lab_page(theme: str = "dark"):
             "75-Min", "Daily", "125-Min", "60-Min (1h)", "45-Min", "30-Min", "15-Min", "5-Min", "3-Min", "1-Min",
             "Weekly", "Monthly", "Custom (Minutes)"
         ]
-        default_tf_idx = 0 if "Waterfall" in selected_strat_name else 1
+        default_tf_idx = 0 if ("Waterfall" in selected_strat_name or "19122704" in selected_strat_name) else 1
         s_col1, s_col2, s_col3, s_col4 = st.columns([1.8, 1.4, 1.4, 1.4])
         with s_col1:
             default_sym_idx = all_symbols.index("RELIANCE") if "RELIANCE" in all_symbols else 0

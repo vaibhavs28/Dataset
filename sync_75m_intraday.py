@@ -245,7 +245,7 @@ def sync_symbol_75m_from_upstox(
 def sync_all_symbols_75m(
     symbols: Optional[List[str]] = None,
     universe: str = "Nifty 50",
-    max_workers: int = 10,
+    max_workers: int = 25,
     save_parquet: bool = True,
     save_db: bool = True,
     batch_commit_size: int = 50,

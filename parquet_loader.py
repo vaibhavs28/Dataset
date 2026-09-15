@@ -325,24 +325,6 @@ def ensure_symbol_custom_minute_candles(
 
     df_1min = load_symbol_1min(clean_sym, limit=None if (start_date or end_date) else 10000, start_date=start_date, end_date=end_date)
     if df_1min.empty:
-        # Fallback to fetching 1-min from Upstox
-        inst_key = instruments.resolve_instrument_key(clean_sym) or f"NSE_EQ|{clean_sym}"
-        start_1min_dt = datetime.now() - timedelta(days=90)
-        end_1min_dt = datetime.now() + timedelta(days=1)
-        try:
-            import upstox_parquet_updater
-            chunks = upstox_parquet_updater.generate_date_chunks(start_1min_dt, end_1min_dt, chunk_days=28)
-            all_raw = []
-            for f_d, t_d in chunks:
-                c_list = upstox_parquet_updater.fetch_upstox_1min_chunk(inst_key, f_d, t_d)
-                if c_list:
-                    all_raw.extend(c_list)
-            if all_raw:
-                df_1min = upstox_parquet_updater.parse_upstox_candles_to_dataframe(clean_sym, all_raw)
-        except Exception as e:
-            logger.warning(f"Failed to fetch on-demand 1min candles for {clean_sym}: {e}")
-
-    if df_1min.empty:
         return pd.DataFrame()
 
     res = resample_1min_to_custom_minutes(df_1min, interval_minutes)
@@ -421,13 +403,15 @@ def ensure_symbol_75m_candles(
     except Exception as e:
         logger.warning(f"Local parquet resample note for {sym}: {e}")
 
-    # 4. Resample from 1-min parquet / on-demand Upstox candles
+    # 4. Resample directly from local 1-min parquet
     try:
-        df_custom = ensure_symbol_custom_minute_candles(sym, interval_minutes=75, min_bars=min_bars, start_date=start_date, end_date=end_date)
-        if not df_custom.empty:
-            return df_custom
+        df_1min = load_symbol_1min(sym, limit=None if (start_date or end_date) else 10000, start_date=start_date, end_date=end_date)
+        if not df_1min.empty:
+            df_75 = resample_1min_to_75min(df_1min)
+            if not df_75.empty:
+                return df_75
     except Exception as e:
-        logger.warning(f"Fallback 1-min to 75-min resample note for {sym}: {e}")
+        logger.debug(f"Fallback 1-min to 75-min resample note for {sym}: {e}")
 
     return pd.DataFrame()
 

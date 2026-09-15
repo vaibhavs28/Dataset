@@ -579,10 +579,14 @@ def main():
 
     update_universe = st.sidebar.selectbox(
         "Target Stocks",
-        options=["Swing Stocks (1,267)", "Nifty 50 (Top 50)", "All Active Equities"],
+        options=["Nifty 500 (500 stocks)", "Swing Stocks (1,267)", "Nifty 50 (Top 50)", "All Active Equities"],
         index=0,
         key="one_click_universe_choice"
     )
+
+    persist_parquet = False
+    if "Intraday" in update_mode:
+        persist_parquet = st.sidebar.checkbox("Append to disk Parquet files", value=False, key="one_click_persist_parquet", help="Leave unchecked for maximum speed (direct into DuckDB database in ~25s)")
 
     if st.sidebar.button("⚡ One-Click Update to Today", use_container_width=True, type="primary", key="one_click_daily_update_btn"):
         p_bar = st.sidebar.progress(0.0)
@@ -592,7 +596,7 @@ def main():
 
         def _sync_cb(cur, tot, sym):
             now = time.time()
-            if cur == 1 or cur == tot or (now - last_sync_update[0] >= 0.1):
+            if cur == 1 or cur == tot or (now - last_sync_update[0] >= 0.25):
                 last_sync_update[0] = now
                 pct = min(cur / max(tot, 1), 1.0)
                 p_bar.progress(pct)
@@ -603,9 +607,12 @@ def main():
                 p_txt.caption(f"⚡ {sym} ({cur}/{tot} • {pct*100:.1f}%) | ETA: ~{eta_str}")
 
         # Resolve target symbols
-        if "Swing" in update_universe:
+        if "500" in update_universe:
+            import auto_75m_broadcaster
+            target_syms = auto_75m_broadcaster.get_target_equities("Nifty 500")
+        elif "Swing" in update_universe:
             target_syms = config.SWING_STOCK_SYMBOLS
-        elif "Nifty" in update_universe:
+        elif "Nifty 50" in update_universe:
             target_syms = config.NIFTY_50_SYMBOLS
         else:
             target_syms = None
@@ -616,8 +623,8 @@ def main():
                     import sync_75m_intraday
                     res = sync_75m_intraday.sync_all_symbols_75m(
                         symbols=target_syms,
-                        max_workers=15,
-                        save_parquet=True,
+                        max_workers=25,
+                        save_parquet=persist_parquet,
                         save_db=True,
                         progress_callback=_sync_cb
                     )

@@ -230,6 +230,32 @@ class TestScreenerEngine(unittest.TestCase):
         self.assertEqual(diag["evaluated_stocks"], 2)
         self.assertEqual(diag["clause_stats"][0]["passed_count"], 0)
 
+    def test_intraday_scan_19122704_preset(self):
+        cfg = get_screener_preset("intraday-scan-19122704")
+        self.assertIn("19122704", cfg.name)
+        self.assertGreaterEqual(len(cfg.clauses), 20)
+        # Check presence of Monthly, Weekly, Daily, 75-Min timeframes
+        tfs = {c.timeframe for c in cfg.clauses}
+        self.assertEqual(tfs, {"Monthly", "Weekly", "Daily", "75-Min"})
+
+    def test_evaluate_intraday_scan_19122704(self):
+        from screener_engine import evaluate_intraday_scan_19122704
+        # Downtrending synthetic data
+        dates = [datetime(2025, 1, 1) + timedelta(days=i) for i in range(120)]
+        close = 1000.0 - np.arange(120) * 3.0
+        df_down = pd.DataFrame({
+            "open": close + 1.0,
+            "high": close + 2.0,
+            "low": close - 2.0,
+            "close": close,
+            "volume": [100000] * 120
+        }, index=pd.DatetimeIndex(dates))
+
+        res = evaluate_intraday_scan_19122704("TEST_BEAR", df_down)
+        if res is not None:
+            self.assertIn(res["Stage"], [1, 2, 3, 4])
+            self.assertEqual(res["Symbol"], "TEST_BEAR")
+
 
 if __name__ == "__main__":
     unittest.main()

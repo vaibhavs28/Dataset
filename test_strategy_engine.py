@@ -222,6 +222,15 @@ class TestStrategyEngine(unittest.TestCase):
         self.assertEqual(res_sl.trades[0].direction, "LONG")
         self.assertEqual(res_sl.trades[0].exit_reason, "Stop Loss (Weekly CPR 0.5 Support)")
 
+    def test_chartink_intraday_scan_19122704_preset(self):
+        cfg = get_preset_strategy("19122704")
+        self.assertEqual(cfg.strategy_type, "Chartink_Intraday_Scan_19122704")
+        self.assertIn("19122704", cfg.name)
+        df_ind = prepare_indicators(self.df, cfg)
+        self.assertIn("Breakdown_Stage4", df_ind.columns)
+        signals = generate_strategy_signals(df_ind, cfg)
+        self.assertIn("signal_entry", signals.columns)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -804,6 +804,12 @@ def evaluate_single_alert(
         if wf_res is not None and wf_res.get("Stage") == 4:
             return ltp, "🏆 Positional Scan #364 Full Alignment (Stage 4)", "Stock has qualified on Monthly + Weekly + Daily + 75m triggers simultaneously!"
 
+    # 5. CHARTINK INTRADAY SCAN #19122704 (Stage 4 Breakdown Trigger)
+    elif atype == "INTRADAY_SCAN_19122704":
+        wf_res = screener_engine.evaluate_intraday_scan_19122704(alert["symbol"], daily_df, intra_75_df)
+        if wf_res is not None and wf_res.get("Stage") == 4:
+            return ltp, "⚡ Chartink Intraday Scan #19122704 Full Alignment", "Stock has qualified on Monthly + Weekly + Daily + 75m Breakdown triggers simultaneously!"
+
     return None
 
 

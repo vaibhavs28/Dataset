@@ -302,6 +302,89 @@ def prepare_indicators(df: pd.DataFrame, cfg: StrategyConfig, symbol: Optional[s
                     q4_pass
                 )
 
+        # Chartink Intraday Scan #19122704 Stage alignment (Breakdown)
+        if cfg.strategy_type == "Chartink_Intraday_Scan_19122704":
+            m_pass_series = pd.Series(True, index=out.index)
+            try:
+                m_raw = daily_res.resample("ME").agg({
+                    "open": "first", "high": "max", "low": "min", "close": "last"
+                }).dropna()
+                if len(m_raw) >= 3:
+                    m_c = m_raw["close"]
+                    m_e5 = scanner.calculate_ema(m_c, span=5)
+                    m_e20 = scanner.calculate_ema(m_c, span=20)
+                    m_e50 = scanner.calculate_ema(m_c, span=50)
+                    m_r = scanner.calculate_rsi(m_c, span=9)
+                    m_re3 = scanner.calculate_ema(m_r, span=3)
+                    m_rw21 = scanner.calculate_wma(m_r, period=21)
+                    m_raw["m_pass"] = (
+                        (m_c < m_e5) & (m_e5 < m_e20) & (m_e20 < m_e50) &
+                        (m_r < 50.0) & (m_r < m_re3) & (m_r < m_rw21)
+                    )
+                    m_map = m_raw[["m_pass"]].copy()
+                    m_map["month_key"] = m_map.index.to_period("M")
+                    b_df = pd.DataFrame({"timestamp": out.index, "month_key": out.index.to_period("M")})
+                    m_merged = b_df.merge(m_map[["month_key", "m_pass"]], on="month_key", how="left")
+                    m_pass_series = m_merged["m_pass"].fillna(False).values
+            except Exception:
+                pass
+
+            w_pass_series = pd.Series(True, index=out.index)
+            try:
+                if len(weekly) >= 5:
+                    w_c = weekly["close"]
+                    w_e20 = scanner.calculate_ema(w_c, span=20)
+                    w_e50 = scanner.calculate_ema(w_c, span=50)
+                    w_e200 = scanner.calculate_ema(w_c, span=200)
+                    w_r = scanner.calculate_rsi(w_c, span=9)
+                    w_re3 = scanner.calculate_ema(w_r, span=3)
+                    w_rw21 = scanner.calculate_wma(w_r, period=21)
+                    weekly["w_pass"] = (
+                        (w_c < w_e20) & (w_e20 < w_e50) & (w_e50 < w_e200) &
+                        (w_r < 50.0) & (w_r < w_re3) & (w_r < w_rw21)
+                    )
+                    w_map = weekly[["week_end", "w_pass"]].copy()
+                    b_df = pd.DataFrame({"timestamp": out.index, "week_end": out.index.dt.to_period("W-SUN").dt.end_time.dt.date})
+                    w_merged = b_df.merge(w_map, on="week_end", how="left")
+                    w_pass_series = w_merged["w_pass"].fillna(False).values
+            except Exception:
+                pass
+
+            d_pass_series = pd.Series(True, index=out.index)
+            try:
+                if len(daily_res) >= 15:
+                    d_c = daily_res["close"]
+                    d_e20 = scanner.calculate_ema(d_c, span=20)
+                    d_e50 = scanner.calculate_ema(d_c, span=50)
+                    d_e200 = scanner.calculate_ema(d_c, span=200)
+                    d_r = scanner.calculate_rsi(d_c, span=9)
+                    d_re3 = scanner.calculate_ema(d_r, span=3)
+                    d_rw21 = scanner.calculate_wma(d_r, period=21)
+                    daily_res["d_pass"] = (
+                        (d_c < d_e20) & (d_e20 < d_e50) & (d_e50 < d_e200) &
+                        (d_r < 50.0) & (d_r < d_re3) & (d_r < d_rw21)
+                    )
+                    d_map = pd.DataFrame({"day_date": daily_res.index.date, "d_pass": daily_res["d_pass"].values})
+                    b_df = pd.DataFrame({"timestamp": out.index, "day_date": out.index.date})
+                    d_merged = b_df.merge(d_map, on="day_date", how="left")
+                    d_pass_series = d_merged["d_pass"].fillna(False).values
+            except Exception:
+                pass
+
+            # 75-Min Stage
+            q_c = out["close"]
+            q_e20 = scanner.calculate_ema(q_c, span=20)
+            q_e50 = scanner.calculate_ema(q_c, span=50)
+            q_e200 = scanner.calculate_ema(q_c, span=200)
+            q4_pass = (q_e20 <= q_e50) & (q_e50 <= q_e200) & (q_c < q_e20)
+
+            out["Breakdown_Stage4"] = (
+                pd.Series(m_pass_series, index=out.index).fillna(False) &
+                pd.Series(w_pass_series, index=out.index).fillna(False) &
+                pd.Series(d_pass_series, index=out.index).fillna(False) &
+                q4_pass
+            )
+
         # Preserve any pre-existing Weekly CPR columns if already provided in df
         for col in ["P", "BC", "TC", "R1", "S1", "S_05"]:
             if f"Weekly_{col}" in df.columns:
@@ -472,6 +555,17 @@ def generate_strategy_signals(df: pd.DataFrame, cfg: StrategyConfig) -> pd.DataF
                 entries[i] = True
             if cfg.exit_on_signal_reversal:
                 if (q_ema5[i] < q_ema20[i] and q_ema5[i-1] >= q_ema20[i-1]) or (rsi[i] < 45.0):
+                    exits[i] = True
+
+    elif stype == "Chartink_Intraday_Scan_19122704":
+        stage4 = df_sig["Breakdown_Stage4"].values if "Breakdown_Stage4" in df_sig.columns else np.zeros(n, dtype=bool)
+        q_ema20 = scanner.calculate_ema(df_sig["close"], span=20).values
+        for i in range(1, n):
+            fresh_stage4 = bool(stage4[i] and not stage4[i-1])
+            if fresh_stage4 or (stage4[i] and df_sig["close"].iloc[i] < q_ema20[i] and df_sig["close"].iloc[i-1] >= q_ema20[i-1]):
+                entries[i] = True
+            if cfg.exit_on_signal_reversal:
+                if df_sig["close"].iloc[i] > q_ema20[i] or rsi[i] > 55.0:
                     exits[i] = True
 
     df_sig["signal_entry"] = entries
@@ -873,7 +967,20 @@ def get_preset_strategy(preset_name: str) -> StrategyConfig:
     Returns pre-configured StrategyConfig for popular, battle-tested setups.
     """
     p_lower = preset_name.lower().replace(" ", "_").replace("-", "_")
-    if "waterfall" in p_lower or "chartink" in p_lower:
+    if "19122704" in p_lower or "intraday_scan" in p_lower:
+        return StrategyConfig(
+            strategy_type="Chartink_Intraday_Scan_19122704",
+            name="⚡ Chartink Intraday 75m Scan (19122704 Breakdown)",
+            use_cpr_exits=True,
+            cpr_target_level="S1",
+            cpr_stop_level="R_05",
+            target_pct=3.0,
+            stop_loss_pct=1.5,
+            use_trailing_stop=True,
+            trailing_stop_pct=1.5,
+            exit_on_signal_reversal=True
+        )
+    elif "waterfall" in p_lower or "chartink" in p_lower:
         return StrategyConfig(
             strategy_type="Chartink_75_Waterfall",
             name="🏆 Chartink 75m Waterfall (Weekly CPR R1 / 0.5 SL)",

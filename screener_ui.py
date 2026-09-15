@@ -259,7 +259,7 @@ def render_screener_page(theme: str = "dark"):
 
             def _wf_progress(curr, total, sym):
                 now = time.time()
-                if curr == 1 or curr == total or (now - last_wf_update[0] >= 0.08):
+                if curr == 1 or curr == total or (now - last_wf_update[0] >= 0.35):
                     last_wf_update[0] = now
                     pct = min(curr / max(total, 1), 1.0)
                     p_bar.progress(pct)
@@ -407,6 +407,7 @@ def render_screener_page(theme: str = "dark"):
 
         with p_col1:
             preset_names = [
+                "⚡ Intraday Scan (Chartink 19122704 - 75m Multi-TF Breakdown)",
                 "🚀 RSI Momentum Surge (RSI > 60 & Close > 20 EMA)",
                 "🏔️ 52-Week / Multi-Year High Breakout",
                 "🏹 SuperTrend Fresh Bullish Reversal",
@@ -796,7 +797,7 @@ def render_screener_page(theme: str = "dark"):
 
             def _scr_progress(curr, total, sym):
                 now = time.time()
-                if curr == 1 or curr == total or (now - last_scr_update[0] >= 0.08):
+                if curr == 1 or curr == total or (now - last_scr_update[0] >= 0.35):
                     last_scr_update[0] = now
                     pct = min(curr / max(total, 1), 1.0)
                     p_bar.progress(pct)

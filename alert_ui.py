@@ -500,7 +500,8 @@ def render_alert_page(theme: str = "dark"):
                     "🏛️ Weekly CPR & Pivots (R1 Breakout, S1, 0.5 Support)",
                     "🚀 Volume Surge & Spike (2x/3x 20-day Volume)",
                     "⚡ Hilega-Milega Setup (NK Sir Rule)",
-                    "🌊 Positional Scan #364 (Stage 4 Waterfall)"
+                    "🌊 Positional Scan #364 (Stage 4 Waterfall)",
+                    "⚡ Intraday Scan #19122704 (75m Breakdown)"
                 ],
                 key="new_alert_type_choice"
             )
@@ -726,9 +727,14 @@ def render_alert_page(theme: str = "dark"):
                 st.info("Triggers when RSI(9) EMA(3) crosses above WMA(21) and RSI is above 50 (NK Sir Rule).")
 
             # 12. WATERFALL STAGE 4
-            else:
+            elif "Positional Scan #364" in alert_category:
                 atype_val = "WATERFALL_STAGE4"
                 st.info("🌊 Triggers automatically when this stock satisfies all 4 tiers of the Chartink Positional Scan (Monthly + Weekly + Daily + 75-Min)!")
+
+            # 13. INTRADAY SCAN #19122704 (BREAKDOWN)
+            else:
+                atype_val = "INTRADAY_SCAN_19122704"
+                st.info("⚡ Triggers automatically when this stock satisfies all 4 tiers of the Chartink Intraday Breakdown Scan #19122704 (Monthly + Weekly + Daily + 75-Min)!")
 
         st.markdown("---")
         st.markdown("##### 📡 Delivery Channels & Alert Frequency")

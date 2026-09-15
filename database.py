@@ -1,7 +1,10 @@
+import logging
 import sqlite3
 import pandas as pd
 from typing import List, Dict, Optional, Any
 from config import DB_PATH
+
+logger = logging.getLogger("database")
 
 
 def get_connection() -> sqlite3.Connection:
@@ -347,21 +350,59 @@ def get_batch_candles_df(
     if not symbols:
         return {}
 
+    result: Dict[str, pd.DataFrame] = {}
     try:
         import duckdb_store
         res = duckdb_store.get_batch_candles_df(symbols, start_date=start_date, end_date=end_date)
         if res:
-            return res
+            result.update(res)
     except Exception as e:
         logger.warning(f"DuckDB get_batch_candles_df fallback to sequential/sqlite: {e}")
 
-    # Fallback to sequential get_candles_df
-    result = {}
-    for s in symbols:
-        clean = s.upper().strip().replace("-EQ", "").replace(".NS", "")
-        df = get_candles_df(s, start_date=start_date, end_date=end_date)
-        if not df.empty:
-            result[clean] = df
+    # For symbols not found in DuckDB, do a single batch query on SQLite if any remain
+    missing_syms = [
+        s for s in symbols 
+        if s.upper().strip().replace("-EQ", "").replace(".NS", "") not in result
+    ]
+    if missing_syms and len(missing_syms) < len(symbols):
+        try:
+            with get_connection() as conn:
+                clean_map = {s.upper().strip().replace("-EQ", "").replace(".NS", ""): s for s in missing_syms}
+                query_list = list(clean_map.keys()) + [k + "-EQ" for k in clean_map.keys()]
+                placeholders = ",".join(["?"] * len(query_list))
+                sql = f"""
+                    SELECT trading_symbol, date, open, high, low, close, volume, open_interest
+                    FROM candles
+                    WHERE trading_symbol IN ({placeholders})
+                """
+                params = list(query_list)
+                if start_date:
+                    sql += " AND date >= ?"
+                    params.append(str(start_date)[:10])
+                if end_date:
+                    sql += " AND date <= ?"
+                    params.append(str(end_date)[:10])
+                sql += " ORDER BY trading_symbol, date ASC"
+                
+                df_sql = pd.read_sql_query(sql, conn, params=params)
+                if not df_sql.empty:
+                    df_sql["clean"] = df_sql["trading_symbol"].str.replace("-EQ", "", regex=False)
+                    for clean, grp in df_sql.groupby("clean"):
+                        grp = grp.drop(columns=["clean"])
+                        grp["date"] = pd.to_datetime(grp["date"])
+                        grp = grp.set_index("date").sort_index()
+                        result[clean] = grp
+        except Exception as se:
+            logger.debug(f"SQLite batch fetch error for missing symbols: {se}")
+
+    elif not result:
+        # Full fallback to sequential get_candles_df if DuckDB was completely unavailable
+        for s in symbols:
+            clean = s.upper().strip().replace("-EQ", "").replace(".NS", "")
+            df = get_candles_df(s, start_date=start_date, end_date=end_date)
+            if not df.empty:
+                result[clean] = df
+
     return result
 
 
