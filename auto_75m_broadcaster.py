@@ -295,10 +295,11 @@ def run_75m_waterfall_broadcast(
             stg = int(row.get("Stage", 4))
             stg_lbl = row.get("Waterfall Stage", f"Stage {stg}")
 
-            logger.info(f"📸 Generating 1600x1200 4-Quadrant Screenshot for {sym}...")
+            logger.info(f"📸 Generating 1600x1200 4-Quadrant Screenshot (Light Theme) for {sym}...")
             img_path = quadrant_image_generator.generate_stock_quadrant(
                 symbol=sym,
-                stage_label=f"{stg_lbl} QUALIFIED"
+                stage_label=f"{stg_lbl} QUALIFIED",
+                theme="light"
             )
 
             # Construct structured alert message
@@ -343,11 +344,11 @@ def run_75m_waterfall_broadcast(
                 "delivery": {k: {"success": v[0], "message": v[1]} for k, v in deliv.items()}
             })
 
-    elapsed_secs = (datetime.now() - start_time).total_seconds()
+    elapsed_secs = max(0.0, (get_now_ist() - start_time).total_seconds())
 
     broadcast_record = {
         "broadcast_id": f"bc_{int(start_time.timestamp())}",
-        "timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "timestamp": start_time.strftime("%Y-%m-%d %H:%M:%S IST"),
         "candle_slot": candle_label,
         "universe": universe,
         "stage_filter": stage_filter,

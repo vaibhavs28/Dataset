@@ -8,11 +8,14 @@ Generates a 1600x1200 4-quadrant PNG composite image showing:
   - Bottom-Left: Daily Candlesticks + 20/50 EMAs + RSI 9 Hilega Milega Subplot
   - Bottom-Right: 75-Min Candlesticks + 5/20 EMAs + RSI 9 Trigger Subplot
 Built entirely with Pillow (PIL) for sub-50ms rendering with zero browser dependencies.
+Supports both Light and Dark themes (defaults to crisp Light Theme) and authentic IST timestamps.
 """
 
 import os
+import re
 from pathlib import Path
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Optional, Dict, Any, Tuple
 import numpy as np
 import pandas as pd
@@ -26,8 +29,92 @@ import logging
 
 logger = logging.getLogger("quadrant_generator")
 
+IST = ZoneInfo("Asia/Kolkata")
+
 SCREENSHOTS_DIR = config.DATA_DIR / "screenshots"
 SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Theme color palettes
+THEME_PALETTES: Dict[str, Dict[str, Any]] = {
+    "light": {
+        "bg": "#F8FAFC",
+        "header_bg": "#FFFFFF",
+        "header_border": "#CBD5E1",
+        "symbol_color": "#0284C7",
+        "ltp_color": "#0F172A",
+        "badge_bg": "#DCFCE7",
+        "badge_border": "#16A34A",
+        "badge_text": "#15803D",
+        "panel_bg": "#FFFFFF",
+        "panel_border": "#CBD5E1",
+        "panel_header_bg": "#F1F5F9",
+        "panel_title_color": "#0F172A",
+        "price_grid": "#F1F5F9",
+        "axis_text": "#64748B",
+        "date_tick_text": "#64748B",
+        "candle_green": "#16A34A",
+        "candle_red": "#DC2626",
+        "rsi_bg": "#F8FAFC",
+        "rsi_border": "#CBD5E1",
+        "rsi_50": "#CBD5E1",
+        "rsi_70": "#FCA5A5",
+        "rsi_30": "#86EFAC",
+        "rsi_text_70": "#DC2626",
+        "rsi_text_50": "#64748B",
+        "rsi_text_30": "#16A34A",
+        "rsi_legend": "#334155",
+        "rsi_line": "#059669",
+        "re3_line": "#DC2626",
+        "rw21_line": "#2563EB",
+        "sub_text": "#64748B",
+        "brand_color": "#0284C7",
+        "ema_colors": {
+            "monthly": ("#0284C7", "#D97706"),
+            "weekly": ("#D97706", "#9333EA"),
+            "daily": ("#D97706", "#9333EA"),
+            "q4": ("#0284C7", "#D97706"),
+        }
+    },
+    "dark": {
+        "bg": "#0F121C",
+        "header_bg": "#1E222D",
+        "header_border": "#2A2E39",
+        "symbol_color": "#38BDF8",
+        "ltp_color": "#FFFFFF",
+        "badge_bg": "#064E3B",
+        "badge_border": "#10B981",
+        "badge_text": "#34D399",
+        "panel_bg": "#131722",
+        "panel_border": "#2A2E39",
+        "panel_header_bg": "#1E222D",
+        "panel_title_color": "#38BDF8",
+        "price_grid": "#1E222D",
+        "axis_text": "#64748B",
+        "date_tick_text": "#64748B",
+        "candle_green": "#10B981",
+        "candle_red": "#EF4444",
+        "rsi_bg": "#0F121C",
+        "rsi_border": "#1E222D",
+        "rsi_50": "#334155",
+        "rsi_70": "#7F1D1D",
+        "rsi_30": "#064E3B",
+        "rsi_text_70": "#EF4444",
+        "rsi_text_50": "#64748B",
+        "rsi_text_30": "#10B981",
+        "rsi_legend": "#94A3B8",
+        "rsi_line": "#10B981",
+        "re3_line": "#EF4444",
+        "rw21_line": "#3B82F6",
+        "sub_text": "#94A3B8",
+        "brand_color": "#38BDF8",
+        "ema_colors": {
+            "monthly": ("#38BDF8", "#F59E0B"),
+            "weekly": ("#F59E0B", "#EC4899"),
+            "daily": ("#F59E0B", "#EC4899"),
+            "q4": ("#38BDF8", "#F59E0B"),
+        }
+    }
+}
 
 
 def _get_font(size: int = 14) -> ImageFont.ImageFont:
@@ -48,44 +135,73 @@ def _get_font(size: int = 14) -> ImageFont.ImageFont:
     return ImageFont.load_default()
 
 
+def _format_timestamp(ts_val: Any, is_intra: bool = False) -> str:
+    """Formats a candle index/timestamp to IST string."""
+    try:
+        ts = pd.to_datetime(ts_val)
+        if ts.tzinfo is not None:
+            ts = ts.tz_convert(IST)
+        else:
+            ts = ts.tz_localize(IST)
+        if is_intra:
+            return ts.strftime("%d %b %H:%M IST")
+        else:
+            return ts.strftime("%d %b %Y")
+    except Exception:
+        return str(ts_val)[:10]
+
+
 def _draw_single_panel(
     draw: ImageDraw.ImageDraw,
     df: pd.DataFrame,
     title: str,
     bbox: Tuple[int, int, int, int],
     ema_pairs: Tuple[str, str] = ("EMA_5", "EMA_20"),
-    ema_colors: Tuple[str, str] = ("#38BDF8", "#F59E0B"),
-    max_bars: int = 40
+    ema_colors: Tuple[str, str] = ("#0284C7", "#D97706"),
+    max_bars: int = 40,
+    pal: Optional[Dict[str, Any]] = None
 ):
     """
     Renders one timeframe panel: Candlesticks on top (72%), RSI on bottom (28%).
     bbox: (x1, y1, x2, y2)
     """
+    if pal is None:
+        pal = THEME_PALETTES["light"]
+
     x1, y1, x2, y2 = bbox
     width = x2 - x1
     height = y2 - y1
 
     # Panel border & background
-    draw.rectangle([x1, y1, x2, y2], fill="#131722", outline="#2A2E39", width=1)
+    draw.rectangle([x1, y1, x2, y2], fill=pal["panel_bg"], outline=pal["panel_border"], width=1)
 
     # Title header
     font_title = _get_font(13)
     font_sm = _get_font(10)
-    draw.rectangle([x1, y1, x2, y1 + 26], fill="#1E222D")
-    draw.text((x1 + 10, y1 + 6), title, fill="#38BDF8", font=font_title)
+    draw.rectangle([x1, y1, x2, y1 + 26], fill=pal["panel_header_bg"])
+    draw.text((x1 + 10, y1 + 6), title, fill=pal["panel_title_color"], font=font_title)
 
     if df is None or df.empty or len(df) < 5:
-        draw.text((x1 + width // 3, y1 + height // 2), "Insufficient Candle Data", fill="#64748B", font=font_title)
+        draw.text((x1 + width // 3, y1 + height // 2), "Insufficient Candle Data", fill=pal["axis_text"], font=font_title)
         return
 
     sub_df = df.tail(max_bars).copy()
     n_bars = len(sub_df)
+    is_intraday = bool(re.search(r"\b(\d+[\s-]*(min|m)|intraday)\b", title, re.IGNORECASE))
 
     # Calculate indicators if missing
     close = sub_df["close"]
     high = sub_df["high"]
     low = sub_df["low"]
     open_p = sub_df["open"]
+
+    # Latest candle time label in panel header
+    last_bar_ts = sub_df.index[-1]
+    latest_ts_str = _format_timestamp(last_bar_ts, is_intra=is_intraday)
+    t_len = int(draw.textlength(title, font=font_title))
+    ts_x = x1 + 15 + t_len
+    if ts_x + 130 < (x2 - 180):
+        draw.text((ts_x, y1 + 7), f"[{latest_ts_str}]", fill=pal["sub_text"], font=font_sm)
 
     # RSI Hilega Milega
     rsi = scanner.calculate_rsi(close, span=9)
@@ -123,15 +239,14 @@ def _draw_single_panel(
     # Draw grid lines for price
     for p_step in np.linspace(p_min, p_max, 4):
         gy = price_to_y(p_step)
-        draw.line([(x1 + 10, gy), (x2 - 55, gy)], fill="#1E222D", width=1)
-        draw.text((x2 - 50, gy - 6), f"{p_step:,.0f}", fill="#64748B", font=font_sm)
+        draw.line([(x1 + 10, gy), (x2 - 55, gy)], fill=pal["price_grid"], width=1)
+        draw.text((x2 - 50, gy - 6), f"{p_step:,.0f}", fill=pal["axis_text"], font=font_sm)
 
     # Bar width & spacing
     chart_w = width - 65
     slot_w = chart_w / max_bars
     candle_w = max(2, int(slot_w * 0.65))
 
-    candle_coords = []
     ema1_pts = []
     ema2_pts = []
     rsi_pts = []
@@ -151,7 +266,7 @@ def _draw_single_panel(
         y_l = price_to_y(l_val)
 
         is_green = (c_val >= o_val)
-        clr = "#10B981" if is_green else "#EF4444"
+        clr = pal["candle_green"] if is_green else pal["candle_red"]
 
         # Wick
         draw.line([(bx, y_h), (bx, y_l)], fill=clr, width=1)
@@ -186,33 +301,54 @@ def _draw_single_panel(
     draw.text((x2 - 170, y1 + 7), f"{ema_pairs[0]}: {ema1.iloc[-1]:.1f}", fill=ema_colors[0], font=font_sm)
     draw.text((x2 - 85, y1 + 7), f"{ema_pairs[1]}: {ema2.iloc[-1]:.1f}", fill=ema_colors[1], font=font_sm)
 
+    # Date / Time ticks along X-axis (between p_bot and r_top)
+    tick_indices = [0, n_bars // 3, (2 * n_bars) // 3, n_bars - 1]
+    for tidx in tick_indices:
+        if 0 <= tidx < n_bars:
+            t_bx = int(x1 + 10 + tidx * slot_w + slot_w / 2)
+            t_val = sub_df.index[tidx]
+            try:
+                t_dt = pd.to_datetime(t_val)
+                if t_dt.tzinfo is not None:
+                    t_dt = t_dt.tz_convert(IST)
+                else:
+                    t_dt = t_dt.tz_localize(IST)
+                lbl = t_dt.strftime("%d %b %H:%M") if is_intraday else t_dt.strftime("%d %b '%y")
+            except Exception:
+                lbl = str(t_val)[:10]
+
+            draw.line([(t_bx, p_bot - 3), (t_bx, p_bot + 1)], fill=pal["axis_text"], width=1)
+            txt_x = max(x1 + 4, min(t_bx - 20, x2 - 70))
+            draw.text((txt_x, p_bot + 3), lbl, fill=pal["date_tick_text"], font=font_sm)
+
     # RSI Subplot Section
-    draw.rectangle([x1, r_top - 6, x2, r_bot + 4], fill="#0F121C", outline="#1E222D", width=1)
+    draw.rectangle([x1, r_top - 6, x2, r_bot + 4], fill=pal["rsi_bg"], outline=pal["rsi_border"], width=1)
     # 50, 70, 30 reference lines
     y_50 = rsi_to_y(50.0)
     y_70 = rsi_to_y(70.0)
     y_30 = rsi_to_y(30.0)
-    draw.line([(x1 + 10, y_50), (x2 - 40, y_50)], fill="#334155", width=1)
-    draw.line([(x1 + 10, y_70), (x2 - 40, y_70)], fill="#7F1D1D", width=1)
-    draw.line([(x1 + 10, y_30), (x2 - 40, y_30)], fill="#064E3B", width=1)
-    draw.text((x2 - 35, y_50 - 5), "50", fill="#64748B", font=font_sm)
-    draw.text((x2 - 35, y_70 - 5), "70", fill="#EF4444", font=font_sm)
+    draw.line([(x1 + 10, y_50), (x2 - 40, y_50)], fill=pal["rsi_50"], width=1)
+    draw.line([(x1 + 10, y_70), (x2 - 40, y_70)], fill=pal["rsi_70"], width=1)
+    draw.line([(x1 + 10, y_30), (x2 - 40, y_30)], fill=pal["rsi_30"], width=1)
+    draw.text((x2 - 35, y_50 - 5), "50", fill=pal["rsi_text_50"], font=font_sm)
+    draw.text((x2 - 35, y_70 - 5), "70", fill=pal["rsi_text_70"], font=font_sm)
+    draw.text((x2 - 35, y_30 - 5), "30", fill=pal["rsi_text_30"], font=font_sm)
 
     if len(rsi_pts) == 0:
-        draw.text((x1 + 20, r_top + r_h // 2 - 6), f"⚠️ Awaiting 9 completed candles for RSI(9) ({len(sub_df)}/9 bars completed)", fill="#64748B", font=font_sm)
+        draw.text((x1 + 20, r_top + r_h // 2 - 6), f"⚠️ Awaiting 9 completed candles for RSI(9) ({len(sub_df)}/9 bars completed)", fill=pal["axis_text"], font=font_sm)
     else:
         if len(rsi_pts) > 1:
-            draw.line(rsi_pts, fill="#10B981", width=2)  # RSI(9)
+            draw.line(rsi_pts, fill=pal["rsi_line"], width=2)  # RSI(9)
         if len(re3_pts) > 1:
-            draw.line(re3_pts, fill="#EF4444", width=1)  # EMA 3
+            draw.line(re3_pts, fill=pal["re3_line"], width=1)  # EMA 3
         if len(rw21_pts) > 1:
-            draw.line(rw21_pts, fill="#3B82F6", width=1)  # WMA 21
+            draw.line(rw21_pts, fill=pal["rw21_line"], width=1)  # WMA 21
 
         # RSI value text
         curr_rsi = rsi.dropna().iloc[-1] if not rsi.dropna().empty else 50.0
         curr_e3 = rsi_ema3.dropna().iloc[-1] if not rsi_ema3.dropna().empty else 50.0
         curr_w21 = rsi_wma21.dropna().iloc[-1] if not rsi_wma21.dropna().empty else 50.0
-        draw.text((x1 + 10, r_top - 4), f"RSI(9): {curr_rsi:.1f} | EMA(3): {curr_e3:.1f} | WMA(21): {curr_w21:.1f}", fill="#94A3B8", font=font_sm)
+        draw.text((x1 + 10, r_top - 4), f"RSI(9): {curr_rsi:.1f} | EMA(3): {curr_e3:.1f} | WMA(21): {curr_w21:.1f}", fill=pal["rsi_legend"], font=font_sm)
 
 
 def generate_quadrant_image(
@@ -225,25 +361,30 @@ def generate_quadrant_image(
     change_pct: Optional[float] = None,
     stage_label: str = "🏆 STAGE 4 FULL ALIGNMENT QUALIFIED",
     out_path: Optional[str] = None,
-    q4_title: Optional[str] = None
+    q4_title: Optional[str] = None,
+    theme: str = "light"
 ) -> str:
     """
     Renders a 1600x1200 composite Quad-Chart screenshot image for a stock.
+    Supports 'light' (default) and 'dark' themes with accurate IST timestamps.
     Returns: Absolute file path to the generated PNG image.
     """
+    theme_key = "dark" if (theme and str(theme).lower().strip() == "dark") else "light"
+    pal = THEME_PALETTES[theme_key]
+
     img_w, img_h = 1600, 1200
-    img = Image.new("RGB", (img_w, img_h), color="#0F121C")
+    img = Image.new("RGB", (img_w, img_h), color=pal["bg"])
     draw = ImageDraw.Draw(img)
 
     # 1. Header Banner (Height: 80px)
-    draw.rectangle([(0, 0), (img_w, 75)], fill="#1E222D", outline="#2A2E39", width=1)
+    draw.rectangle([(0, 0), (img_w, 75)], fill=pal["header_bg"], outline=pal["header_border"], width=1)
 
     font_sym = _get_font(26)
     font_bold = _get_font(14)
     font_sub = _get_font(12)
 
     # Symbol & Branding
-    draw.text((25, 12), symbol.upper(), fill="#38BDF8", font=font_sym)
+    draw.text((25, 12), symbol.upper(), fill=pal["symbol_color"], font=font_sym)
 
     if ltp is None and daily_df is not None and not daily_df.empty:
         ltp = float(daily_df["close"].iloc[-1])
@@ -255,19 +396,20 @@ def generate_quadrant_image(
 
     ltp_str = f"₹{ltp:,.2f}" if ltp else "₹---"
     chg_str = f"{change_pct:+.2f}%" if change_pct is not None else "+0.00%"
-    chg_clr = "#10B981" if (change_pct and change_pct >= 0) else "#EF4444"
+    chg_clr = pal["candle_green"] if (change_pct and change_pct >= 0) else pal["candle_red"]
 
-    draw.text((230, 18), ltp_str, fill="#FFFFFF", font=font_bold)
+    draw.text((230, 18), ltp_str, fill=pal["ltp_color"], font=font_bold)
     draw.text((320, 18), f"({chg_str})", fill=chg_clr, font=font_bold)
 
     # Stage Badge in Center
-    draw.rectangle([(620, 14), (1150, 48)], fill="#064E3B", outline="#10B981", width=2)
-    draw.text((640, 20), stage_label, fill="#34D399", font=font_bold)
+    draw.rectangle([(620, 14), (1150, 48)], fill=pal["badge_bg"], outline=pal["badge_border"], width=2)
+    draw.text((640, 20), stage_label, fill=pal["badge_text"], font=font_bold)
 
-    # Timestamp & Engine label on right
-    now_str = datetime.now().strftime("%d %b %Y %H:%M:%S")
-    draw.text((img_w - 320, 16), f"Generated: {now_str}", fill="#94A3B8", font=font_sub)
-    draw.text((img_w - 320, 36), "Upstox Pro 75m Auto-Broadcaster", fill="#38BDF8", font=font_sub)
+    # Timestamp in Indian Standard Time (IST) on right
+    now_ist = datetime.now(IST)
+    now_str = now_ist.strftime("%d %b %Y %I:%M:%S %p IST")
+    draw.text((img_w - 380, 16), f"Generated: {now_str}", fill=pal["sub_text"], font=font_sub)
+    draw.text((img_w - 380, 36), "Upstox Pro 75m Auto-Broadcaster", fill=pal["brand_color"], font=font_sub)
 
     # 2. Quadrants Layout (Margin: 15px, Gap: 15px)
     pad = 15
@@ -275,40 +417,41 @@ def generate_quadrant_image(
     col_w = (img_w - (pad * 3)) // 2  # ~770
     row_h = (img_h - grid_top - (pad * 2)) // 2  # ~540
 
+    ema_cols = pal["ema_colors"]
+
     # Q1: Monthly (Top-Left)
     bbox_q1 = (pad, grid_top, pad + col_w, grid_top + row_h)
     _draw_single_panel(
-        draw, monthly_df, f"1. MONTHLY MACRO TREND (Close > 5 EMA > 20 EMA)",
-        bbox_q1, ema_pairs=("EMA_5", "EMA_20"), ema_colors=("#38BDF8", "#F59E0B"), max_bars=36
+        draw, monthly_df, "1. MONTHLY MACRO TREND (5 & 20 EMA)",
+        bbox_q1, ema_pairs=("EMA_5", "EMA_20"), ema_colors=ema_cols["monthly"], max_bars=36, pal=pal
     )
 
     # Q2: Weekly (Top-Right)
     bbox_q2 = (pad * 2 + col_w, grid_top, img_w - pad, grid_top + row_h)
     _draw_single_panel(
-        draw, weekly_df, f"2. WEEKLY INTERMEDIATE TREND (Close > 20 EMA > 50 EMA)",
-        bbox_q2, ema_pairs=("EMA_20", "EMA_50"), ema_colors=("#F59E0B", "#EC4899"), max_bars=40
+        draw, weekly_df, "2. WEEKLY INTERMEDIATE (20 & 50 EMA)",
+        bbox_q2, ema_pairs=("EMA_20", "EMA_50"), ema_colors=ema_cols["weekly"], max_bars=40, pal=pal
     )
 
     # Q3: Daily (Bottom-Left)
     bbox_q3 = (pad, grid_top + row_h + pad, pad + col_w, img_h - pad)
     _draw_single_panel(
-        draw, daily_df, f"3. DAILY SETUP & 20 EMA BOUNCE (Open <= 20 EMA & Close >= 20 EMA)",
-        bbox_q3, ema_pairs=("EMA_20", "EMA_50"), ema_colors=("#F59E0B", "#EC4899"), max_bars=45
+        draw, daily_df, "3. DAILY SETUP & 20 EMA BOUNCE",
+        bbox_q3, ema_pairs=("EMA_20", "EMA_50"), ema_colors=ema_cols["daily"], max_bars=45, pal=pal
     )
 
-    # Q4: 75-Min (Bottom-Right)
     # Q4: Bottom-Right
-    q4_name = q4_title or "4. 75-MIN INTRADAY TRIGGER (Close > 20 EMA & 5 EMA >= 20 EMA)"
+    q4_name = q4_title or "4. 75-MIN INTRADAY TRIGGER (5 & 20 EMA)"
     bbox_q4 = (pad * 2 + col_w, grid_top + row_h + pad, img_w - pad, img_h - pad)
     _draw_single_panel(
         draw, intra_75_df, q4_name,
-        bbox_q4, ema_pairs=("EMA_5", "EMA_20"), ema_colors=("#38BDF8", "#F59E0B"), max_bars=40
+        bbox_q4, ema_pairs=("EMA_5", "EMA_20"), ema_colors=ema_cols["q4"], max_bars=40, pal=pal
     )
 
     # Save image
     if not out_path:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"{symbol.upper()}_quadrant_{ts}.png"
+        ts = now_ist.strftime("%Y%m%d_%H%M%S")
+        filename = f"{symbol.upper()}_quadrant_{theme_key}_{ts}.png"
         out_path = str(SCREENSHOTS_DIR / filename)
 
     img.save(out_path, format="PNG", optimize=True)
@@ -319,15 +462,15 @@ def generate_stock_quadrant(
     symbol: str,
     stage_label: str = "🏆 STAGE 4 FULL ALIGNMENT QUALIFIED",
     out_path: Optional[str] = None,
-    q4_timeframe: str = "75m"
+    q4_timeframe: str = "75m",
+    theme: str = "light"
 ) -> Optional[str]:
     """
     Convenience function: Automatically loads Daily, Monthly, Weekly, and Q4 data
     (75m, custom minutes, Daily, Weekly, Monthly) for `symbol`, generates the composite
-    1600x1200 image, and returns the path.
+    1600x1200 image, and returns the path. Defaults to crisp Light Theme and IST time.
     """
     try:
-        import re
         daily_df = database.get_candles_df(symbol)
         if daily_df is None or daily_df.empty or len(daily_df) < 15:
             return None
@@ -363,7 +506,7 @@ def generate_stock_quadrant(
             mins = int(m_num.group(1)) if m_num else 75
             if mins == 75:
                 q4_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
-                q4_title = "4. 75-MIN INTRADAY TRIGGER (Close > 20 EMA & 5 EMA >= 20 EMA)"
+                q4_title = "4. 75-MIN INTRADAY TRIGGER (5 & 20 EMA)"
             else:
                 q4_df = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=mins, min_bars=20)
                 q4_title = f"4. {mins}-MIN INTRADAY TRIGGER"
@@ -400,7 +543,9 @@ def generate_stock_quadrant(
             change_pct=change_pct,
             stage_label=stage_label,
             out_path=out_path,
-            q4_title=q4_title
+            q4_title=q4_title,
+            theme=theme
         )
     except Exception as err:
+        logger.error(f"Failed to generate quadrant image for {symbol}: {err}", exc_info=True)
         return None

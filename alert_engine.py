@@ -23,10 +23,13 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
 import pandas as pd
 import numpy as np
+
+IST = ZoneInfo("Asia/Kolkata")
 
 import config
 import database
@@ -354,7 +357,7 @@ def dispatch_alert(
     cfg = get_channel_config()
     results = {}
 
-    timestamp_str = datetime.now().strftime("%d %b %Y %H:%M:%S")
+    timestamp_str = datetime.now(IST).strftime("%d %b %Y %I:%M:%S %p IST")
     subject = f"🚨 ALERT: {symbol} triggered {alert_type} @ ₹{trigger_price:,.2f}"
 
     # Telegram format

@@ -324,24 +324,27 @@ def render_alert_page(theme: str = "dark"):
 
         # Single Stock Instant Test Section
         with st.expander("🖼️ **On-Demand Single Stock Quadrant Preview & Test**", expanded=False):
-            t_col1, t_col2, t_col3 = st.columns([2, 2, 2])
+            t_col1, t_col2, t_col3, t_col4 = st.columns([2, 1.3, 1.8, 1.8])
             with t_col1:
                 test_sym = st.selectbox("Select Stock to Inspect:", options=all_symbols, index=all_symbols.index("RELIANCE") if "RELIANCE" in all_symbols else 0, key="quad_test_sym")
             with t_col2:
-                st.write("")
-                st.write("")
-                btn_gen_test = st.button("📸 Generate 4-Quadrant Chart", use_container_width=True, key="btn_gen_test_quad")
+                quad_theme = st.selectbox("Theme:", options=["Light (Default)", "Dark"], index=0, key="quad_test_theme")
             with t_col3:
                 st.write("")
                 st.write("")
-                btn_test_dispatch = st.button("🚀 Test Broadcast to Telegram & Email", use_container_width=True, key="btn_test_quad_dispatch")
+                btn_gen_test = st.button("📸 Generate Quad-Chart", use_container_width=True, key="btn_gen_test_quad")
+            with t_col4:
+                st.write("")
+                st.write("")
+                btn_test_dispatch = st.button("🚀 Test Broadcast", use_container_width=True, key="btn_test_quad_dispatch")
 
             if btn_gen_test or btn_test_dispatch:
-                with st.spinner(f"Rendering 1600x1200 Quad-Chart for {test_sym}..."):
-                    gen_path = quadrant_image_generator.generate_stock_quadrant(test_sym)
+                sel_theme = "light" if "Light" in quad_theme else "dark"
+                with st.spinner(f"Rendering 1600x1200 {sel_theme.capitalize()}-Theme Quad-Chart for {test_sym}..."):
+                    gen_path = quadrant_image_generator.generate_stock_quadrant(test_sym, theme=sel_theme)
                     if gen_path and os.path.exists(gen_path):
                         st.success(f"✅ Generated high-resolution Quad-Chart ({os.path.getsize(gen_path)//1024} KB)")
-                        st.image(gen_path, caption=f"{test_sym} - Institutional 4-Quadrant Analysis (Monthly, Weekly, Daily, 75m)", use_container_width=True)
+                        st.image(gen_path, caption=f"{test_sym} - Institutional 4-Quadrant Analysis ({sel_theme.capitalize()} Theme | Monthly, Weekly, Daily, 75m)", use_container_width=True)
 
                         with open(gen_path, "rb") as f:
                             st.download_button(
