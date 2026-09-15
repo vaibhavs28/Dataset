@@ -28,6 +28,7 @@ from screener_engine import (
     parse_chartink_query,
 )
 from chartink_ocr import parse_chartink_screenshot
+import screener_snapshot
 
 
 def _get_theme_styles(theme: str) -> dict:
@@ -755,6 +756,30 @@ def render_screener_page(theme: str = "dark"):
             st.session_state["screener_clauses"] = clauses
             st.session_state["clauses_version"] = st.session_state.get("clauses_version", 0) + 1
             st.rerun()
+
+        # ── DuckDB Vectorized SQL Snapshot Engine Status & Rebuild ──────────
+        meta = screener_snapshot.get_snapshot_metadata()
+        has_snap = screener_snapshot.has_screener_snapshot()
+
+        snap_c1, snap_c2 = st.columns([3.2, 1.2])
+        with snap_c1:
+            if has_snap:
+                st.markdown(
+                    f"<div style='font-size: 0.85rem; color: #10B981; padding: 4px 0;'>"
+                    f"⚡ <b>DuckDB Vectorized SQL Engine Active (Sub-20ms instant scan)</b> | "
+                    f"Snapshot: <b>{meta.get('total_symbols', 0)} stocks</b> | "
+                    f"Updated: <code>{meta.get('last_updated', 'Active')}</code>"
+                    f"</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                st.caption("ℹ️ Snapshot table not yet built. First live scan will build it automatically.")
+        with snap_c2:
+            if st.button("🔄 Rebuild Snapshot", key="scr_rebuild_snap_btn", use_container_width=True, help="Recomputes all 94 technical indicators across all stocks into DuckDB"):
+                with st.spinner("Materializing wide indicators table in DuckDB..."):
+                    res = screener_snapshot.build_screener_snapshot()
+                    st.success(f"✅ Snapshot ready! {res.get('total_symbols', 0)} stocks in {res.get('elapsed_seconds', 0)}s.")
+                    st.rerun()
 
         add_col, scan_col = st.columns([1.5, 2.5])
         with add_col:

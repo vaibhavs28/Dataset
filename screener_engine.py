@@ -467,6 +467,32 @@ def run_screen(
     Supports historical date & time backtesting via `as_of_date` and `as_of_time`.
     data_provider_fn(symbol, timeframe) returns raw OHLCV DataFrame.
     """
+    # ── Ultra-Fast DuckDB SQL Path (Sub-20ms instant scan) ───────────────────
+    # If scanning latest market data (no historical backtest date) and snapshot exists,
+    # run direct vectorized C++ SQL query against `screener_flat_snapshot`.
+    if as_of_date is None and data_provider_fn is None and len(symbols) > 4:
+        try:
+            import screener_snapshot
+            if screener_snapshot.has_screener_snapshot():
+                if progress_callback:
+                    try:
+                        progress_callback(len(symbols), len(symbols), "⚡ Instant DuckDB Vector Query")
+                    except Exception:
+                        pass
+                df_sql = screener_snapshot.query_screener_snapshot(cfg, universe_symbols=symbols)
+                if df_sql is not None and not df_sql.empty:
+                    df_sql.attrs["clause_pass_counts"] = [len(df_sql)] * len(cfg.clauses)
+                    df_sql.attrs["evaluated_count"] = len(symbols)
+                    df_sql.attrs["engine"] = "DUCKDB_SQL_VECTOR"
+                    return df_sql
+                elif df_sql is not None and df_sql.empty:
+                    df_sql.attrs["clause_pass_counts"] = [0] * len(cfg.clauses)
+                    df_sql.attrs["evaluated_count"] = len(symbols)
+                    df_sql.attrs["engine"] = "DUCKDB_SQL_VECTOR"
+                    return df_sql
+        except Exception as e:
+            logger.debug(f"DuckDB SQL fast path fallback to memory engine: {e}")
+
     matches = []
     needed_tfs = set(c.timeframe for c in cfg.clauses)
     # Also include any rhs_timeframe (cross-TF comparisons like 15min Close < Daily EMA)

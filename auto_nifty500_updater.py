@@ -207,7 +207,18 @@ def run_nifty500_sync_cycle(max_workers: int = 25, ignore_market_hours: bool = F
 
     update_status_file(status_data)
     logger.info(f"✨ Nifty 500 sync completed in {elapsed:.2f}s ({results.get('total_1m_bars', 0)} 1m bars ingested). Next sync: {next_run.strftime('%H:%M:%S IST')}")
+
+    # ── Background Precomputed Snapshot Refresh ─────────────────────────────
+    # Rebuild wide technical indicator table in DuckDB so scans remain sub-20ms
+    try:
+        import screener_snapshot
+        logger.info("🔄 Materializing wide screener indicator table in DuckDB...")
+        screener_snapshot.build_screener_snapshot(symbols=symbols, max_workers=max_workers)
+    except Exception as e:
+        logger.warning(f"Could not refresh precomputed screener snapshot: {e}")
+
     return status_data
+
 
 
 def run_15m_daemon(max_workers: int = 25, save_parquet: bool = False):
