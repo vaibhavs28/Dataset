@@ -1226,17 +1226,20 @@ def main():
                 else:
                     intra_df = pd.DataFrame()
 
-                # 5. Quad Chart Data Scope: Restrict displayed price action to the last 1 year
+                # 5. Quad Chart Data Scope:
+                # In quad chart, ONLY Monthly needs data from 2020 to current date.
+                # Weekly, Daily, and 75-Min / Intraday remain scoped to the last 1 year.
                 if d_df is not None and not d_df.empty:
                     latest_date = pd.to_datetime(d_df.index[-1])
                     one_year_cutoff = latest_date - pd.DateOffset(years=1)
 
-                    # Monthly slice (last 1 year)
+                    # Monthly slice: Strictly from 2020 to current date
                     if m_df is not None and not m_df.empty:
                         m_tz = getattr(m_df.index, "tz", None)
-                        m_cutoff = one_year_cutoff.tz_localize(m_tz) if m_tz is not None else (one_year_cutoff.tz_localize(None) if getattr(one_year_cutoff, 'tz', None) is not None else one_year_cutoff)
+                        start_2020 = pd.to_datetime("2020-01-01")
+                        m_cutoff = start_2020.tz_localize(m_tz) if m_tz is not None else (start_2020.tz_localize(None) if getattr(start_2020, 'tz', None) is not None else start_2020)
                         m_sliced = m_df[m_df.index >= m_cutoff]
-                        if len(m_sliced) >= 6:
+                        if not m_sliced.empty:
                             m_df = m_sliced
 
                     # Weekly slice (last 1 year)
@@ -1276,7 +1279,7 @@ def main():
                 if chart_engine == "TradingView":
                     c_lead, c_fs = st.columns([3, 1])
                     with c_lead:
-                        st.caption("💡 **Interactive 4-Quadrant Matrix (Last 1-Year Range):** Displaying 1-year historical price action across Monthly, Weekly, Daily, and 75-Min charts. Click **'⛶ FULLSCREEN'** (or press **'F'**) to expand across monitor.")
+                        st.caption("💡 **Interactive 4-Quadrant Matrix:** Displaying Monthly (2020 to Current Date), and Weekly, Daily, and 75-Min (1-Year Range). Click **'⛶ FULLSCREEN'** (or press **'F'**) to expand across monitor.")
                     with c_fs:
                         theater_mode = st.toggle("⛶ Ultra Height (1,100px)", value=False, key="quad_theater_mode")
 
@@ -1317,7 +1320,7 @@ def main():
                             m_rsi_str = f"{m_rsi:.1f}"
                         st.caption(f"Rule: Close > 5 EMA (Green) & 5>20 EMA (Blue) | AVWAP Mar'20 (Sky Blue) | AVWAP Jun'22 (Sky Blue Dotted) | **RSI ({rsi_span}):** {m_rsi_str} ({rsi_50_badge})")
                         fig_m = create_candlestick_chart(
-                            m_df.tail(48), sel_stock, "Monthly", {
+                            m_df, sel_stock, "Monthly", {
                                 "EMA_5": "#4CAF50",
                                 "EMA_20": "#2962FF",
                                 "AVWAP_MAR2020": {"color": "#38BDF8", "name": "AVWAP Mar 2020", "dash": "solid"},

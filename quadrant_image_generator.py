@@ -204,15 +204,28 @@ def _draw_single_panel(
         draw.text((ts_x, y1 + 7), f"[{latest_ts_str}]", fill=pal["sub_text"], font=font_sm)
 
     # RSI Hilega Milega
-    rsi = scanner.calculate_rsi(close, span=9)
-    rsi_ema3 = scanner.calculate_ema(rsi, span=3)
-    rsi_wma21 = scanner.calculate_wma(rsi, period=21)
+    if "RSI_9" in sub_df.columns:
+        rsi = sub_df["RSI_9"]
+    elif "RSI" in sub_df.columns:
+        rsi = sub_df["RSI"]
+    else:
+        rsi = scanner.calculate_rsi(close, span=9)
+
+    if "RSI_EMA3" in sub_df.columns:
+        rsi_ema3 = sub_df["RSI_EMA3"]
+    else:
+        rsi_ema3 = scanner.calculate_ema(rsi, span=3)
+
+    if "RSI_WMA21" in sub_df.columns:
+        rsi_wma21 = sub_df["RSI_WMA21"]
+    else:
+        rsi_wma21 = scanner.calculate_wma(rsi, period=21)
 
     # EMAs
     e1_span = int(ema_pairs[0].split("_")[1]) if "_" in ema_pairs[0] else 5
     e2_span = int(ema_pairs[1].split("_")[1]) if "_" in ema_pairs[1] else 20
-    ema1 = scanner.calculate_ema(close, span=e1_span)
-    ema2 = scanner.calculate_ema(close, span=e2_span)
+    ema1 = sub_df[ema_pairs[0]] if ema_pairs[0] in sub_df.columns else scanner.calculate_ema(close, span=e1_span)
+    ema2 = sub_df[ema_pairs[1]] if ema_pairs[1] in sub_df.columns else scanner.calculate_ema(close, span=e2_span)
 
     # Price chart area (from y1+30 to y1 + height * 0.70)
     p_top = y1 + 30
@@ -419,11 +432,12 @@ def generate_quadrant_image(
 
     ema_cols = pal["ema_colors"]
 
-    # Q1: Monthly (Top-Left)
+    # Q1: Monthly (Top-Left) - Data strictly from 2020 to current date
+    m_bars = len(monthly_df) if (monthly_df is not None and not monthly_df.empty) else 84
     bbox_q1 = (pad, grid_top, pad + col_w, grid_top + row_h)
     _draw_single_panel(
-        draw, monthly_df, "1. MONTHLY MACRO TREND (5 & 20 EMA)",
-        bbox_q1, ema_pairs=("EMA_5", "EMA_20"), ema_colors=ema_cols["monthly"], max_bars=36, pal=pal
+        draw, monthly_df, "1. MONTHLY MACRO TREND (2020 - Present | 5 & 20 EMA)",
+        bbox_q1, ema_pairs=("EMA_5", "EMA_20"), ema_colors=ema_cols["monthly"], max_bars=max(m_bars, 36), pal=pal
     )
 
     # Q2: Weekly (Top-Right)
@@ -477,6 +491,21 @@ def generate_stock_quadrant(
 
         monthly_df = scanner.resample_ohlcv(daily_df, "monthly")
         weekly_df = scanner.resample_ohlcv(daily_df, "weekly")
+
+        # In quad chart, ONLY Monthly needs data from 2020 to current date
+        if monthly_df is not None and not monthly_df.empty:
+            monthly_df["EMA_5"] = scanner.calculate_ema(monthly_df["close"], span=5)
+            monthly_df["EMA_20"] = scanner.calculate_ema(monthly_df["close"], span=20)
+            monthly_df["RSI_9"] = scanner.calculate_rsi(monthly_df["close"], span=9)
+            monthly_df["RSI_EMA3"] = scanner.calculate_ema(monthly_df["RSI_9"], span=3)
+            monthly_df["RSI_WMA21"] = scanner.calculate_wma(monthly_df["RSI_9"], period=21)
+
+            m_tz = getattr(monthly_df.index, "tz", None)
+            start_2020 = pd.to_datetime("2020-01-01")
+            m_cutoff = start_2020.tz_localize(m_tz) if m_tz is not None else (start_2020.tz_localize(None) if getattr(start_2020, 'tz', None) is not None else start_2020)
+            m_sliced = monthly_df[monthly_df.index >= m_cutoff]
+            if not m_sliced.empty:
+                monthly_df = m_sliced
 
         tf_clean = str(q4_timeframe).strip().lower()
         q4_df = None
