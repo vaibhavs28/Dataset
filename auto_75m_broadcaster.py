@@ -144,7 +144,9 @@ def get_target_equities(universe_choice: str = "All Database Equities") -> List[
     all_equities = sorted(list(set(all_db_syms + parquet_syms)))
     all_equities = [s for s in all_equities if not s.startswith("0")]
 
-    if universe_choice == "Nifty 50":
+    if universe_choice in ("Swing Stock", "Swing Stocks", "Swing Stocks (446)"):
+        return [s for s in config.SWING_STOCK_SYMBOLS if s in all_equities]
+    elif universe_choice == "Nifty 50":
         return [s for s in config.NIFTY_50_SYMBOLS if s in all_equities]
     elif universe_choice == "Nifty 100":
         return all_equities[:100]

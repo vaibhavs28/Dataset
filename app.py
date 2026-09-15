@@ -1674,7 +1674,7 @@ def main():
         with h_col3:
             univ_filter = st.selectbox(
                 "🎯 Stock Universe:",
-                ["Top 100 (CoinMarketCap View)", "Top 250", "Top 500 (Most Liquid)", "Nifty 50", "All NSE Equities (3,000+)"],
+                ["Swing Stock", "Top 100 (CoinMarketCap View)", "Top 250", "Top 500 (Most Liquid)", "Nifty 50", "All NSE Equities (3,000+)"],
                 index=0,
                 key="hm_univ_filter"
             )
@@ -1709,7 +1709,10 @@ def main():
                     df_filtered = df_filtered[df_filtered["Sector"] == sector_filter]
 
             # Filter by Universe (Top N by Turnover)
-            if univ_filter == "Top 100 (CoinMarketCap View)":
+            if univ_filter in ("Swing Stock", "Swing Stocks"):
+                sw_syms = set(config.SWING_STOCK_SYMBOLS)
+                df_filtered = df_filtered[df_filtered["Symbol"].isin(sw_syms)]
+            elif univ_filter == "Top 100 (CoinMarketCap View)":
                 df_filtered = df_filtered.sort_values(by="Turnover", ascending=False).head(100)
             elif univ_filter == "Top 250":
                 df_filtered = df_filtered.sort_values(by="Turnover", ascending=False).head(250)

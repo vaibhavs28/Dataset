@@ -257,7 +257,7 @@ def render_alert_page(theme: str = "dark"):
         with ctrl_col1:
             bc_universe = st.selectbox(
                 "Scanning Universe:",
-                ["All Database Equities", "Nifty 50", "Nifty 100", "Top 200 Liquid Equities", "Nifty 500"],
+                ["Swing Stock", "All Database Equities", "Nifty 50", "Nifty 100", "Top 200 Liquid Equities", "Nifty 500"],
                 index=0,
                 key="bc_universe_select"
             )

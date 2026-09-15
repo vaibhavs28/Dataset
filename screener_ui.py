@@ -78,7 +78,9 @@ def get_target_equities(universe_choice: str) -> list:
     all_equities = sorted(list(set(all_db_syms + parquet_syms)))
     all_equities = [s for s in all_equities if not s.startswith("0")]
 
-    if universe_choice == "Nifty 50":
+    if universe_choice in ("Swing Stock", "Swing Stocks", "Swing Stocks (446)"):
+        return [s for s in config.SWING_STOCK_SYMBOLS if s in all_equities]
+    elif universe_choice == "Nifty 50":
         return [s for s in config.NIFTY_50_SYMBOLS if s in all_equities]
     elif universe_choice == "Nifty 100":
         return all_equities[:100]
@@ -136,7 +138,7 @@ def render_screener_page(theme: str = "dark"):
         with w_col1:
             wf_universe = st.selectbox(
                 "Stock Universe to Scan:",
-                ["Nifty 50", "Nifty 100", "Top 200 Liquid Equities", "Nifty 500", "All Database Equities"],
+                ["Swing Stock", "Nifty 50", "Nifty 100", "Top 200 Liquid Equities", "Nifty 500", "All Database Equities"],
                 index=0,
                 key="wf_universe_select"
             )
@@ -394,7 +396,7 @@ def render_screener_page(theme: str = "dark"):
         with p_col2:
             universe_choice = st.selectbox(
                 "Stock Universe:",
-                ["Nifty 50", "Nifty 100", "Top 200 Liquid Equities", "Nifty 500", "All Database Equities"],
+                ["Swing Stock", "Nifty 50", "Nifty 100", "Top 200 Liquid Equities", "Nifty 500", "All Database Equities"],
                 index=0,
                 key="scr_universe_select"
             )
