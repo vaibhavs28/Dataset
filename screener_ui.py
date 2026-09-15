@@ -247,10 +247,10 @@ def render_screener_page(theme: str = "dark"):
         with w_btn_col2:
             run_wf_btn = st.button("🚀 Run Waterfall Scan", type="primary", use_container_width=True, key="run_wf_scan_btn")
 
-        # Auto-run or button press
+        # Trigger scan strictly on button press
         scan_id = f"{as_of_param}_{as_of_time_param}" if as_of_param else "latest"
         wf_cache_key = f"wf_res_{wf_universe}_{scan_id}"
-        if run_wf_btn or wf_cache_key not in st.session_state:
+        if run_wf_btn:
             target_syms = get_target_equities(wf_universe)
             p_bar = st.progress(0.0)
             p_txt = st.empty()
@@ -387,6 +387,9 @@ def render_screener_page(theme: str = "dark"):
                         use_container_width=True,
                         key="wf_csv_dl_btn"
                     )
+        else:
+            st.markdown("---")
+            st.info(f"👆 Ready to scan **{wf_universe}**! Select your Date & Universe parameters above, then click **'🚀 Run Waterfall Scan'** to start.")
 
     # =========================================================================
     # TAB 2: CUSTOM CONDITION SCREENER & BUILDER
