@@ -12,6 +12,7 @@ Multi-channel delivery to Telegram, WhatsApp, Email, Webhooks, and In-App Audio.
 
 import os
 import time
+import importlib
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -335,8 +336,6 @@ def render_alert_page(theme: str = "dark"):
 
             # Ensure fresh module is loaded
             try:
-                import importlib
-                import auto_75m_broadcaster
                 importlib.reload(auto_75m_broadcaster)
             except Exception:
                 pass
@@ -426,8 +425,6 @@ def render_alert_page(theme: str = "dark"):
 
                 # Ensure fresh module is loaded
                 try:
-                    import importlib
-                    import auto_15m_broadcaster
                     importlib.reload(auto_15m_broadcaster)
                 except Exception:
                     pass
