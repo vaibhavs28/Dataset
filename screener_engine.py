@@ -563,7 +563,10 @@ def run_screen(
     daily_raw_cache: Dict[str, pd.DataFrame] = {}  # store raw daily for later intraday stage
 
     if use_funnel and len(symbols) > 4:
-        # Evaluate daily-tier only for all symbols (parallel, fast)
+        pre_filter_workers = min(32, max(4, (os.cpu_count() or 4) * 4))
+        # Phase 1 progress: report each pre-filter completion
+        pre_completed = 0
+
         def _check_daily_tier(sym: str):
             daily_raw = _get_daily_raw(sym)
             if daily_raw is None or daily_raw.empty or len(daily_raw) < 5:
@@ -573,7 +576,6 @@ def run_screen(
                 daily_raw = daily_raw.copy()
                 daily_raw.index = pd.to_datetime(daily_raw.index)
 
-            full_daily = daily_raw
             if as_of_date is not None:
                 target_dt = pd.to_datetime(as_of_date)
                 eod_naive = target_dt.replace(hour=23, minute=59, second=59)
@@ -586,38 +588,48 @@ def run_screen(
                     return sym, None, None
 
             tf_dfs = _build_daily_tf_dfs(sym, daily_raw)
-            # Evaluate daily-tier clauses only
             if daily_tier_cfg is not None:
-                res, cr = evaluate_stock(sym, tf_dfs, daily_tier_cfg, return_clause_results=True)
+                res, _cr = evaluate_stock(sym, tf_dfs, daily_tier_cfg, return_clause_results=True)
                 if res is None:
-                    return sym, None, None  # failed daily-tier — skip intraday entirely
+                    return sym, None, None
             return sym, daily_raw, tf_dfs
 
-        pre_filter_workers = min(32, max(4, (os.cpu_count() or 4) * 4))
+        # ── Phase 1: pre-filter with live progress ───────────────────────────
         with concurrent.futures.ThreadPoolExecutor(max_workers=pre_filter_workers) as ex:
-            futures = {ex.submit(_check_daily_tier, sym): sym for sym in symbols}
-            for fut in concurrent.futures.as_completed(futures):
+            future_map = {ex.submit(_check_daily_tier, sym): sym for sym in symbols}
+            for fut in concurrent.futures.as_completed(future_map):
+                pre_completed += 1
+                if progress_callback:
+                    try:
+                        progress_callback(pre_completed, total_symbols, f"[Pre-filter] {future_map[fut]}")
+                    except Exception:
+                        pass
                 sym, daily_raw, tf_dfs = fut.result()
                 if daily_raw is not None:
                     daily_tier_pass[sym] = tf_dfs
                     daily_raw_cache[sym] = daily_raw
 
-        logger.info(f"⚡ Funnel pre-filter: {len(daily_tier_pass)}/{len(symbols)} stocks passed daily-tier (skipped {len(symbols)-len(daily_tier_pass)} intraday loads)")
+        passed_syms = list(daily_tier_pass.keys())
+        logger.info(
+            f"⚡ Funnel pre-filter: {len(passed_syms)}/{len(symbols)} stocks passed daily-tier "
+            f"(skipped {len(symbols)-len(passed_syms)} intraday loads)"
+        )
 
         # ── Stage B: batch-load intraday for the small set that passed ──────
-        passed_syms = list(daily_tier_pass.keys())
         batch_75m: Dict[str, pd.DataFrame] = {}
         batch_15m: Dict[str, pd.DataFrame] = {}
 
         if passed_syms:
             if has_75m:
                 try:
-                    batch_75m = duckdb_store.get_batch_resampled_candles(passed_syms, interval_minutes=75, limit_per_symbol=500)
+                    batch_75m = duckdb_store.get_batch_resampled_candles(
+                        passed_syms, interval_minutes=75, limit_per_symbol=500)
                 except Exception as e:
                     logger.debug(f"Batch 75m resample error: {e}")
             if has_15m:
                 try:
-                    batch_15m = duckdb_store.get_batch_resampled_candles(passed_syms, interval_minutes=15, limit_per_symbol=500)
+                    batch_15m = duckdb_store.get_batch_resampled_candles(
+                        passed_syms, interval_minutes=15, limit_per_symbol=500)
                 except Exception as e:
                     logger.debug(f"Batch 15m resample error: {e}")
 
@@ -627,11 +639,11 @@ def run_screen(
                 return None, None
 
             daily_raw = daily_raw_cache.get(sym)
-            full_daily = _get_daily_raw(sym) or daily_raw
 
             # Add 75-Min
             if has_75m:
-                intra_75 = batch_75m.get(sym.upper().strip().replace("-EQ", "").replace(".NS", ""))
+                clean = sym.upper().strip().replace("-EQ", "").replace(".NS", "")
+                intra_75 = batch_75m.get(clean)
                 if intra_75 is None or intra_75.empty:
                     intra_75 = parquet_loader.ensure_symbol_75m_candles(sym, min_bars=20)
                 if intra_75 is not None and not intra_75.empty:
@@ -640,57 +652,57 @@ def run_screen(
                     if as_of_date is not None:
                         target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
                         tz = getattr(intra_75.index, "tz", None)
-                        if tz:
-                            intra_75 = intra_75[intra_75.index <= target_dt.tz_localize(tz)]
-                        else:
-                            intra_75 = intra_75[intra_75.index <= target_dt]
+                        intra_75 = intra_75[intra_75.index <= (target_dt.tz_localize(tz) if tz else target_dt)]
                     if intra_75 is not None and not intra_75.empty:
-                        tf_dfs["75-Min"] = compute_needed_indicators(intra_75, needed_indicators_by_tf.get("75-Min", set()))
+                        tf_dfs["75-Min"] = compute_needed_indicators(
+                            intra_75, needed_indicators_by_tf.get("75-Min", set()))
 
             # Add 15-Min
             if has_15m:
                 clean = sym.upper().strip().replace("-EQ", "").replace(".NS", "")
                 intra_15 = batch_15m.get(clean)
                 if intra_15 is None or intra_15.empty:
-                    intra_15 = parquet_loader.ensure_symbol_custom_minute_candles(sym, interval_minutes=15, min_bars=10)
+                    intra_15 = parquet_loader.ensure_symbol_custom_minute_candles(
+                        sym, interval_minutes=15, min_bars=10)
                 if intra_15 is not None and not intra_15.empty:
                     if not isinstance(intra_15.index, pd.DatetimeIndex):
                         intra_15.index = pd.to_datetime(intra_15.index)
                     if as_of_date is not None:
                         target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
                         tz = getattr(intra_15.index, "tz", None)
-                        if tz:
-                            intra_15 = intra_15[intra_15.index <= target_dt.tz_localize(tz)]
-                        else:
-                            intra_15 = intra_15[intra_15.index <= target_dt]
+                        intra_15 = intra_15[intra_15.index <= (target_dt.tz_localize(tz) if tz else target_dt)]
                     if intra_15 is not None and not intra_15.empty:
-                        tf_dfs["15-Min"] = compute_needed_indicators(intra_15, needed_indicators_by_tf.get("15-Min", set()))
+                        tf_dfs["15-Min"] = compute_needed_indicators(
+                            intra_15, needed_indicators_by_tf.get("15-Min", set()))
 
             eval_res, clause_results = evaluate_stock(sym, tf_dfs, cfg, return_clause_results=True)
             if eval_res is not None and daily_raw is not None:
                 as_of_str = str(daily_raw.index[-1])[:10]
                 eval_res["Scan_Date"] = as_of_str
                 eval_res["Scan_Time"] = time_str
-                if full_daily is not None and len(full_daily) > len(daily_raw):
-                    future_close = float(full_daily["close"].iloc[-1])
-                    curr_p = float(eval_res.get("LTP", 0.0))
-                    if curr_p > 0:
-                        eval_res["Return_Since_Scan_%"] = round(((future_close - curr_p) / curr_p) * 100.0, 2)
-                        eval_res["Latest_Close"] = round(future_close, 2)
             return eval_res, clause_results
 
-        # Run full evaluation only on passed_syms
+        # ── Phase 2: intraday evaluation only on passed_syms ────────────────
+        # Continue progress from where phase 1 left off (total_symbols is still len(symbols))
+        # We already reported pre_completed = total_symbols during phase 1
+        # Now re-report as "intraday evaluation" sub-phase on the small set
         intra_workers = min(32, max(4, (os.cpu_count() or 4) * 4))
-        completed_count = 0
-        total_symbols = len(symbols)
+        intra_completed = 0
+        intra_total = len(passed_syms)
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=intra_workers) as executor:
-            future_to_sym = {executor.submit(_eval_funneled_sym, sym): sym for sym in symbols}
+            future_to_sym = {executor.submit(_eval_funneled_sym, sym): sym for sym in passed_syms}
             for future in concurrent.futures.as_completed(future_to_sym):
                 sym = future_to_sym[future]
-                completed_count += 1
+                intra_completed += 1
                 if progress_callback:
                     try:
-                        progress_callback(completed_count, total_symbols, sym)
+                        # Show intraday progress as sub-step: "499+k/500 (evaluating k/N 75m+15m)"
+                        progress_callback(
+                            total_symbols,  # keep bar at 100% (pre-filter done)
+                            total_symbols,
+                            f"[Intraday {intra_completed}/{intra_total}] {sym}"
+                        )
                     except Exception:
                         pass
                 try:
@@ -711,6 +723,7 @@ def run_screen(
             df_out.attrs["evaluated_count"] = evaluated_count
             return df_out
         return pd.DataFrame()
+
 
     # ── Non-funneled path (no intraday, custom data_provider_fn, or small list) ──
     def _eval_screen_sym(sym: str) -> Tuple[Optional[Dict[str, Any]], Optional[List[bool]]]:
