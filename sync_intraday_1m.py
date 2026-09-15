@@ -109,7 +109,12 @@ def run_1m_sync_cycle(
         return {"status": "SKIPPED", "reason": "OUTSIDE_MARKET_HOURS"}
 
     if not symbols:
-        symbols = auto_nifty500_updater.get_nifty_500_symbols()
+        try:
+            import duckdb_store
+            with duckdb_store.get_read_connection() as conn:
+                symbols = conn.execute("SELECT DISTINCT REPLACE(trading_symbol, '-EQ', '') FROM instruments WHERE exchange='NSE_EQ';").df().iloc[:, 0].tolist()
+        except Exception:
+            symbols = auto_nifty500_updater.get_nifty_500_symbols()
 
     total = len(symbols)
     start_t = datetime.now()
@@ -117,10 +122,17 @@ def run_1m_sync_cycle(
 
     logger.info(f"⚡ Starting 1-Minute Live Ingestion across {total} stocks ({max_workers} workers)...")
 
-    # Map symbols to Upstox instrument keys
-    import database
-    all_inst = database.get_all_instruments(exchange="NSE_EQ")
-    sym_to_key = {i["trading_symbol"].replace("-EQ", ""): i["instrument_key"] for i in all_inst if i.get("instrument_key")}
+    # Map symbols to Upstox instrument keys directly from DuckDB
+    sym_to_key: Dict[str, str] = {}
+    try:
+        import duckdb_store
+        with duckdb_store.get_read_connection() as conn:
+            df_k = conn.execute("SELECT trading_symbol, instrument_key FROM instruments WHERE exchange='NSE_EQ';").df()
+            for _, r in df_k.iterrows():
+                s = str(r["trading_symbol"]).replace("-EQ", "").strip().upper()
+                sym_to_key[s] = str(r["instrument_key"]).strip()
+    except Exception as e:
+        logger.debug(f"DuckDB instrument key lookup note: {e}")
 
     all_rows = []
     synced_count = 0
@@ -176,15 +188,17 @@ def run_1m_sync_cycle(
     return status_data
 
 
-def run_daemon(max_workers: int = 25, poll_seconds: int = 60):
+def run_daemon(universe: str = "all", max_workers: int = 25, poll_seconds: int = 60):
     """
     Continuous 1-minute live feed daemon during market hours.
     Sleeps until the start of the next minute.
     """
-    logger.info("🛰️ Starting Chartink-Style 1-Minute Live Ingestion Daemon...")
+    logger.info(f"🛰️ Starting Chartink-Style 1-Minute Live Ingestion Daemon (Universe: {universe})...")
     logger.info("Writing directly to hot_intraday.db with zero disk-file or multi-TF overhead.")
 
-    symbols = auto_nifty500_updater.get_nifty_500_symbols()
+    symbols = None
+    if universe.lower() in ("nifty500", "nifty 500"):
+        symbols = auto_nifty500_updater.get_nifty_500_symbols()
 
     while True:
         try:
@@ -210,12 +224,16 @@ def run_daemon(max_workers: int = 25, poll_seconds: int = 60):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="1-Minute Live Feed Ingestion Daemon")
     parser.add_argument("--daemon", action="store_true", help="Run continuously every 1 minute")
+    parser.add_argument("--universe", type=str, default="all", help="Universe: 'all' (whole 3,021 database) or 'nifty500'")
     parser.add_argument("--workers", type=int, default=25, help="Worker threads")
     parser.add_argument("--force", action="store_true", help="Ignore market hours for one-shot test")
     args = parser.parse_args()
 
     if args.daemon:
-        run_daemon(max_workers=args.workers)
+        run_daemon(universe=args.universe, max_workers=args.workers)
     else:
-        res = run_1m_sync_cycle(max_workers=args.workers, ignore_market_hours=args.force)
+        symbols = None
+        if args.universe.lower() in ("nifty500", "nifty 500"):
+            symbols = auto_nifty500_updater.get_nifty_500_symbols()
+        res = run_1m_sync_cycle(symbols=symbols, max_workers=args.workers, ignore_market_hours=args.force)
         print(f"Cycle Result: {res}")

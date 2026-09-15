@@ -25,7 +25,7 @@ import json
 import logging
 import argparse
 import threading
-from typing import List, Dict, Optional, Any
+from typing import List, Dict, Optional, Any, Tuple
 from zoneinfo import ZoneInfo
 from datetime import datetime
 
@@ -48,35 +48,47 @@ logging.basicConfig(
 STATUS_FILE = config.DATA_DIR / "websocket_stream_status.json"
 
 
-def get_default_instrument_keys(universe: str = "Nifty 500") -> Tuple[List[str], Dict[str, str]]:
+def get_default_instrument_keys(universe: str = "all") -> Tuple[List[str], Dict[str, str]]:
     """
     Returns a list of Upstox instrument keys (e.g. 'NSE_EQ|INE002A01018')
     and a lookup dict mapping instrument_key -> clean symbol.
+    Supports:
+      - 'all' / 'whole database' (All 3,021 NSE Equities in the database)
+      - 'nifty 500' (Top 500 liquid stocks)
+      - 'nifty 50' (Nifty 50 index constituents)
     """
-    if universe.lower() == "nifty 50":
-        target_syms = config.NIFTY_50_SYMBOLS
-    else:
-        target_syms = auto_nifty500_updater.get_nifty_500_symbols()
+    u_lower = universe.lower().strip()
+    clean_target = None
 
-    clean_target = {s.upper().strip().replace("-EQ", "").replace(".NS", "") for s in target_syms}
+    if u_lower in ("nifty 50", "nifty50"):
+        clean_target = {s.upper().strip().replace("-EQ", "").replace(".NS", "") for s in config.NIFTY_50_SYMBOLS}
+    elif u_lower in ("nifty 500", "nifty500"):
+        clean_target = {s.upper().strip().replace("-EQ", "").replace(".NS", "") for s in auto_nifty500_updater.get_nifty_500_symbols()}
+    # If "all" or "whole database", clean_target is None (selects all 3,021 equities)
 
-    all_inst = database.get_all_instruments(exchange="NSE_EQ")
     key_to_sym: Dict[str, str] = {}
     keys: List[str] = []
 
-    for inst in all_inst:
-        sym = inst.get("trading_symbol", "").replace("-EQ", "")
-        ikey = inst.get("instrument_key", "")
-        if sym in clean_target and ikey:
-            key_to_sym[ikey] = sym
-            keys.append(ikey)
+    try:
+        import duckdb_store
+        with duckdb_store.get_read_connection() as conn:
+            df_inst = conn.execute("SELECT trading_symbol, instrument_key FROM instruments WHERE exchange='NSE_EQ';").df()
+            for _, r in df_inst.iterrows():
+                sym = str(r["trading_symbol"]).replace("-EQ", "").strip().upper()
+                ikey = str(r["instrument_key"]).strip()
+                if ikey and (clean_target is None or sym in clean_target):
+                    key_to_sym[ikey] = sym
+                    keys.append(ikey)
+    except Exception as e:
+        logger.debug(f"DuckDB instruments query note: {e}")
 
     # Fallback if instruments table isn't populated
     if not keys:
-        for s in clean_target:
-            ikey = f"NSE_EQ|{s}"
-            key_to_sym[ikey] = s
-            keys.append(ikey)
+        if clean_target:
+            for s in clean_target:
+                ikey = f"NSE_EQ|{s}"
+                key_to_sym[ikey] = s
+                keys.append(ikey)
 
     return keys, key_to_sym
 
