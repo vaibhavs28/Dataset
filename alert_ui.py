@@ -24,6 +24,7 @@ import quadrant_image_generator
 import auto_75m_broadcaster
 import sync_75m_intraday
 import auto_nifty500_updater
+import auto_15m_broadcaster
 
 
 def _get_theme_styles(theme: str) -> dict:
@@ -345,6 +346,56 @@ def render_alert_page(theme: str = "dark"):
                 else:
                     st.info(f"✅ Scan Complete in {el_sec:.1f}s. Scanned {bc_res.get('scanned_count')} stocks in {bc_universe}. Currently 0 stocks match Stage {stage_num} criteria.")
 
+        # ─── 15-Minute Chartink Scan #19122704 Broadcaster ──────────────────────────
+        with st.expander("⚡ **Chartink 15-Minute Intraday Scan (#19122704) — Telegram Broadcaster**", expanded=True):
+            st.markdown(
+                """
+                <div style='font-size: 0.9rem; color: #94A3B8; margin-bottom: 12px;'>
+                Evaluates <a href='https://chartink.com/screener/intraday-scan-19122704' target='_blank' style='color:#38BDF8;'>Chartink Screener #19122704</a>
+                across all 5 stages (Monthly + Weekly + Daily + 75-Min + 15-Min Precision Entry) every 15 minutes.
+                Dynamically resamples live 1-minute bars from <code>hot_intraday.db</code> in RAM and sends alerts with Quad-Charts to Telegram.
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+            c15_col1, c15_col2, c15_col3 = st.columns([2.5, 2.0, 2.0])
+            with c15_col1:
+                c15_universe = st.selectbox(
+                    "15m Universe:",
+                    options=["Nifty 500", "All Database Equities"],
+                    index=0,
+                    key="c15_universe_sel"
+                )
+            with c15_col2:
+                c15_stage = st.selectbox(
+                    "Minimum Stage Filter:",
+                    options=[
+                        "Stage 5 (🚨 Full Signal: M+W+D+75m+15m)",
+                        "Stage 4 (⚡ 75m Breakdown Alignment)"
+                    ],
+                    index=0,
+                    key="c15_stage_sel"
+                )
+            with c15_col3:
+                st.write("")
+                st.write("")
+                btn_trigger_15m = st.button("🚨 Broadcast 15m Scan Now", type="primary", use_container_width=True, key="btn_run_15m_bc_now")
+
+            if btn_trigger_15m:
+                stg_val = 5 if "Stage 5" in c15_stage else 4
+                with st.spinner(f"Running 15-minute Chartink #19122704 Scan ({c15_universe}, Stage {stg_val})..."):
+                    res15 = auto_15m_broadcaster.execute_15m_broadcast_cycle(
+                        universe=c15_universe,
+                        stage_filter=stg_val,
+                        force=True
+                    )
+                    q_cnt = res15.get("qualifying_count", 0)
+                    dis_cnt = res15.get("alerts_dispatched", 0)
+                    el_s = res15.get("elapsed_seconds", 0.0)
+                    if q_cnt > 0:
+                        st.success(f"🎉 Scan Complete in {el_s:.1f}s! Found {q_cnt} qualifying stocks. Dispatched {dis_cnt} alerts with 4-quadrant charts to Telegram!")
+                    else:
+                        st.info(f"✅ Scan Complete in {el_s:.1f}s. Currently 0 stocks match Stage {stg_val} criteria in {c15_universe}.")
 
         # Single Stock Instant Test Section
         with st.expander("🖼️ **On-Demand Single Stock Quadrant Preview & Test**", expanded=False):

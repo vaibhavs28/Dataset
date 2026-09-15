@@ -30,7 +30,7 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 import concurrent.futures
 
 import pandas as pd
@@ -119,8 +119,11 @@ def execute_15m_broadcast_cycle(
 
     # 1. Resolve symbols
     import auto_nifty500_updater
-    if universe.lower() in ("nifty 500", "nifty500"):
+    u_low = universe.lower()
+    if "500" in u_low:
         symbols = auto_nifty500_updater.get_nifty_500_symbols()
+    elif "50" in u_low:
+        symbols = config.NIFTY_50_SYMBOLS
     else:
         symbols = database.get_all_symbols()
 
@@ -166,22 +169,25 @@ def execute_15m_broadcast_cycle(
             channels = ["telegram", "email", "in_app"]
 
     dispatched = []
+    ch_url = "https://chartink.com/screener/intraday-scan-19122704"
+
     for row in qualifying_stocks:
         sym = str(row["Symbol"])
         ltp = float(row.get("LTP", 0.0))
         stg = int(row.get("Stage", 5))
         stg_lbl = row.get("Waterfall Stage", f"Stage {stg}")
+        ret1d = float(row.get("1D Return (%)", 0.0))
 
-        headline = f"🚨 Chartink #19122704 Stage {stg} Signal: {sym} @ ₹{ltp:.2f}"
+        headline = f"🚨 Chartink 15m Signal: {sym} qualified {stg_lbl} @ ₹{ltp:,.2f}"
         details = (
-            f"• Strategy: Chartink Intraday Scan #19122704\n"
-            f"• Stage: {stg_lbl}\n"
-            f"• LTP: ₹{ltp:.2f}\n"
-            f"• Monthly: {row.get('Monthly', 'PASS')}\n"
-            f"• Weekly: {row.get('Weekly', 'PASS')}\n"
-            f"• Daily: {row.get('Daily', 'PASS')}\n"
-            f"• 75-Min: {row.get('75-Min', 'PASS')}\n"
-            f"• 15-Min: {row.get('15-Min', 'PASS')}"
+            f"<b>LTP:</b> ₹{ltp:,.2f} ({ret1d:+.2f}%)\n"
+            f"<b>Strategy:</b> <a href='{ch_url}'>Chartink Intraday Scan #19122704</a>\n"
+            f"<b>Stage:</b> {stg_lbl}\n"
+            f"• <b>Monthly:</b> {row.get('Monthly', 'PASS')}\n"
+            f"• <b>Weekly:</b> {row.get('Weekly', 'PASS')}\n"
+            f"• <b>Daily:</b> {row.get('Daily', 'PASS')}\n"
+            f"• <b>75-Min:</b> {row.get('75-Min', 'PASS')}\n"
+            f"• <b>15-Min:</b> {row.get('15-Min', 'PASS')}"
         )
 
         logger.info(f"📸 Generating 4-Quadrant Screenshot for {sym} ({stg_lbl})...")
