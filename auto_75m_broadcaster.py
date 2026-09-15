@@ -416,8 +416,8 @@ def run_daemon(
             if is_weekday and alert_engine.is_market_hours_ist(datetime.now(IST)):
                 cur_date_str = now.strftime("%Y-%m-%d")
                 for h, m, label in CANDLE_CLOSE_SCHEDULE:
-                    # Check if current time matches scheduled close (within window)
-                    if (now.hour == h) and (now.minute == m):
+                    # Check if current time matches scheduled close (within 2-min window)
+                    if (now.hour == h) and (m <= now.minute <= m + 2):
                         slot_key = (cur_date_str, h, m)
                         if last_triggered_slot != slot_key:
                             logger.info(f"🔔 TRIGGER EVENT: Reached 75-Min Candle Close: {label}")
