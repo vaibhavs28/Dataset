@@ -22,6 +22,9 @@ import config
 import scanner
 import database
 import parquet_loader
+import logging
+
+logger = logging.getLogger("quadrant_generator")
 
 SCREENSHOTS_DIR = config.DATA_DIR / "screenshots"
 SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -342,20 +345,20 @@ def generate_stock_quadrant(
         elif tf_clean in ("1w", "weekly", "w"):
             q4_df = weekly_df.copy()
             q4_title = "4. WEEKLY TIMEFRAME (Trend & 20/50 EMA)"
-        elif tf_clean in ("1m", "monthly", "mo", "month"):
+        elif tf_clean in ("monthly", "mo", "month", "1mo"):
             q4_df = monthly_df.copy()
             q4_title = "4. MONTHLY TIMEFRAME (Macro Trend & 5/20 EMA)"
-        elif re.match(r"^(\d+)d$", tf_clean):
+        elif re.match(r"^(\d+)d(ays?)?$", tf_clean):
             q4_df = scanner.resample_ohlcv(daily_df, tf_clean)
             q4_title = f"4. {q4_timeframe.upper()} MULTI-DAY TIMEFRAME"
-        elif re.match(r"^(\d+)w$", tf_clean):
+        elif re.match(r"^(\d+)w(eeks?)?$", tf_clean):
             q4_df = scanner.resample_ohlcv(daily_df, tf_clean)
             q4_title = f"4. {q4_timeframe.upper()} MULTI-WEEK TIMEFRAME"
-        elif re.match(r"^(\d+)m(o|onth)?$", tf_clean) and not tf_clean.endswith("min"):
+        elif re.match(r"^(\d+)\s*(mo|months?)$", tf_clean):
             q4_df = scanner.resample_ohlcv(daily_df, tf_clean)
             q4_title = f"4. {q4_timeframe.upper()} MULTI-MONTH TIMEFRAME"
         else:
-            # Intraday minutes
+            # Intraday minutes (75m, 15m, 5m, 75min, etc.)
             m_num = re.search(r"(\d+)", tf_clean)
             mins = int(m_num.group(1)) if m_num else 75
             if mins == 75:
@@ -365,8 +368,21 @@ def generate_stock_quadrant(
                 q4_df = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=mins, min_bars=20)
                 q4_title = f"4. {mins}-MIN INTRADAY TRIGGER"
 
-        if q4_df is None or q4_df.empty:
-            q4_df = parquet_loader.ensure_symbol_75m_candles(symbol, min_bars=20)
+        # Ensure we have valid data for Q4
+        if q4_df is None or q4_df.empty or len(q4_df) < 5:
+            # Fallback 1: Try custom minute resampling if not already attempted
+            try:
+                m_num = re.search(r"(\d+)", tf_clean)
+                mins = int(m_num.group(1)) if m_num else 75
+                q4_df = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=mins, min_bars=5)
+            except Exception:
+                pass
+
+        # Fallback 2: If intraday is still unavailable (< 5 bars), gracefully display recent Daily candles
+        if q4_df is None or q4_df.empty or len(q4_df) < 5:
+            logger.info(f"Q4 intraday {q4_timeframe} data limited for {symbol}. Gracefully displaying recent Daily bars.")
+            q4_df = daily_df.tail(60).copy()
+            q4_title = f"4. DAILY TIMEFRAME ({q4_timeframe.upper()} Ingesting / Syncing)"
 
         ltp = float(daily_df["close"].iloc[-1])
         change_pct = 0.0

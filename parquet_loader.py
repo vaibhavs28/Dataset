@@ -421,6 +421,14 @@ def ensure_symbol_75m_candles(
     except Exception as e:
         logger.warning(f"Local parquet resample note for {sym}: {e}")
 
+    # 4. Resample from 1-min parquet / on-demand Upstox candles
+    try:
+        df_custom = ensure_symbol_custom_minute_candles(sym, interval_minutes=75, min_bars=min_bars, start_date=start_date, end_date=end_date)
+        if not df_custom.empty:
+            return df_custom
+    except Exception as e:
+        logger.warning(f"Fallback 1-min to 75-min resample note for {sym}: {e}")
+
     return pd.DataFrame()
 
 

@@ -29,7 +29,7 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str = "monthly") -> pd.DataFrame
     # Match multi-period rules
     m_day = re.match(r"^(\d+)\s*d(ays?)?$", tf)
     m_week = re.match(r"^(\d+)\s*w(eeks?)?$", tf)
-    m_month = re.match(r"^(\d+)\s*m(onths?|o)?$", tf)
+    m_month = re.match(r"^(\d+)\s*(mo|months?)$", tf)
     m_min = re.match(r"^(\d+)\s*(m|min|mins|minutes?)$", tf)
 
     if m_day:
@@ -41,11 +41,11 @@ def resample_ohlcv(df: pd.DataFrame, timeframe: str = "monthly") -> pd.DataFrame
     elif m_month or tf in ("monthly", "1mo", "mo", "month"):
         n_m = int(m_month.group(1)) if m_month else 1
         rule = f"{n_m}ME" if n_m > 1 else "ME"
-    elif m_min and any(x in tf for x in ["min", "minute"]):
+    elif m_min:
         n_mins = int(m_min.group(1))
         rule = f"{n_mins}min"
     else:
-        rule = "ME" if "m" in tf else "W"
+        rule = "ME" if ("mo" in tf or "month" in tf) else "W"
 
     try:
         resampled = df.resample(rule).agg({
