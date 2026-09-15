@@ -5,33 +5,37 @@ Unit tests for auto_nifty500_updater module.
 """
 
 import unittest
-from datetime import datetime, time as dtime
-import pytz
-import auto_nifty500_updater
+from datetime import datetime, time as dtime, timedelta
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    from datetime import timezone
+    IST = timezone(timedelta(hours=5, minutes=30))
 
-IST = pytz.timezone("Asia/Kolkata")
+import auto_nifty500_updater
 
 class TestAutoNifty500Updater(unittest.TestCase):
 
     def test_market_hours_ist(self):
         # Test Monday 10:15 IST (Market Open)
-        dt_market_open = IST.localize(datetime(2026, 9, 14, 10, 15, 0)) # Monday
+        dt_market_open = datetime(2026, 9, 14, 10, 15, 0, tzinfo=IST) # Monday
         self.assertTrue(auto_nifty500_updater.is_market_hours_ist(dt_market_open))
 
         # Test Monday 08:45 IST (Before Market Open)
-        dt_pre_market = IST.localize(datetime(2026, 9, 14, 8, 45, 0))
+        dt_pre_market = datetime(2026, 9, 14, 8, 45, 0, tzinfo=IST)
         self.assertFalse(auto_nifty500_updater.is_market_hours_ist(dt_pre_market))
 
         # Test Monday 16:05 IST (After Market Window)
-        dt_post_market = IST.localize(datetime(2026, 9, 14, 16, 5, 0))
+        dt_post_market = datetime(2026, 9, 14, 16, 5, 0, tzinfo=IST)
         self.assertFalse(auto_nifty500_updater.is_market_hours_ist(dt_post_market))
 
         # Test Saturday 11:00 IST (Weekend)
-        dt_saturday = IST.localize(datetime(2026, 9, 19, 11, 0, 0))
+        dt_saturday = datetime(2026, 9, 19, 11, 0, 0, tzinfo=IST)
         self.assertFalse(auto_nifty500_updater.is_market_hours_ist(dt_saturday))
 
         # Test Sunday 14:00 IST (Weekend)
-        dt_sunday = IST.localize(datetime(2026, 9, 20, 14, 0, 0))
+        dt_sunday = datetime(2026, 9, 20, 14, 0, 0, tzinfo=IST)
         self.assertFalse(auto_nifty500_updater.is_market_hours_ist(dt_sunday))
 
     def test_get_nifty_500_symbols(self):

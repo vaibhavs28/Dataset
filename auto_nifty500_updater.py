@@ -20,7 +20,12 @@ import argparse
 from pathlib import Path
 from datetime import datetime, timedelta, time as dtime
 from typing import List, Dict, Any, Optional
-import pytz
+try:
+    from zoneinfo import ZoneInfo
+    IST = ZoneInfo("Asia/Kolkata")
+except Exception:
+    from datetime import timezone
+    IST = timezone(timedelta(hours=5, minutes=30))
 
 # Setup project path
 PROJECT_ROOT = Path(__file__).resolve().parent
@@ -31,9 +36,6 @@ import config
 import database
 import parquet_loader
 import sync_75m_intraday
-
-# IST Timezone
-IST = pytz.timezone("Asia/Kolkata")
 
 # Status tracking file
 STATUS_FILE = PROJECT_ROOT / "data" / "nifty500_sync_status.json"
