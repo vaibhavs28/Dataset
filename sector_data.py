@@ -847,7 +847,7 @@ def generate_cmc_heatmap_html(
             "dominance": dom
         })
 
-    data_json = json.dumps(records)
+    data_json = json.dumps(records, separators=(',', ':'))
 
     tf_initial = "1D"
     if "1W" in active_tf:

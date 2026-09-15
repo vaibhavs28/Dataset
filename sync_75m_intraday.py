@@ -185,6 +185,20 @@ def fetch_and_resample_symbol(
         except Exception as e75:
             logger.warning(f"Could not resample 75m for {sym}: {e75}")
 
+        # Extract 1-minute bars directly for database insertion
+        records_1m = []
+        for b in raw_bars:
+            records_1m.append({
+                "symbol": sym,
+                "timestamp": b[0],
+                "open": float(b[1]),
+                "high": float(b[2]),
+                "low": float(b[3]),
+                "close": float(b[4]),
+                "volume": int(b[5]) if b[5] else 0,
+                "oi": int(b[6]) if len(b) > 6 and b[6] else 0
+            })
+
         meta = {
             "symbol": sym,
             "success": True,
@@ -194,10 +208,10 @@ def fetch_and_resample_symbol(
             "today_date": today_date,
             "error": None
         }
-        return daily_records, records_75, meta
+        return daily_records, records_75, records_1m, meta
 
     except Exception as e:
-        return [], [], {"symbol": sym, "success": False, "error": str(e)}
+        return [], [], [], {"symbol": sym, "success": False, "error": str(e)}
 
 
 def sync_symbol_75m_from_upstox(
@@ -208,9 +222,9 @@ def sync_symbol_75m_from_upstox(
     save_db: bool = True
 ) -> Dict[str, Any]:
     """
-    Synchronizes 75m intraday data for a single symbol immediately and writes to DB.
+    Synchronizes 75m and 1m intraday data for a single symbol immediately and writes directly to DB.
     """
-    daily_records, records_75, meta = fetch_and_resample_symbol(
+    daily_records, records_75, records_1m, meta = fetch_and_resample_symbol(
         symbol=symbol,
         instrument_key=instrument_key,
         rate_limiter=rate_limiter,
@@ -222,6 +236,8 @@ def sync_symbol_75m_from_upstox(
             database.upsert_candles(daily_records)
         if records_75:
             database.upsert_intraday_candles(records_75)
+        if records_1m:
+            database.upsert_1m_candles(records_1m)
 
     return meta
 
@@ -270,14 +286,16 @@ def sync_all_symbols_75m(
 
     daily_buffer = []
     intraday_buffer = []
+    buffer_1m = []
 
     rate_limiter = UpstoxRateLimiter(max_per_sec=20.0, max_per_min=480)
 
     def commit_buffers():
-        nonlocal daily_buffer, intraday_buffer
+        nonlocal daily_buffer, intraday_buffer, buffer_1m
         if not save_db:
             daily_buffer.clear()
             intraday_buffer.clear()
+            buffer_1m.clear()
             return
 
         if daily_buffer:
@@ -293,6 +311,13 @@ def sync_all_symbols_75m(
             except Exception as e:
                 logger.error(f"Error committing batch intraday candles: {e}")
             intraday_buffer.clear()
+
+        if buffer_1m:
+            try:
+                database.upsert_1m_candles(buffer_1m)
+            except Exception as e:
+                logger.error(f"Error committing batch 1m candles: {e}")
+            buffer_1m.clear()
 
     # Step 2: Concurrently fetch and resample
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -311,13 +336,14 @@ def sync_all_symbols_75m(
             completed += 1
             sym = future_to_sym[future]
             try:
-                daily_recs, recs_75, meta = future.result()
+                daily_recs, recs_75, recs_1m, meta = future.result()
                 if meta["success"]:
                     success_count += 1
                     total_1m_bars += meta["bars_1m"]
                     total_75m_bars += meta["bars_75m"]
                     daily_buffer.extend(daily_recs)
                     intraday_buffer.extend(recs_75)
+                    buffer_1m.extend(recs_1m)
                 else:
                     failed_count += 1
                     errors.append(f"{sym}: {meta.get('error', 'unknown')}")

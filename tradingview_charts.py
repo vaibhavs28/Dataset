@@ -19,10 +19,10 @@ import scanner
 
 
 def _safe_json_dumps(obj) -> str:
-    """Serializes objects to JSON while cleanly converting numpy numeric types (float32, float64, int64) to native Python types."""
+    """Serializes objects to JSON while cleanly converting numpy numeric types to native Python types and minimizing payload size."""
     def _default(o):
         if isinstance(o, (np.floating, float)):
-            return float(o)
+            return round(float(o), 2)
         if isinstance(o, (np.integer, int)):
             return int(o)
         if isinstance(o, (np.bool_, bool)):
@@ -30,7 +30,7 @@ def _safe_json_dumps(obj) -> str:
         if isinstance(o, (np.ndarray, list)):
             return list(o)
         return str(o)
-    return json.dumps(obj, default=_default)
+    return json.dumps(obj, default=_default, separators=(',', ':'))
 
 
 def prepare_chart_data(df: pd.DataFrame, is_intraday: bool = False) -> tuple:
@@ -215,13 +215,13 @@ def generate_lightweight_chart_html(
         main_h = avail_h
         rsi_h = 0
 
-    candles_json = json.dumps(candles)
-    volumes_json = json.dumps(volumes)
-    emas_json = json.dumps(emas_data)
-    pivots_json = json.dumps(pivots_data)
-    rsi_json = json.dumps(rsi_pts)
-    rsi_ema3_json = json.dumps(rsi_ema3_pts)
-    rsi_wma21_json = json.dumps(rsi_wma21_pts)
+    candles_json = _safe_json_dumps(candles)
+    volumes_json = _safe_json_dumps(volumes)
+    emas_json = _safe_json_dumps(emas_data)
+    pivots_json = _safe_json_dumps(pivots_data)
+    rsi_json = _safe_json_dumps(rsi_pts)
+    rsi_ema3_json = _safe_json_dumps(rsi_ema3_pts)
+    rsi_wma21_json = _safe_json_dumps(rsi_wma21_pts)
 
     html_code = f"""<!DOCTYPE html>
 <html lang="en">
@@ -2137,23 +2137,23 @@ def generate_advanced_terminal_html(
     sub_pane_h = 130 if sub_count > 0 else 0
     main_h = max(260, avail_h - (sub_count * sub_pane_h))
 
-    candles_json = json.dumps(candles)
-    volumes_json = json.dumps(volumes)
-    vol_ma_json = json.dumps(vol_mas)
-    emas_json = json.dumps(emas_data)
-    smas_json = json.dumps(smas_data)
-    bb_json = json.dumps({"upper": bb_upper, "middle": bb_middle, "lower": bb_lower})
-    supertrend_json = json.dumps(supertrend_pts)
-    vwap_json = json.dumps(vwap_pts)
-    cpr_json = json.dumps(cpr_data)
-    rsi_json = json.dumps(rsi_pts)
-    rsi_ema3_json = json.dumps(rsi_ema3_pts)
-    rsi_wma21_json = json.dumps(rsi_wma21_pts)
-    macd_json = json.dumps({"macd": macd_pts, "signal": signal_pts, "hist": hist_pts})
-    stoch_json = json.dumps({"k": stoch_k_pts, "d": stoch_d_pts})
-    ema_band_upper_json = json.dumps(ema_band_upper)
-    ema_band_lower_json = json.dumps(ema_band_lower)
-    ema_band_fill_json = json.dumps(ema_band_fill)
+    candles_json = _safe_json_dumps(candles)
+    volumes_json = _safe_json_dumps(volumes)
+    vol_ma_json = _safe_json_dumps(vol_mas)
+    emas_json = _safe_json_dumps(emas_data)
+    smas_json = _safe_json_dumps(smas_data)
+    bb_json = _safe_json_dumps({"upper": bb_upper, "middle": bb_middle, "lower": bb_lower})
+    supertrend_json = _safe_json_dumps(supertrend_pts)
+    vwap_json = _safe_json_dumps(vwap_pts)
+    cpr_json = _safe_json_dumps(cpr_data)
+    rsi_json = _safe_json_dumps(rsi_pts)
+    rsi_ema3_json = _safe_json_dumps(rsi_ema3_pts)
+    rsi_wma21_json = _safe_json_dumps(rsi_wma21_pts)
+    macd_json = _safe_json_dumps({"macd": macd_pts, "signal": signal_pts, "hist": hist_pts})
+    stoch_json = _safe_json_dumps({"k": stoch_k_pts, "d": stoch_d_pts})
+    ema_band_upper_json = _safe_json_dumps(ema_band_upper)
+    ema_band_lower_json = _safe_json_dumps(ema_band_lower)
+    ema_band_fill_json = _safe_json_dumps(ema_band_fill)
 
     html_code = f"""<!DOCTYPE html>
 <html lang="en">
@@ -3701,7 +3701,7 @@ def generate_quad_chart_html(
         is_intraday=is_q4_intraday
     )
 
-    quad_data_json = json.dumps({
+    quad_data_json = _safe_json_dumps({
         "symbol": symbol,
         "m": m_payload,
         "w": w_payload,

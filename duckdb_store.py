@@ -1041,4 +1041,57 @@ def upsert_daily_candles(candles: List[Dict[str, Any]]):
     save_daily_candles(candles)
 
 
+def upsert_1m_candles(candles: List[Dict[str, Any]]):
+    """
+    Inserts or updates 1-minute candles directly into DuckDB's candles_1m table.
+    Ensures sub-second batch writing with deduplication on (symbol, timestamp).
+    """
+    if not candles:
+        return
+
+    df = pd.DataFrame(candles)
+    if "symbol" not in df.columns and "trading_symbol" in df.columns:
+        df["symbol"] = df["trading_symbol"]
+    if "oi" not in df.columns and "open_interest" in df.columns:
+        df["oi"] = df["open_interest"]
+
+    for col, default in [
+        ("symbol", ""), ("timestamp", ""), ("open", 0.0),
+        ("high", 0.0), ("low", 0.0), ("close", 0.0),
+        ("volume", 0), ("oi", 0)
+    ]:
+        if col not in df.columns:
+            df[col] = default
+
+    df["symbol"] = df["symbol"].astype(str).str.upper().str.strip().str.replace("-EQ", "", regex=False).str.replace(".NS", "", regex=False)
+    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    if df["timestamp"].dt.tz is None:
+        df["timestamp"] = df["timestamp"].dt.tz_localize("Asia/Kolkata")
+
+    with _lock:
+        conn = get_write_connection()
+        try:
+            conn.register("_temp_1m_in", df)
+            conn.execute("""
+                INSERT INTO candles_1m (
+                    symbol, timestamp, open, high, low, close, volume, oi
+                )
+                SELECT
+                    symbol, timestamp, open, high, low, close, volume, oi
+                FROM _temp_1m_in
+                ON CONFLICT (symbol, timestamp) DO UPDATE SET
+                    open = EXCLUDED.open,
+                    high = EXCLUDED.high,
+                    low = EXCLUDED.low,
+                    close = EXCLUDED.close,
+                    volume = EXCLUDED.volume,
+                    oi = EXCLUDED.oi;
+            """)
+            conn.unregister("_temp_1m_in")
+        except Exception as e:
+            logger.warning(f"Error upserting 1m candles into DuckDB: {e}")
+        finally:
+            conn.close()
+
+
 

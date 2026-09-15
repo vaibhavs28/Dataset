@@ -564,31 +564,74 @@ def main():
 
 
     st.sidebar.markdown("---")
-    st.sidebar.markdown("### ⚡ Daily Market Update")
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("### ⚡ Live Market Update")
     today_display = datetime.today().strftime("%d %b %Y")
     st.sidebar.caption(f"📅 Today: **{today_display}**")
-    update_scope = st.sidebar.radio(
-        "Update Scope",
-        options=["Nifty 50 & Top Stocks (⚡ ~5s)", "All Database Stocks (3,300+)"],
+
+    update_mode = st.sidebar.radio(
+        "Update Mode",
+        options=["⚡ 1-Min & 75-Min Intraday (Direct to DB)", "🚀 Daily EOD Fast Sync (~5s)"],
         index=0,
-        key="one_click_scope_choice",
-        label_visibility="collapsed"
+        key="one_click_mode_choice"
     )
+
+    update_universe = st.sidebar.selectbox(
+        "Target Stocks",
+        options=["Swing Stocks (1,267)", "Nifty 50 (Top 50)", "All Active Equities"],
+        index=0,
+        key="one_click_universe_choice"
+    )
+
     if st.sidebar.button("⚡ One-Click Update to Today", use_container_width=True, type="primary", key="one_click_daily_update_btn"):
-        p_bar = st.sidebar.progress(0)
+        p_bar = st.sidebar.progress(0.0)
         p_txt = st.sidebar.empty()
-        def _daily_cb(cur, tot, sym):
-            p_bar.progress(min(cur / max(tot, 1), 1.0))
-            p_txt.caption(f"Updating {sym} ({cur}/{tot})...")
-        target_syms = config.NIFTY_50_SYMBOLS if "5s" in update_scope else None
-        with st.spinner("Syncing latest market data across stocks via fast DuckDB batch API..."):
-            try:
-                import batch_downloader
-                res = batch_downloader.sync_live_market_batch(symbols=target_syms, progress_callback=_daily_cb)
-                st.sidebar.success(f"✅ Fast Batch Sync: Updated {res['synced']:,}/{res['total']:,} stocks in {res['duration']:.1f}s directly into DuckDB!")
-            except Exception as e:
-                res = downloader.update_daily_market_data_one_click(symbols=target_syms, progress_callback=_daily_cb)
-                st.sidebar.success(f"✅ Updated {res['updated_symbols']} stocks ({res['new_bars_added']} new candles)! {res['already_up_to_date']} were already up to date.")
+        sync_start_t = time.time()
+        last_sync_update = [0.0]
+
+        def _sync_cb(cur, tot, sym):
+            now = time.time()
+            if cur == 1 or cur == tot or (now - last_sync_update[0] >= 0.1):
+                last_sync_update[0] = now
+                pct = min(cur / max(tot, 1), 1.0)
+                p_bar.progress(pct)
+                elapsed = max(now - sync_start_t, 0.001)
+                speed = cur / elapsed
+                rem_secs = (tot - cur) / speed if speed > 0 else 0
+                eta_str = f"{int(rem_secs)}s" if rem_secs < 60 else f"{int(rem_secs // 60)}m {int(rem_secs % 60)}s"
+                p_txt.caption(f"⚡ {sym} ({cur}/{tot} • {pct*100:.1f}%) | ETA: ~{eta_str}")
+
+        # Resolve target symbols
+        if "Swing" in update_universe:
+            target_syms = config.SWING_STOCK_SYMBOLS
+        elif "Nifty" in update_universe:
+            target_syms = config.NIFTY_50_SYMBOLS
+        else:
+            target_syms = None
+
+        if "Intraday" in update_mode:
+            with st.spinner("⚡ Syncing live 1-min & 75-min candles directly into DuckDB database..."):
+                try:
+                    import sync_75m_intraday
+                    res = sync_75m_intraday.sync_all_symbols_75m(
+                        symbols=target_syms,
+                        max_workers=15,
+                        save_parquet=True,
+                        save_db=True,
+                        progress_callback=_sync_cb
+                    )
+                    st.sidebar.success(f"✅ Intraday Sync Complete: {res['synced']}/{res['total']} stocks updated directly into DuckDB (1m + 75m bars added) in {res['duration_seconds']:.1f}s!")
+                except Exception as e:
+                    st.sidebar.error(f"Intraday sync error: {e}")
+        else:
+            with st.spinner("Syncing latest daily market data across stocks via fast DuckDB batch API..."):
+                try:
+                    import batch_downloader
+                    res = batch_downloader.sync_live_market_batch(symbols=target_syms, progress_callback=_sync_cb)
+                    st.sidebar.success(f"✅ Fast Batch Sync: Updated {res['synced']:,}/{res['total']:,} stocks in {res['duration']:.1f}s directly into DuckDB!")
+                except Exception as e:
+                    res = downloader.update_daily_market_data_one_click(symbols=target_syms, progress_callback=_sync_cb)
+                    st.sidebar.success(f"✅ Updated {res['updated_symbols']} stocks ({res['new_bars_added']} new candles)! {res['already_up_to_date']} were already up to date.")
         p_bar.empty()
         p_txt.empty()
         st.rerun()

@@ -321,6 +321,24 @@ def sync_live_market_candles(symbol: str) -> bool:
         except Exception as e75:
             logger.warning(f"Could not resample/upsert live 75m candles for {sym}: {e75}")
 
+        # 4. Upsert today's 1-minute bars directly into DuckDB candles_1m
+        try:
+            records_1m = []
+            for b in raw_bars:
+                records_1m.append({
+                    "symbol": sym,
+                    "timestamp": b[0],
+                    "open": float(b[1]),
+                    "high": float(b[2]),
+                    "low": float(b[3]),
+                    "close": float(b[4]),
+                    "volume": int(b[5]) if b[5] else 0,
+                    "oi": int(b[6]) if len(b) > 6 and b[6] else 0
+                })
+            database.upsert_1m_candles(records_1m)
+        except Exception as e1m:
+            logger.warning(f"Could not upsert live 1m candles for {sym}: {e1m}")
+
         return True
     except Exception as e:
         logger.warning(f"Could not sync live intraday candles for {sym}: {e}")

@@ -401,6 +401,18 @@ def upsert_intraday_candles(candles: List[Dict[str, Any]]):
         pass
 
 
+def upsert_1m_candles(candles: List[Dict[str, Any]]):
+    """
+    Inserts or updates 1-minute candles directly into DuckDB candles_1m table.
+    """
+    if not candles:
+        return
+    try:
+        import duckdb_store
+        duckdb_store.upsert_1m_candles(candles)
+    except Exception as e:
+        logger.warning(f"Error upserting 1m candles into DuckDB: {e}")
+
 
 def get_intraday_candles_df(
     symbol: str, 
