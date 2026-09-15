@@ -278,7 +278,8 @@ def run_75m_waterfall_broadcast(
     candle_label: Optional[str] = None,
     sync_first: bool = True,
     progress_callback=None,
-    force: bool = False
+    force: bool = False,
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Executes a complete 75-min Waterfall Scan, generates 4-quadrant screenshots

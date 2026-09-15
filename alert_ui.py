@@ -333,13 +333,29 @@ def render_alert_page(theme: str = "dark"):
                         f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
                     )
 
-            bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
-                universe=bc_universe,
-                stage_filter=stage_num,
-                sync_first=auto_sync_upstox,
-                force=True,
-                progress_callback=_75m_progress
-            )
+            # Ensure fresh module is loaded
+            try:
+                import importlib
+                import auto_75m_broadcaster
+                importlib.reload(auto_75m_broadcaster)
+            except Exception:
+                pass
+
+            try:
+                bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
+                    universe=bc_universe,
+                    stage_filter=stage_num,
+                    sync_first=auto_sync_upstox,
+                    force=True,
+                    progress_callback=_75m_progress
+                )
+            except TypeError:
+                bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
+                    universe=bc_universe,
+                    stage_filter=stage_num,
+                    sync_first=auto_sync_upstox,
+                    force=True
+                )
             p_bar_75.empty()
             p_txt_75.empty()
 
@@ -408,12 +424,28 @@ def render_alert_page(theme: str = "dark"):
                             f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
                         )
 
-                res15 = auto_15m_broadcaster.execute_15m_broadcast_cycle(
-                    universe=c15_universe,
-                    stage_filter=stg_val,
-                    force=True,
-                    progress_callback=_15m_progress
-                )
+                # Ensure fresh module is loaded
+                try:
+                    import importlib
+                    import auto_15m_broadcaster
+                    importlib.reload(auto_15m_broadcaster)
+                except Exception:
+                    pass
+
+                try:
+                    res15 = auto_15m_broadcaster.execute_15m_broadcast_cycle(
+                        universe=c15_universe,
+                        stage_filter=stg_val,
+                        force=True,
+                        progress_callback=_15m_progress
+                    )
+                except TypeError:
+                    # Graceful fallback if older module version is cached in Python memory
+                    res15 = auto_15m_broadcaster.execute_15m_broadcast_cycle(
+                        universe=c15_universe,
+                        stage_filter=stg_val,
+                        force=True
+                    )
                 p_bar_15.empty()
                 p_txt_15.empty()
 

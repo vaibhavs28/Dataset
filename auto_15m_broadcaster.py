@@ -103,7 +103,8 @@ def execute_15m_broadcast_cycle(
     stage_filter: int = 4,
     channels: Optional[List[str]] = None,
     force: bool = False,
-    progress_callback: Optional[Any] = None
+    progress_callback: Optional[Any] = None,
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Executes a single 15-minute broadcast cycle for Chartink Scan 19122704.
