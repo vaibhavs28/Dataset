@@ -312,22 +312,16 @@ def run_75m_waterfall_broadcast(
     if symbols is None or len(symbols) == 0:
         symbols = get_target_equities(universe)
 
-    # 0. Sync fresh intraday 75m candle data from Upstox if requested
-    if sync_first:
-        try:
-            import sync_75m_intraday
-            logger.info(f"🔄 Ingesting live 75-minute candle data from Upstox for {len(symbols)} stocks (Universe: {universe})...")
-            sync_res = sync_75m_intraday.sync_all_symbols_75m(
-                symbols=symbols,
-                universe=universe,
-                progress_callback=progress_callback
-            )
-            logger.info(
-                f"🔄 Upstox Ingestion Complete: {sync_res.get('synced_count', 0)}/{len(symbols)} stocks updated "
-                f"({sync_res.get('total_75m_bars', 0)} 75m bars added) in {sync_res.get('elapsed_seconds', 0)}s."
-            )
-        except Exception as se:
-            logger.warning(f"Live Upstox 75m sync skipped or encountered error: {se}")
+    # 0. Check hot_intraday.db for live 1-minute stream (The Chartink Architecture)
+    import hot_intraday
+    if hot_intraday.has_hot_data():
+        stats = hot_intraday.get_hot_stats()
+        logger.info(
+            f"⚡ Active Live Feed: 'hot_intraday.db' has {stats.get('candle_count', 0)} 1m bars across {stats.get('symbol_count', 0)} stocks. "
+            f"Dynamic 75m resampling active (takes < 30ms)."
+        )
+    elif sync_first:
+        logger.info("ℹ️ hot_intraday.db is idle. Scanning existing DuckDB intraday/daily database.")
 
     logger.info(f"⚡ Starting 75-Min Waterfall Scan across {len(symbols)} stocks (Universe: {universe}, Stage Filter: {stage_filter})...")
 

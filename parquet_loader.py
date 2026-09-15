@@ -313,6 +313,16 @@ def ensure_symbol_custom_minute_candles(
     if interval_minutes == 75:
         return ensure_symbol_75m_candles(clean_sym, min_bars=min_bars, start_date=start_date, end_date=end_date)
 
+    # 0. Live Intraday Stream: check hot_intraday.db first
+    try:
+        import hot_intraday
+        if hot_intraday.has_hot_data():
+            df_hot = hot_intraday.get_resampled_candles(clean_sym, interval_minutes=interval_minutes, limit=100)
+            if not df_hot.empty:
+                return df_hot
+    except Exception as e:
+        logger.debug(f"hot_intraday custom check note for {clean_sym}: {e}")
+
     try:
         import duckdb_store
         df_duck = duckdb_store.get_resampled_candles(
@@ -376,6 +386,16 @@ def ensure_symbol_75m_candles(
     Supports start_date and end_date filtering.
     """
     sym = symbol.upper().strip()
+
+    # 0. Live Intraday Stream: check hot_intraday.db first for live trading session data
+    try:
+        import hot_intraday
+        if hot_intraday.has_hot_data():
+            df_hot = hot_intraday.get_resampled_candles(sym, interval_minutes=75, limit=50)
+            if not df_hot.empty:
+                return df_hot
+    except Exception as e:
+        logger.debug(f"hot_intraday live check note for {sym}: {e}")
 
     # 1. First query our ultra-fast DuckDB intraday_candles table
     try:
