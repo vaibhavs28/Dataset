@@ -22,7 +22,7 @@ import urllib.parse
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
-from datetime import datetime
+from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Tuple
@@ -30,6 +30,28 @@ import pandas as pd
 import numpy as np
 
 IST = ZoneInfo("Asia/Kolkata")
+
+
+def is_market_hours_ist(now: Optional[datetime] = None) -> bool:
+    """
+    Returns True if current time is within Indian Market Alert Window:
+    Monday through Friday between 09:00:00 AM IST and 04:00:00 PM IST (09:00 - 16:00).
+    Outside these hours, automated alerts are suppressed.
+    """
+    if now is None:
+        now = datetime.now(IST)
+    elif now.tzinfo is None:
+        now = now.replace(tzinfo=IST)
+    else:
+        now = now.astimezone(IST)
+
+    # Mon=0, Fri=4, Sat=5, Sun=6
+    if now.weekday() >= 5:
+        return False
+
+    t = now.time()
+    return (time(9, 0, 0) <= t <= time(16, 0, 0))
+
 
 import config
 import database
@@ -348,12 +370,21 @@ def dispatch_alert(
     headline: str,
     details: str,
     selected_channels: List[str],
-    screenshot_path: Optional[str] = None
+    screenshot_path: Optional[str] = None,
+    ignore_market_hours: bool = False
 ) -> Dict[str, Tuple[bool, str]]:
     """
     Dispatches notifications across all selected active channels and records to audit logs.
     If screenshot_path is provided, sends photos via Telegram and embedded images via Email.
+    Enforces market hours constraint (09:00 AM - 04:00 PM IST Mon-Fri) unless ignore_market_hours=True.
     """
+    if not ignore_market_hours and not is_market_hours_ist():
+        now_str = datetime.now(IST).strftime("%Y-%m-%d %I:%M:%S %p IST")
+        logger.info(f"⏸️ Alert suppressed for {symbol}: Outside Market Timing (09:00 AM - 04:00 PM IST Mon-Fri). Current IST: {now_str}")
+        return {
+            "market_hours": (False, f"Suppressed: Outside Market Timing (09:00 AM - 04:00 PM IST Mon-Fri). Current IST: {now_str}")
+        }
+
     cfg = get_channel_config()
     results = {}
 
@@ -490,33 +521,39 @@ def delete_alert(alert_id: int):
 
 
 def log_alert_trigger(alert_id: int, symbol: str, alert_type: str, trigger_price: float, message: str, delivery_results: Dict[str, Tuple[bool, str]]):
-    """Records an alert execution in the audit log and updates trigger counts."""
+    """Records an alert execution in the audit log and updates trigger counts with IST timestamp."""
     deliv_str = json.dumps({k: {"success": v[0], "status": v[1]} for k, v in delivery_results.items()})
+    now_ist_str = datetime.now(IST).strftime("%Y-%m-%d %H:%M:%S")
     with get_alerts_db() as conn:
         conn.execute("""
-            INSERT INTO alert_logs (alert_id, symbol, alert_type, trigger_price, message, delivery_status_json)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (alert_id, symbol, alert_type, trigger_price, message, deliv_str))
+            INSERT INTO alert_logs (alert_id, symbol, alert_type, trigger_price, message, delivery_status_json, triggered_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (alert_id, symbol, alert_type, trigger_price, message, deliv_str, now_ist_str))
 
         # Check if alert should be deactivated (if ONCE mode)
         alert_row = conn.execute("SELECT trigger_mode, trigger_count FROM alerts WHERE alert_id = ?", (alert_id,)).fetchone()
         if alert_row:
             new_count = alert_row["trigger_count"] + 1
             if alert_row["trigger_mode"] == "ONCE":
-                conn.execute("UPDATE alerts SET trigger_count = ?, is_active = 0, last_triggered_at = CURRENT_TIMESTAMP WHERE alert_id = ?", (new_count, alert_id))
+                conn.execute("UPDATE alerts SET trigger_count = ?, is_active = 0, last_triggered_at = ? WHERE alert_id = ?", (new_count, now_ist_str, alert_id))
             else:
-                conn.execute("UPDATE alerts SET trigger_count = ?, last_triggered_at = CURRENT_TIMESTAMP WHERE alert_id = ?", (new_count, alert_id))
+                conn.execute("UPDATE alerts SET trigger_count = ?, last_triggered_at = ? WHERE alert_id = ?", (new_count, now_ist_str, alert_id))
         conn.commit()
 
 
 def get_alert_logs(limit: int = 50) -> List[Dict[str, Any]]:
-    """Fetches historical alert trigger logs."""
+    """Fetches historical alert trigger logs with IST time annotation."""
     with get_alerts_db() as conn:
         rows = conn.execute("SELECT * FROM alert_logs ORDER BY log_id DESC LIMIT ?", (limit,)).fetchall()
         result = []
         for r in rows:
             d = dict(r)
             d["delivery_status"] = json.loads(d["delivery_status_json"])
+            t_raw = str(d.get("triggered_at", ""))
+            if t_raw and not t_raw.endswith("IST"):
+                d["triggered_at_ist"] = f"{t_raw[:19]} IST"
+            else:
+                d["triggered_at_ist"] = t_raw
             result.append(d)
         return result
 
@@ -770,11 +807,16 @@ def evaluate_single_alert(
     return None
 
 
-def check_all_active_alerts(data_provider_fn=None) -> List[Dict[str, Any]]:
+def check_all_active_alerts(data_provider_fn=None, ignore_market_hours: bool = False) -> List[Dict[str, Any]]:
     """
     Scans and evaluates all active alerts. Dispatches notifications when conditions are met.
+    Restricted strictly to 09:00 AM - 04:00 PM IST (Mon-Fri) unless ignore_market_hours=True.
     Returns list of triggered events.
     """
+    if not ignore_market_hours and not is_market_hours_ist():
+        logger.info("⏸️ Skipping active alerts scan: Outside Market Hours (09:00 AM - 04:00 PM IST Mon-Fri).")
+        return []
+
     active_alerts = get_active_alerts()
     if not active_alerts:
         return []

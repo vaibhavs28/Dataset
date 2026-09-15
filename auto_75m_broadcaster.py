@@ -206,11 +206,12 @@ def get_recent_quadrant_screenshots(limit: int = 30) -> List[Dict[str, Any]]:
             # Extract symbol from filename (e.g. RELIANCE_quadrant_20260912_004524.png)
             parts = p.stem.split("_quadrant_")
             sym = parts[0] if parts else p.stem
+            mod_dt = datetime.fromtimestamp(stat.st_mtime, tz=IST)
             items.append({
                 "symbol": sym,
                 "path": str(p.resolve()),
                 "filename": p.name,
-                "modified_at": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
+                "modified_at": mod_dt.strftime("%Y-%m-%d %I:%M:%S %p IST"),
                 "size_kb": round(stat.st_size / 1024, 1),
                 "timestamp_epoch": stat.st_mtime
             })
@@ -228,17 +229,37 @@ def run_75m_waterfall_broadcast(
     symbols: Optional[List[str]] = None,
     candle_label: Optional[str] = None,
     sync_first: bool = True,
-    progress_callback=None
+    progress_callback=None,
+    force: bool = False
 ) -> Dict[str, Any]:
     """
     Executes a complete 75-min Waterfall Scan, generates 4-quadrant screenshots
     for every qualifying stock, and dispatches multi-channel alerts.
     When sync_first is True, updates database with the latest 75m intraday candles from Upstox first.
+    Enforces market hours (09:00 AM - 04:00 PM IST Mon-Fri) unless force=True or explicit symbols passed.
     """
     start_time = get_now_ist()
     if candle_label is None:
         sched = get_75m_schedule_status(start_time)
         candle_label = sched.get("next_candle_label", "Intraday 75m Scan")
+
+    # Guard: Automated alerts/broadcasts only trigger during market timing (09:00 AM - 04:00 PM IST Mon-Fri)
+    if not force and symbols is None and not alert_engine.is_market_hours_ist(datetime.now(IST)):
+        now_str = datetime.now(IST).strftime("%Y-%m-%d %I:%M:%S %p IST")
+        logger.info(f"⏸️ Automated 75m Broadcast held in standby: Outside Market Timing (09:00 AM - 04:00 PM IST Mon-Fri). Current IST: {now_str}")
+        return {
+            "broadcast_id": f"bc_{int(start_time.timestamp())}",
+            "timestamp": f"{start_time.strftime('%Y-%m-%d %H:%M:%S')} IST",
+            "candle_slot": candle_label,
+            "universe": universe,
+            "stage_filter": stage_filter,
+            "scanned_count": 0,
+            "qualifying_count": 0,
+            "elapsed_seconds": 0.0,
+            "stocks": [],
+            "channels": channels or [],
+            "status": "Standby: Outside Market Hours (09:00 AM - 04:00 PM IST)"
+        }
 
     if symbols is None or len(symbols) == 0:
         symbols = get_target_equities(universe)
@@ -323,7 +344,8 @@ def run_75m_waterfall_broadcast(
                 headline=headline,
                 details=details,
                 selected_channels=channels,
-                screenshot_path=img_path
+                screenshot_path=img_path,
+                ignore_market_hours=force
             )
 
             # Log to SQLite alert audit
@@ -378,10 +400,11 @@ def run_daemon(
     Continuous background daemon that monitors the system clock and executes
     the Waterfall Scan & Screenshot Broadcast immediately at every 75-min candle close.
     Automatically updates database with fresh 75-minute candle data from Upstox.
+    Only dispatches alerts during Indian Market Hours (09:00 AM - 04:00 PM IST Mon-Fri).
     """
     logger.info("🛰️ Starting 75-Minute Intraday Waterfall Broadcaster Daemon...")
     logger.info(f"Schedule: 10:30, 11:45, 13:00, 14:15, 15:30 IST (Mon-Fri)")
-    logger.info(f"Universe: {universe} | Stage Filter: Stage {stage_filter} | Auto-Sync: {sync_first}")
+    logger.info(f"Alert Window: 09:00 AM - 04:00 PM IST | Universe: {universe} | Stage Filter: Stage {stage_filter} | Auto-Sync: {sync_first}")
 
     last_triggered_slot = None  # (YYYY-MM-DD, hour, minute)
 
@@ -390,7 +413,7 @@ def run_daemon(
             now = get_now_ist()
             is_weekday = (now.weekday() < 5)
 
-            if is_weekday:
+            if is_weekday and alert_engine.is_market_hours_ist(datetime.now(IST)):
                 cur_date_str = now.strftime("%Y-%m-%d")
                 for h, m, label in CANDLE_CLOSE_SCHEDULE:
                     # Check if current time matches scheduled close (within window)
@@ -404,7 +427,8 @@ def run_daemon(
                                 stage_filter=stage_filter,
                                 channels=channels,
                                 candle_label=label,
-                                sync_first=sync_first
+                                sync_first=sync_first,
+                                force=False
                             )
                             break
 

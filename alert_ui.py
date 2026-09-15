@@ -234,12 +234,13 @@ def render_alert_page(theme: str = "dark"):
         """, unsafe_allow_html=True)
 
         sched = auto_75m_broadcaster.get_75m_schedule_status()
-        m_status = "🟢 MARKET OPEN" if sched["is_market_hours"] else "⏸️ MARKET CLOSED"
-        m_color = "green" if sched["is_market_hours"] else "orange"
+        alert_window_active = alert_engine.is_market_hours_ist()
+        m_status = "🟢 ACTIVE (09:00 - 16:00 IST)" if alert_window_active else "⏸️ STANDBY (Closed)"
+        m_color = "green" if alert_window_active else "orange"
 
         col_s1, col_s2, col_s3, col_s4 = st.columns(4)
         with col_s1:
-            render_metric_card("Market Session", m_status, "NSE Trading Hours: 09:15 - 15:30", m_color, styles)
+            render_metric_card("Alert Window (IST)", m_status, "Active: 09:00 AM - 04:00 PM IST (Mon-Fri)", m_color, styles)
         with col_s2:
             render_metric_card("Next 75m Candle Close", sched["next_candle_label"], f"Scheduled: {sched['next_candle_time'][-8:]} IST", "blue", styles)
         with col_s3:
@@ -312,7 +313,8 @@ def render_alert_page(theme: str = "dark"):
                 bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
                     universe=bc_universe,
                     stage_filter=stage_num,
-                    sync_first=auto_sync_upstox
+                    sync_first=auto_sync_upstox,
+                    force=True
                 )
                 q_count = bc_res.get("qualifying_count", 0)
                 el_sec = bc_res.get("elapsed_seconds", 0.0)
@@ -365,7 +367,8 @@ def render_alert_page(theme: str = "dark"):
                                 headline=f"Manual Test Broadcast: {test_sym}",
                                 details="4-Quadrant candlestick screenshot verification.",
                                 selected_channels=["telegram", "email", "in_app"],
-                                screenshot_path=gen_path
+                                screenshot_path=gen_path,
+                                ignore_market_hours=True
                             )
                             st.success(f"Dispatched test alert with screenshot! Delivery status: {list(deliv.keys())}")
                     else:
@@ -901,7 +904,7 @@ def render_alert_page(theme: str = "dark"):
                 deliv_st = l.get("delivery_status", {})
                 deliv_summary = ", ".join([f"{k}: {'✅' if v.get('success') else '❌'}" for k, v in deliv_st.items()])
                 log_rows.append({
-                    "Time": str(l.get("triggered_at", ""))[:19],
+                    "Time (IST)": l.get("triggered_at_ist") or f"{str(l.get('triggered_at', ''))[:19]} IST",
                     "Symbol": l.get("symbol"),
                     "Alert Type": l.get("alert_type", "").replace("_", " "),
                     "Price (₹)": f"₹{float(l.get('trigger_price', 0)):,.2f}",

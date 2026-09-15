@@ -123,6 +123,56 @@ class TestAlertEngine(unittest.TestCase):
             trig_p, head, det = res
             self.assertIn("RSI", head)
 
+    def test_is_market_hours_ist(self):
+        """Test Indian Market Alert Timing: 09:00 AM - 04:00 PM IST (Mon-Fri)."""
+        # Monday 10:30 IST (Open)
+        t_mon_open = datetime(2026, 9, 14, 10, 30, 0, tzinfo=alert_engine.IST)
+        self.assertTrue(alert_engine.is_market_hours_ist(t_mon_open))
+
+        # Monday 08:30 IST (Before 9 AM -> False)
+        t_mon_early = datetime(2026, 9, 14, 8, 30, 0, tzinfo=alert_engine.IST)
+        self.assertFalse(alert_engine.is_market_hours_ist(t_mon_early))
+
+        # Monday 16:30 IST (After 4 PM -> False)
+        t_mon_late = datetime(2026, 9, 14, 16, 30, 0, tzinfo=alert_engine.IST)
+        self.assertFalse(alert_engine.is_market_hours_ist(t_mon_late))
+
+        # Saturday 11:00 IST (Weekend -> False)
+        t_sat = datetime(2026, 9, 12, 11, 0, 0, tzinfo=alert_engine.IST)
+        self.assertFalse(alert_engine.is_market_hours_ist(t_sat))
+
+    def test_dispatch_alert_market_hours_enforcement(self):
+        """Test that automated alerts outside 9 AM - 4 PM IST are suppressed unless ignore_market_hours=True."""
+        # Simulated late evening
+        late_dt = datetime(2026, 9, 14, 21, 0, 0, tzinfo=alert_engine.IST)
+        if not alert_engine.is_market_hours_ist(late_dt):
+            # Without ignore_market_hours outside market hours, it should be suppressed
+            # If current real time is outside market hours:
+            if not alert_engine.is_market_hours_ist():
+                res = alert_engine.dispatch_alert(
+                    symbol="TEST_HOURS",
+                    alert_type="STATIC_PRICE",
+                    trigger_price=100.0,
+                    headline="Test",
+                    details="Test",
+                    selected_channels=["in_app"],
+                    ignore_market_hours=False
+                )
+                self.assertIn("market_hours", res)
+                self.assertFalse(res["market_hours"][0])
+
+            # With ignore_market_hours=True, it succeeds
+            res_forced = alert_engine.dispatch_alert(
+                symbol="TEST_HOURS",
+                alert_type="STATIC_PRICE",
+                trigger_price=100.0,
+                headline="Test Forced",
+                details="Test Forced",
+                selected_channels=["in_app"],
+                ignore_market_hours=True
+            )
+            self.assertTrue(res_forced["in_app"][0])
+
 
 if __name__ == "__main__":
     unittest.main()
