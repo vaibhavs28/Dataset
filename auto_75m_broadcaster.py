@@ -222,6 +222,54 @@ def get_recent_quadrant_screenshots(limit: int = 30) -> List[Dict[str, Any]]:
     return items[:limit]
 
 
+def clear_screenshot_database() -> Dict[str, Any]:
+    """
+    Clears all saved 75-minute quadrant screenshots, resets broadcast_history.json,
+    and removes WATERFALL_75M audit logs from the alerts database.
+    """
+    screen_dir = config.DATA_DIR / "screenshots"
+    deleted_images = 0
+    if screen_dir.exists():
+        for f in screen_dir.glob("*.png"):
+            try:
+                f.unlink()
+                deleted_images += 1
+            except Exception as e:
+                logger.warning(f"Failed to delete {f}: {e}")
+
+    # Clear broadcast history file
+    deleted_history_records = 0
+    if HISTORY_FILE.exists():
+        try:
+            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                records = json.load(f)
+                deleted_history_records = len(records)
+        except Exception:
+            deleted_history_records = 0
+        try:
+            with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+                json.dump([], f)
+        except Exception as e:
+            logger.warning(f"Failed to reset {HISTORY_FILE}: {e}")
+
+    # Clear alert_logs from alerts.db for WATERFALL_75M
+    deleted_db_logs = 0
+    try:
+        with alert_engine.get_alerts_db() as conn:
+            cursor = conn.execute("DELETE FROM alert_logs WHERE alert_type = 'WATERFALL_75M'")
+            deleted_db_logs = cursor.rowcount
+            conn.commit()
+    except Exception as e:
+        logger.warning(f"Failed to clear alert_logs: {e}")
+
+    logger.info(f"🗑️ Cleared screenshot database: {deleted_images} images, {deleted_history_records} history records, {deleted_db_logs} alert logs.")
+    return {
+        "deleted_images": deleted_images,
+        "deleted_history": deleted_history_records,
+        "deleted_alert_logs": deleted_db_logs
+    }
+
+
 def run_75m_waterfall_broadcast(
     universe: str = "All Database Equities",
     stage_filter: int = 4,

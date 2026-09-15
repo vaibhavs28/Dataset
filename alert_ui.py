@@ -377,7 +377,15 @@ def render_alert_page(theme: str = "dark"):
         st.markdown("---")
 
         # Gallery of Recent Quadrant Screenshots
-        st.markdown("##### 🖼️ Recent 75-Min Quadrant Screenshots Gallery")
+        gal_hdr_col1, gal_hdr_col2 = st.columns([3.5, 1.5])
+        with gal_hdr_col1:
+            st.markdown("##### 🖼️ Recent 75-Min Quadrant Screenshots Gallery")
+        with gal_hdr_col2:
+            if st.button("🗑️ Clear Screenshot Database", key="btn_clear_sc_db", use_container_width=True, type="secondary"):
+                res = auto_75m_broadcaster.clear_screenshot_database()
+                st.success(f"✅ Cleared {res['deleted_images']} screenshots & reset history!")
+                st.rerun()
+
         recent_screens = auto_75m_broadcaster.get_recent_quadrant_screenshots(limit=12)
 
         if not recent_screens:
