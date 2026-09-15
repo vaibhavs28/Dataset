@@ -234,9 +234,9 @@ class TestScreenerEngine(unittest.TestCase):
         cfg = get_screener_preset("intraday-scan-19122704")
         self.assertIn("19122704", cfg.name)
         self.assertGreaterEqual(len(cfg.clauses), 20)
-        # Check presence of Monthly, Weekly, Daily, 75-Min timeframes
+        # Check presence of all 5 timeframes including new 15-Min stage
         tfs = {c.timeframe for c in cfg.clauses}
-        self.assertEqual(tfs, {"Monthly", "Weekly", "Daily", "75-Min"})
+        self.assertEqual(tfs, {"Monthly", "Weekly", "Daily", "75-Min", "15-Min"})
 
     def test_evaluate_intraday_scan_19122704(self):
         from screener_engine import evaluate_intraday_scan_19122704

@@ -324,7 +324,7 @@ def render_screener_page(theme: str = "dark"):
                 if "Return Since Scan (%)" in active_df.columns and active_df["Return Since Scan (%)"].notna().any():
                     display_cols.extend(["Return Since Scan (%)", "Latest Price"])
                 display_cols.extend([
-                    "Volume", "Waterfall Stage", "Monthly", "Weekly", "Daily", "75-Min",
+                    "Volume", "Waterfall Stage", "Monthly", "Weekly", "Daily", "75-Min", "15-Min",
                     "M_RSI", "W_RSI", "D_RSI", "75m_RSI"
                 ])
                 show_df = active_df[[c for c in display_cols if c in active_df.columns]].copy()
@@ -351,8 +351,9 @@ def render_screener_page(theme: str = "dark"):
                     )
                 st_styled = st_styled.map(
                     lambda v: "background-color: rgba(16, 185, 129, 0.2); color: #10B981; font-weight: bold;" if v == "✅ PASS" else ("color: #94A3B8;" if v == "❌ FAIL" else ""),
-                    subset=[c for c in ["Monthly", "Weekly", "Daily", "75-Min"] if c in show_df.columns]
+                    subset=[c for c in ["Monthly", "Weekly", "Daily", "75-Min", "15-Min"] if c in show_df.columns]
                 )
+
 
                 st.dataframe(
                     st_styled,
@@ -699,8 +700,8 @@ def render_screener_page(theme: str = "dark"):
             with row_cols[0]:
                 c["timeframe"] = st.selectbox(
                     f"TF #{i+1}",
-                    ["Daily", "Weekly", "Monthly", "75-Min"],
-                    index=["Daily", "Weekly", "Monthly", "75-Min"].index(c["timeframe"]) if c["timeframe"] in ["Daily", "Weekly", "Monthly", "75-Min"] else 0,
+                    ["Daily", "Weekly", "Monthly", "75-Min", "15-Min"],
+                    index=["Daily", "Weekly", "Monthly", "75-Min", "15-Min"].index(c["timeframe"]) if c["timeframe"] in ["Daily", "Weekly", "Monthly", "75-Min", "15-Min"] else 0,
                     key=f"c_tf_{c_ver}_{i}",
                     label_visibility="collapsed"
                 )

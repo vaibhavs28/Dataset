@@ -37,6 +37,7 @@ class ScreenerClause:
     rhs_value: float = 0.0         # if rhs_type == "Number"
     rhs_offset: int = 0
     multiplier: float = 1.0        # e.g., Volume > 2.0 * SMA_Vol_20
+    rhs_timeframe: Optional[str] = None # e.g., "Daily" when comparing 15-Min Close < Daily EMA_20
 
 
 @dataclass
@@ -98,7 +99,8 @@ OPERATOR_OPTIONS = [
     "<=",
     "==",
     "crossed_above",
-    "crossed_below"
+    "crossed_below",
+    "abs_pct_lte"   # abs(lhs-rhs)/lhs*100 <= rhs_value  (MA-squeeze condition)
 ]
 
 
@@ -295,9 +297,15 @@ def ensure_indicator(df_ind: pd.DataFrame, col_name: str) -> bool:
     return False
 
 
-def evaluate_clause(df_ind: pd.DataFrame, clause: ScreenerClause) -> Tuple[bool, float, float]:
+def evaluate_clause(
+    df_ind: pd.DataFrame,
+    clause: ScreenerClause,
+    df_rhs_ind: Optional[pd.DataFrame] = None
+) -> Tuple[bool, float, float]:
     """
     Evaluates a single ScreenerClause on the indicator dataframe.
+    df_rhs_ind: optional separate DataFrame used to resolve the RHS indicator when
+                clause.rhs_timeframe is set (cross-timeframe comparisons, e.g. 15min Close < Daily EMA_20).
     Returns: (passed: bool, lhs_value: float, rhs_value: float)
     """
     if df_ind.empty or len(df_ind) < 3:
@@ -332,14 +340,16 @@ def evaluate_clause(df_ind: pd.DataFrame, clause: ScreenerClause) -> Tuple[bool,
         val_rhs_prev = float(clause.rhs_value)
     else:
         rhs_col = clause.rhs_indicator
-        ensure_indicator(df_ind, rhs_col)
-        if rhs_col not in df_ind.columns:
-            matched_r = [c for c in df_ind.columns if c.lower() == rhs_col.lower()]
+        # For cross-timeframe clauses, resolve from the provided rhs df (e.g. Daily EMA when lhs is 15-Min)
+        target_rhs_df = df_rhs_ind if (df_rhs_ind is not None and clause.rhs_timeframe) else df_ind
+        ensure_indicator(target_rhs_df, rhs_col)
+        if rhs_col not in target_rhs_df.columns:
+            matched_r = [c for c in target_rhs_df.columns if c.lower() == rhs_col.lower()]
             if matched_r:
                 rhs_col = matched_r[0]
             else:
                 return False, val_lhs_curr, 0.0
-        s_rhs = df_ind[rhs_col] * clause.multiplier
+        s_rhs = target_rhs_df[rhs_col] * clause.multiplier
         r_curr = -(1 + clause.rhs_offset)
         r_prev = -(2 + clause.rhs_offset)
         if abs(r_curr) > len(s_rhs) or abs(r_prev) > len(s_rhs):
@@ -366,9 +376,16 @@ def evaluate_clause(df_ind: pd.DataFrame, clause: ScreenerClause) -> Tuple[bool,
         passed = (val_lhs_curr > val_rhs_curr) and (val_lhs_prev <= val_rhs_prev)
     elif op == "crossed_below":
         passed = (val_lhs_curr < val_rhs_curr) and (val_lhs_prev >= val_rhs_prev)
+    elif op == "abs_pct_lte":
+        # abs(lhs - rhs) / lhs * 100 <= rhs_value (percentage)
+        # Used for MA squeeze: abs(EMA_9 - EMA_13) / EMA_9 * 100 <= 0.01
+        if val_lhs_curr != 0:
+            diff_pct = abs(val_lhs_curr - val_rhs_curr) / abs(val_lhs_curr) * 100.0
+            passed = diff_pct <= clause.rhs_value
+        else:
+            passed = (abs(val_lhs_curr - val_rhs_curr) <= clause.rhs_value)
 
     return passed, val_lhs_curr, val_rhs_curr
-
 
 
 def evaluate_stock(
@@ -404,13 +421,17 @@ def evaluate_stock(
             clause_results.append(False)
             continue
 
-        passed, lhs_val, rhs_val = evaluate_clause(df_tf, clause)
+        # Cross-timeframe RHS lookup (e.g. 15min Close < Daily EMA_20)
+        df_rhs_tf = timeframe_dfs.get(clause.rhs_timeframe) if clause.rhs_timeframe else None
+
+        passed, lhs_val, rhs_val = evaluate_clause(df_tf, clause, df_rhs_ind=df_rhs_tf)
         clause_results.append(passed)
 
         # Store for display
         indicator_summary[f"C{i+1}_Result"] = "✅" if passed else "❌"
         indicator_summary[f"C{i+1}_LHS"] = round(lhs_val, 2)
         indicator_summary[f"C{i+1}_RHS"] = round(rhs_val, 2)
+
 
     if cfg.logic == "ALL":
         overall_match = all(clause_results)
@@ -447,6 +468,10 @@ def run_screen(
     """
     matches = []
     needed_tfs = set(c.timeframe for c in cfg.clauses)
+    # Also include any rhs_timeframe (cross-TF comparisons like 15min Close < Daily EMA)
+    for c in cfg.clauses:
+        if c.rhs_timeframe:
+            needed_tfs.add(c.rhs_timeframe)
     if not needed_tfs:
         needed_tfs = {"Daily"}
 
@@ -458,7 +483,11 @@ def run_screen(
         if c.lhs:
             needed_indicators_by_tf[tf].add(c.lhs)
         if c.rhs_type == "Indicator" and c.rhs_indicator:
-            needed_indicators_by_tf[tf].add(c.rhs_indicator)
+            # For cross-TF clauses put rhs_indicator into rhs_timeframe's dict
+            rhs_tf = c.rhs_timeframe if c.rhs_timeframe else tf
+            if rhs_tf not in needed_indicators_by_tf:
+                needed_indicators_by_tf[rhs_tf] = set()
+            needed_indicators_by_tf[rhs_tf].add(c.rhs_indicator)
 
     close_to_start = {
         "10:30": "09:15:00",
@@ -542,6 +571,26 @@ def run_screen(
                         intra_raw = intra_raw[intra_raw.index <= target_dt]
                 if intra_raw is not None and not intra_raw.empty:
                     tf_dfs["75-Min"] = compute_needed_indicators(intra_raw, needed_indicators_by_tf.get("75-Min", set()))
+
+        # 15-Min intraday (Chartink 19122704 Stage 5 trigger + cross-TF queries)
+        if "15-Min" in needed_tfs:
+            intra_15_raw = None
+            if data_provider_fn:
+                intra_15_raw = data_provider_fn(sym, "15-Min")
+            else:
+                intra_15_raw = parquet_loader.ensure_symbol_custom_minute_candles(sym, interval_minutes=15, min_bars=10)
+            if intra_15_raw is not None and not intra_15_raw.empty:
+                if not isinstance(intra_15_raw.index, pd.DatetimeIndex):
+                    intra_15_raw = intra_15_raw.copy()
+                    intra_15_raw.index = pd.to_datetime(intra_15_raw.index)
+                if as_of_date is not None:
+                    target_dt = pd.to_datetime(f"{str(as_of_date)[:10]} {time_cutoff}")
+                    if intra_15_raw.index.tz is not None:
+                        intra_15_raw = intra_15_raw[intra_15_raw.index <= target_dt.tz_localize(intra_15_raw.index.tz)]
+                    else:
+                        intra_15_raw = intra_15_raw[intra_15_raw.index <= target_dt]
+                if intra_15_raw is not None and not intra_15_raw.empty:
+                    tf_dfs["15-Min"] = compute_needed_indicators(intra_15_raw, needed_indicators_by_tf.get("15-Min", set()))
 
         eval_res, clause_results = evaluate_stock(sym, tf_dfs, cfg, return_clause_results=True)
         if eval_res is not None:
@@ -900,17 +949,21 @@ def evaluate_intraday_scan_19122704(
     symbol: str,
     daily_df: pd.DataFrame,
     intra_75_df: Optional[pd.DataFrame] = None,
+    intra_15_df: Optional[pd.DataFrame] = None,
     as_of_date: Optional[Any] = None,
     as_of_time: Optional[str] = None,
-    intra_75_provider = None
+    intra_75_provider = None,
+    intra_15_provider = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Evaluates a stock against Chartink 'intraday-scan-19122704' (75m Intraday Multi-TF Breakdown).
-    Four-stage sequential funnel:
+    Evaluates a stock against Chartink 'intraday-scan-19122704' (75m+15m Intraday Multi-TF Breakdown).
+    Five-stage sequential funnel:
       - Stage 1: Monthly Breakdown (Close < EMA5 < EMA20 < EMA50, RSI9 < 50, RSI9 < RSI_EMA3, RSI9 < RSI_WMA21)
       - Stage 2: Weekly Breakdown (Close < EMA20 < EMA50 < EMA200, RSI9 < 50, RSI9 < RSI_EMA3, RSI9 < RSI_WMA21)
       - Stage 3: Daily Breakdown (Close < EMA20 < EMA50 < EMA200, RSI9 < 50, RSI9 < RSI_EMA3, RSI9 < RSI_WMA21)
       - Stage 4: 75m Breakdown Trigger (75m EMA20 <= EMA50 <= EMA200, 75m Close < EMA20)
+      - Stage 5: 15m Precision Entry (15m Close < Daily EMA20, prev bar bearish, gap-down open, current bar bearish,
+                  EMA20 < EMA50 < EMA200, MA squeeze on 9/13/20/26)
     """
     if daily_df is None or daily_df.empty or len(daily_df) < 15:
         return None
@@ -1065,7 +1118,65 @@ def evaluate_intraday_scan_19122704(
             if q4_pass:
                 stage = 4
 
+    # ─── Stage 5: 15-Min Precision Entry ───────────────────────────────────────
+    q5_pass = False
+    q5_c = q5_e9 = q5_e13 = q5_e20 = q5_e50 = q5_sma26 = np.nan
+
+    if q4_pass:
+        # Lazy-load 15-Min data if not provided
+        if intra_15_df is None:
+            if intra_15_provider is not None:
+                try:
+                    intra_15_df = intra_15_provider(symbol, "15-Min")
+                except TypeError:
+                    intra_15_df = intra_15_provider(symbol)
+            else:
+                intra_15_df = parquet_loader.ensure_symbol_custom_minute_candles(symbol, interval_minutes=15, min_bars=10)
+
+        if intra_15_df is not None and not intra_15_df.empty and len(intra_15_df) >= 5:
+            q15_close = intra_15_df["close"]
+            q15_open  = intra_15_df["open"]
+            q15_e9    = scanner.calculate_ema(q15_close, span=9).values
+            q15_e13   = scanner.calculate_ema(q15_close, span=13).values
+            q15_e20   = scanner.calculate_ema(q15_close, span=20).values
+            q15_e50   = scanner.calculate_ema(q15_close, span=50).values
+            q15_e200  = scanner.calculate_ema(q15_close, span=200).values
+            q15_sma26 = q15_close.rolling(window=26, min_periods=1).mean().values
+
+            q5_c    = float(q15_close.iloc[-1])
+            q5_e9   = float(q15_e9[-1])
+            q5_e13  = float(q15_e13[-1])
+            q5_e20  = float(q15_e20[-1])
+            q5_e50  = float(q15_e50[-1]) if not np.isnan(q15_e50[-1]) else q5_e20
+            q5_sma26 = float(q15_sma26[-1])
+
+            # Daily EMA_20 for cross-TF clause 24
+            d_e20_for_15 = d_e20 if not np.isnan(d_e20) else q5_e20
+
+            # Clause 24: 15m Close < Daily EMA_20 (cross-TF)
+            c24 = (q5_c < d_e20_for_15)
+            # Clause 25: previous 15m bar was bearish
+            c25 = len(q15_close) >= 2 and (float(q15_close.iloc[-2]) < float(q15_open.iloc[-2]))
+            # Clause 26: current 15m bar opened below prior 15m bar close (gap-down)
+            c26 = len(q15_close) >= 2 and (float(q15_open.iloc[-1]) < float(q15_close.iloc[-2]))
+            # Clause 27: current 15m bar is bearish
+            c27 = (q5_c < float(q15_open.iloc[-1]))
+            # Clause 28: 15m EMA_20 < EMA_50
+            c28 = (q5_e20 < q5_e50)
+            # Clause 29: 15m EMA_50 < EMA_200
+            c29 = (q5_e50 < float(q15_e200[-1])) if not np.isnan(q15_e200[-1]) else False
+            # Clause 30-32: MA squeeze (% diff <= 0.01%)
+            def _pct_diff(a, b): return abs(a - b) / abs(a) * 100.0 if a != 0 else 0.0
+            c30 = _pct_diff(q5_e9, q5_e13) <= 0.01
+            c31 = _pct_diff(q5_e13, q5_e20) <= 0.01
+            c32 = _pct_diff(q5_e20, q5_sma26) <= 0.01
+
+            q5_pass = c24 and c25 and c26 and c27 and c28 and c29 and c30 and c31 and c32
+            if q5_pass:
+                stage = 5
+
     stage_labels = {
+        5: "🚨 Stage 5 (FULL SIGNAL M+W+D+75m+15m)",
         4: "🏆 Stage 4 (Full Breakdown M+W+D+75m)",
         3: "🚀 Stage 3 (Daily Breakdown)",
         2: "🟢 Stage 2 (Weekly Breakdown)",
@@ -1084,6 +1195,7 @@ def evaluate_intraday_scan_19122704(
         "Weekly": "✅ PASS" if w_pass else "❌ FAIL",
         "Daily": "✅ PASS" if d_pass else "❌ FAIL",
         "75-Min": "✅ PASS" if q4_pass else "❌ FAIL",
+        "15-Min": "✅ PASS" if q5_pass else "❌ FAIL",
         "M_RSI": round(m_r, 1),
         "M_EMA5": round(m_e5, 2),
         "M_EMA20": round(m_e20, 2),
@@ -1093,7 +1205,12 @@ def evaluate_intraday_scan_19122704(
         "D_EMA20": round(d_e20, 2) if not np.isnan(d_e20) else np.nan,
         "75m_EMA20": round(q4_e20, 2) if not np.isnan(q4_e20) else np.nan,
         "75m_EMA50": round(q4_e50, 2) if not np.isnan(q4_e50) else np.nan,
+        "15m_Close": round(q5_c, 2) if not np.isnan(q5_c) else np.nan,
+        "15m_EMA9": round(q5_e9, 2) if not np.isnan(q5_e9) else np.nan,
+        "15m_EMA20": round(q5_e20, 2) if not np.isnan(q5_e20) else np.nan,
+        "15m_EMA50": round(q5_e50, 2) if not np.isnan(q5_e50) else np.nan,
     }
+
 
 
 def run_waterfall_scan(
@@ -1232,36 +1349,62 @@ def get_screener_preset(preset_name: str) -> ScreenerConfig:
 
     if "19122704" in p_lower or "intraday scan" in p_lower or "intraday trade" in p_lower:
         return ScreenerConfig(
-            name="⚡ Chartink Intraday Scan (19122704 - 75m Multi-TF Breakdown)",
+            name="⚡ Chartink Intraday Scan (19122704 - 75m+15m Multi-TF Breakdown)",
             logic="ALL",
             clauses=[
-                # Monthly Macro Breakdown
-                ScreenerClause(timeframe="Monthly", lhs="Close", operator="<", rhs_type="Indicator", rhs_indicator="EMA_5"),
-                ScreenerClause(timeframe="Monthly", lhs="EMA_5", operator="<", rhs_type="Indicator", rhs_indicator="EMA_20"),
-                ScreenerClause(timeframe="Monthly", lhs="EMA_20", operator="<", rhs_type="Indicator", rhs_indicator="EMA_50"),
-                ScreenerClause(timeframe="Monthly", lhs="RSI_9", operator="<", rhs_type="Number", rhs_value=50.0),
-                ScreenerClause(timeframe="Monthly", lhs="RSI_9", operator="<", rhs_type="Indicator", rhs_indicator="RSI_EMA3"),
-                ScreenerClause(timeframe="Monthly", lhs="RSI_9", operator="<", rhs_type="Indicator", rhs_indicator="RSI_WMA21"),
-                # Weekly Breakdown
-                ScreenerClause(timeframe="Weekly", lhs="Close", operator="<", rhs_type="Indicator", rhs_indicator="EMA_20"),
-                ScreenerClause(timeframe="Weekly", lhs="EMA_20", operator="<", rhs_type="Indicator", rhs_indicator="EMA_50"),
-                ScreenerClause(timeframe="Weekly", lhs="EMA_50", operator="<", rhs_type="Indicator", rhs_indicator="EMA_200"),
-                ScreenerClause(timeframe="Weekly", lhs="RSI_9", operator="<", rhs_type="Number", rhs_value=50.0),
-                ScreenerClause(timeframe="Weekly", lhs="RSI_9", operator="<", rhs_type="Indicator", rhs_indicator="RSI_EMA3"),
-                ScreenerClause(timeframe="Weekly", lhs="RSI_9", operator="<", rhs_type="Indicator", rhs_indicator="RSI_WMA21"),
-                # Daily Breakdown
-                ScreenerClause(timeframe="Daily", lhs="Close", operator="<", rhs_type="Indicator", rhs_indicator="EMA_20"),
-                ScreenerClause(timeframe="Daily", lhs="EMA_20", operator="<", rhs_type="Indicator", rhs_indicator="EMA_50"),
-                ScreenerClause(timeframe="Daily", lhs="EMA_50", operator="<", rhs_type="Indicator", rhs_indicator="EMA_200"),
-                ScreenerClause(timeframe="Daily", lhs="RSI_9", operator="<", rhs_type="Number", rhs_value=50.0),
-                ScreenerClause(timeframe="Daily", lhs="RSI_9", operator="<", rhs_type="Indicator", rhs_indicator="RSI_EMA3"),
-                ScreenerClause(timeframe="Daily", lhs="RSI_9", operator="<", rhs_type="Indicator", rhs_indicator="RSI_WMA21"),
-                # 75-Min Intraday Execution Trigger
-                ScreenerClause(timeframe="75-Min", lhs="EMA_20", operator="<=", rhs_type="Indicator", rhs_indicator="EMA_50"),
-                ScreenerClause(timeframe="75-Min", lhs="EMA_50", operator="<=", rhs_type="Indicator", rhs_indicator="EMA_200"),
-                ScreenerClause(timeframe="75-Min", lhs="Close", operator="<", rhs_type="Indicator", rhs_indicator="EMA_20"),
+                # ── Stage 1: Monthly Macro Breakdown ──────────────────────────────
+                ScreenerClause(timeframe="Monthly", lhs="Close",  operator="<",  rhs_type="Indicator", rhs_indicator="EMA_5"),
+                ScreenerClause(timeframe="Monthly", lhs="EMA_5",  operator="<",  rhs_type="Indicator", rhs_indicator="EMA_20"),
+                ScreenerClause(timeframe="Monthly", lhs="EMA_20", operator="<",  rhs_type="Indicator", rhs_indicator="EMA_50"),
+                ScreenerClause(timeframe="Monthly", lhs="RSI_9",  operator="<",  rhs_type="Number",    rhs_value=50.0),
+                ScreenerClause(timeframe="Monthly", lhs="RSI_9",  operator="<",  rhs_type="Indicator", rhs_indicator="RSI_EMA3"),
+                ScreenerClause(timeframe="Monthly", lhs="RSI_9",  operator="<",  rhs_type="Indicator", rhs_indicator="RSI_WMA21"),
+                # ── Stage 2: Weekly Breakdown ──────────────────────────────────────
+                ScreenerClause(timeframe="Weekly",  lhs="Close",  operator="<",  rhs_type="Indicator", rhs_indicator="EMA_20"),
+                ScreenerClause(timeframe="Weekly",  lhs="EMA_20", operator="<",  rhs_type="Indicator", rhs_indicator="EMA_50"),
+                ScreenerClause(timeframe="Weekly",  lhs="EMA_50", operator="<",  rhs_type="Indicator", rhs_indicator="EMA_200"),
+                ScreenerClause(timeframe="Weekly",  lhs="RSI_9",  operator="<",  rhs_type="Number",    rhs_value=50.0),
+                ScreenerClause(timeframe="Weekly",  lhs="RSI_9",  operator="<",  rhs_type="Indicator", rhs_indicator="RSI_EMA3"),
+                ScreenerClause(timeframe="Weekly",  lhs="RSI_9",  operator="<",  rhs_type="Indicator", rhs_indicator="RSI_WMA21"),
+                # ── Stage 3: Daily Breakdown ───────────────────────────────────────
+                ScreenerClause(timeframe="Daily",   lhs="Close",  operator="<",  rhs_type="Indicator", rhs_indicator="EMA_20"),
+                ScreenerClause(timeframe="Daily",   lhs="EMA_20", operator="<",  rhs_type="Indicator", rhs_indicator="EMA_50"),
+                ScreenerClause(timeframe="Daily",   lhs="EMA_50", operator="<",  rhs_type="Indicator", rhs_indicator="EMA_200"),
+                ScreenerClause(timeframe="Daily",   lhs="RSI_9",  operator="<",  rhs_type="Number",    rhs_value=50.0),
+                ScreenerClause(timeframe="Daily",   lhs="RSI_9",  operator="<",  rhs_type="Indicator", rhs_indicator="RSI_EMA3"),
+                ScreenerClause(timeframe="Daily",   lhs="RSI_9",  operator="<",  rhs_type="Indicator", rhs_indicator="RSI_WMA21"),
+                # ── Stage 4: 75-Min Execution Trigger ────────────────────────────
+                ScreenerClause(timeframe="75-Min",  lhs="EMA_20", operator="<=", rhs_type="Indicator", rhs_indicator="EMA_50"),
+                ScreenerClause(timeframe="75-Min",  lhs="EMA_50", operator="<=", rhs_type="Indicator", rhs_indicator="EMA_200"),
+                ScreenerClause(timeframe="75-Min",  lhs="Close",  operator="<",  rhs_type="Indicator", rhs_indicator="EMA_20"),
+                # ── Stage 5: 15-Min Intraday Precision Entry ─────────────────────
+                # Clause 24: 15min Close < Daily EMA_20  (cross-timeframe)
+                ScreenerClause(timeframe="15-Min",  lhs="Close",  operator="<",  rhs_type="Indicator", rhs_indicator="EMA_20",
+                               rhs_timeframe="Daily"),
+                # Clause 25: previous 15m bar was bearish (offset=1 means bar[-2])
+                ScreenerClause(timeframe="15-Min",  lhs="Close",  operator="<",  rhs_type="Indicator", rhs_indicator="Open",
+                               offset=1, rhs_offset=1),
+                # Clause 26: current 15m bar opened below prior 15m bar Close (gap-down open)
+                ScreenerClause(timeframe="15-Min",  lhs="Open",   operator="<",  rhs_type="Indicator", rhs_indicator="Close",
+                               offset=0, rhs_offset=1),
+                # Clause 27: current 15m bar is bearish (Close < Open)
+                ScreenerClause(timeframe="15-Min",  lhs="Close",  operator="<",  rhs_type="Indicator", rhs_indicator="Open"),
+                # Clause 28: 15m EMA_20 < EMA_50
+                ScreenerClause(timeframe="15-Min",  lhs="EMA_20", operator="<",  rhs_type="Indicator", rhs_indicator="EMA_50"),
+                # Clause 29: 15m EMA_50 < EMA_200
+                ScreenerClause(timeframe="15-Min",  lhs="EMA_50", operator="<",  rhs_type="Indicator", rhs_indicator="EMA_200"),
+                # Clause 30: MA squeeze  abs(EMA_9 - EMA_13)/EMA_9*100 <= 0.01%
+                ScreenerClause(timeframe="15-Min",  lhs="EMA_9",  operator="abs_pct_lte", rhs_type="Number",
+                               rhs_value=0.01, rhs_indicator="EMA_13"),
+                # Clause 31: abs(EMA_13 - EMA_20)/EMA_13*100 <= 0.01%
+                ScreenerClause(timeframe="15-Min",  lhs="EMA_13", operator="abs_pct_lte", rhs_type="Number",
+                               rhs_value=0.01, rhs_indicator="EMA_20"),
+                # Clause 32: abs(EMA_20 - SMA_26)/EMA_20*100 <= 0.01%
+                ScreenerClause(timeframe="15-Min",  lhs="EMA_20", operator="abs_pct_lte", rhs_type="Number",
+                               rhs_value=0.01, rhs_indicator="SMA_26"),
             ]
         )
+
     elif "rsi momentum" in p_lower or "rsi > 60" in p_lower:
         return ScreenerConfig(
             name="🚀 RSI Momentum Surge",

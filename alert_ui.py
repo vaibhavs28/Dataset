@@ -734,7 +734,12 @@ def render_alert_page(theme: str = "dark"):
             # 13. INTRADAY SCAN #19122704 (BREAKDOWN)
             else:
                 atype_val = "INTRADAY_SCAN_19122704"
-                st.info("⚡ Triggers automatically when this stock satisfies all 4 tiers of the Chartink Intraday Breakdown Scan #19122704 (Monthly + Weekly + Daily + 75-Min)!")
+                st.info("⚡ Triggers automatically when this stock satisfies the Chartink Intraday Breakdown Scan #19122704.\n\n"
+                        "**Stage 4** (Monthly + Weekly + Daily + 75-Min bearish alignment)\n\n"
+                        "**Stage 5** 🚨 FULL SIGNAL: All 5 tiers including **15-Min** precision entry "
+                        "(Close < Daily EMA20, previous bar bearish, gap-down open, current bar bearish, "
+                        "EMA20 < EMA50 < EMA200, MA squeeze on EMA9/13/20/SMA26)!")
+
 
         st.markdown("---")
         st.markdown("##### 📡 Delivery Channels & Alert Frequency")
