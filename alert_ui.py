@@ -316,10 +316,11 @@ def render_alert_page(theme: str = "dark"):
             p_txt_75 = st.empty()
             scan_start_75 = time.time()
             last_update_75 = [0.0]
+            p_txt_75.markdown(f"⚡ **Starting 75-Min Waterfall Scan** across **{bc_universe}** (Stage {stage_num})...")
 
             def _75m_progress(curr, total, sym):
                 now = time.time()
-                if curr == 1 or curr == total or (now - last_update_75[0] >= 0.25):
+                if curr == 1 or curr == total or (now - last_update_75[0] >= 0.15):
                     last_update_75[0] = now
                     pct = min(curr / max(total, 1), 1.0)
                     p_bar_75.progress(pct)
@@ -332,14 +333,13 @@ def render_alert_page(theme: str = "dark"):
                         f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
                     )
 
-            with st.spinner(f"Running 75-Min Waterfall Scan across {bc_universe} (Auto-sync: {auto_sync_upstox})..."):
-                bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
-                    universe=bc_universe,
-                    stage_filter=stage_num,
-                    sync_first=auto_sync_upstox,
-                    force=True,
-                    progress_callback=_75m_progress
-                )
+            bc_res = auto_75m_broadcaster.run_75m_waterfall_broadcast(
+                universe=bc_universe,
+                stage_filter=stage_num,
+                sync_first=auto_sync_upstox,
+                force=True,
+                progress_callback=_75m_progress
+            )
             p_bar_75.empty()
             p_txt_75.empty()
 
@@ -391,10 +391,11 @@ def render_alert_page(theme: str = "dark"):
                 p_txt_15 = st.empty()
                 scan_start_15 = time.time()
                 last_update_15 = [0.0]
+                p_txt_15.markdown(f"⚡ **Starting 15-Minute Scan** across **{c15_universe}** (Stage {stg_val})...")
 
                 def _15m_progress(curr, total, sym):
                     now = time.time()
-                    if curr == 1 or curr == total or (now - last_update_15[0] >= 0.25):
+                    if curr == 1 or curr == total or (now - last_update_15[0] >= 0.15):
                         last_update_15[0] = now
                         pct = min(curr / max(total, 1), 1.0)
                         p_bar_15.progress(pct)
@@ -407,13 +408,12 @@ def render_alert_page(theme: str = "dark"):
                             f"⏱️ **ETA:** ~{eta_str} remaining ({speed:.1f} stocks/sec)"
                         )
 
-                with st.spinner(f"Running 15-minute Chartink #19122704 Scan ({c15_universe}, Stage {stg_val})..."):
-                    res15 = auto_15m_broadcaster.execute_15m_broadcast_cycle(
-                        universe=c15_universe,
-                        stage_filter=stg_val,
-                        force=True,
-                        progress_callback=_15m_progress
-                    )
+                res15 = auto_15m_broadcaster.execute_15m_broadcast_cycle(
+                    universe=c15_universe,
+                    stage_filter=stg_val,
+                    force=True,
+                    progress_callback=_15m_progress
+                )
                 p_bar_15.empty()
                 p_txt_15.empty()
 

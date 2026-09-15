@@ -128,6 +128,12 @@ def execute_15m_broadcast_cycle(
     else:
         symbols = database.get_all_symbols()
 
+    if progress_callback:
+        try:
+            progress_callback(0, len(symbols), f"Resolving {len(symbols)} symbols...")
+        except Exception:
+            pass
+
     # 2. Check live hot_intraday.db
     if hot_intraday.has_hot_data():
         stats = hot_intraday.get_hot_stats()
@@ -163,6 +169,12 @@ def execute_15m_broadcast_cycle(
                         batch_daily[sym_k].iloc[-1, batch_daily[sym_k].columns.get_loc("volume")] = bar["volume"]
         except Exception as e:
             logger.warning(f"Error augmenting batch_daily with live bars: {e}")
+
+    if progress_callback:
+        try:
+            progress_callback(0, len(symbols), f"Ready. Starting evaluation across {len(symbols)} stocks...")
+        except Exception:
+            pass
 
     qualifying_stocks = []
     logger.info(f"Evaluating 5-stage funnel across {len(symbols)} stocks...")
